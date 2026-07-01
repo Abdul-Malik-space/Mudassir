@@ -1,0 +1,51 @@
+DashBoard2 Vercel Deployment Steps
+
+1) GitHub repo me ye clean project upload karein.
+   Important: node_modules, dist, .env aur .git upload na karein.
+
+2) Backend project deploy karein:
+   - Vercel > Add New Project
+   - Same GitHub repo select karein
+   - Root Directory: backend
+   - Environment Variables:
+     MONGO_URI = your MongoDB Atlas URI
+     CLIENT_URL = *
+   - Deploy
+   - Test URL: https://your-backend.vercel.app/api/health
+
+3) Frontend project deploy karein:
+   - Vercel > Add New Project
+   - Same GitHub repo select karein
+   - Root Directory: frontend
+   - Framework Preset: Vite
+   - Build Command: npm run build
+   - Output Directory: dist
+   - Environment Variables:
+     VITE_API_URL = https://your-backend.vercel.app/api
+   - Deploy
+
+4) Agar kisi aur banday ko link open nahi ho raha:
+   - Vercel dashboard > Project > Settings > Deployment Protection
+   - Protection / Vercel Authentication ko OFF karein
+   - Project public hona chahiye
+   - Backend ka CLIENT_URL ab * rakha gaya hai taake CORS access block na kare
+
+5) MongoDB Atlas:
+   - Network Access me IP allow karein.
+   - Testing ke liye 0.0.0.0/0 use kar sakte hain.
+   - Production ke liye restricted access better hai.
+
+Fixes made in this fresh version:
+- Frontend API URL ko central config se connect kiya: frontend/src/config/api.js
+- Env missing ho to frontend undefined/... URLs nahi banata
+- Local development ke liye Vite /api proxy add ki
+- Backend CORS ko public access friendly banaya
+- Backend me missing /api/sales route add ki
+- Backend me missing /api/jobs/active route add ki
+- DieCutting ke lowercase route /api/diecutting ka alias add kiya
+- Sales model add kiya
+- OtherWork, Lamination, Printing, DieCutting, Pasting, ReadyProducts models ko frontend fields ke according update kiya
+- Lamination page ka deleteEntry missing function fix kiya
+- Backend Vercel config add ki
+- Frontend build test pass: npm run build
+- Frontend lint script ab errors کے بغیر چلتا ہے، warnings صرف cleanup type ہیں
