@@ -66,12 +66,15 @@ const expenseRoutes = require("./routes/expenseRoutes");
 const payrollRoutes = require("./routes/payrollRoutes");
 const accountRoutes = require("./routes/accountRoutes");
 const warehouseRoutes = require("./routes/warehouseRoutes");
-const reportRoutes = require("./routes/reportRoutes");
+const reportRoutesPro = require("./routes/reportRoutesPro");
 const settingRoutes = require("./routes/settingsRoutes");
 const productionItemRoutes = require("./routes/productionItemRoutes");
 const headerRoutes = require("./routes/headerRoutes");
 const salesRoutes = require("./routes/salesRoutes");
 const jobsRoutes = require("./routes/jobsRoutes");
+const salesOrderRoutes = require("./routes/salesOrderRoutes");
+const deliveryChallanRoutes = require("./routes/deliveryChallanRoutes");
+const invoiceRoutes = require("./routes/invoiceRoutes");
 
 app.use("/api/customers", customerRoutes);
 app.use("/api/vendors", vendorRoutes);
@@ -92,12 +95,15 @@ app.use("/api/expenses", expenseRoutes);
 app.use("/api/payroll", payrollRoutes);
 app.use("/api/account", accountRoutes);
 app.use("/api/warehouses", warehouseRoutes);
-app.use("/api/reports", reportRoutes);
+app.use("/api/reports-pro", reportRoutesPro);
 app.use("/api/settings", settingRoutes);
 app.use("/api/production-items", productionItemRoutes);
 app.use("/api/headers", headerRoutes);
 app.use("/api/sales", salesRoutes);
 app.use("/api/jobs", jobsRoutes);
+app.use("/api/sales-orders", salesOrderRoutes);
+app.use("/api/delivery-challans", deliveryChallanRoutes);
+app.use("/api/invoices", invoiceRoutes);
 
 app.get("/", (req, res) => {
   res.send("Backend running...");

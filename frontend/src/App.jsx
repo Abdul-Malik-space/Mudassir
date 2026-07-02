@@ -25,6 +25,9 @@ import WarehousePage from './Pages/UrwaGodam';
 import SettingsPro from './Pages/Setting';
 import UnitManager from './Pages/Unitlist'
 import ProductionItemsManager from './Pages/ProductionItemsManager';
+import SalesOrders from './Pages/SalesOrders';
+import DeliveryChallans from './Pages/DeliveryChallans';
+import Invoices from './Pages/Invoices';
 
 
 
@@ -69,6 +72,9 @@ function App() {
              {currentPage === "departments" && < DepartmentForm/>}
              {currentPage === "ready-product" && < ReadyProductEntry/>}
              {currentPage === "sale" && < SaleEntry/>}
+             {currentPage === "sales-orders" && <SalesOrders />}
+             {currentPage === "delivery-challans" && <DeliveryChallans />}
+             {currentPage === "invoices" && <Invoices />}
              {currentPage === "expense" && < ExpensePro/>}
              {currentPage === "payroll" && < PayrollEntry/>}
              {currentPage === "accounts" && < AccountsOverview/>}

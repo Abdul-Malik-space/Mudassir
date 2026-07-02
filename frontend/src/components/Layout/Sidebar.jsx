@@ -99,7 +99,16 @@ const menuItems = [
   },
 
 
-  { id: "sale", icon: ShoppingCart, label: "Sales" },
+  {
+  id: "sales",
+  icon: ShoppingCart,
+  label: "Sales",
+  submenu: [
+    { id: "sales-orders", label: "Sales Orders" },
+    { id: "delivery-challans", label: "Delivery Challans" },
+    { id: "invoices", label: "Invoices" },
+  ],
+},
   { id: "expense", icon: Wallet, label: "Expense" },
   { id: "payroll", icon: Users, label: "Payroll" },
   { id: "accounts", icon: Landmark, label: "Accounts" },
