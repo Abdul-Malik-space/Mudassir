@@ -4,37 +4,57 @@ const router = express.Router();
 const Customer = require("../models/customer");
 const Counter = require("../models/Counter");
 
-const cleanPayload = (body) => {
+const cleanPayload = (body = {}) => {
+  const email = body.email ? String(body.email).trim().toLowerCase() : undefined;
+
   return {
-    customerCode: body.customerCode ? String(body.customerCode).trim().toUpperCase() : undefined,
-    customerName: body.customerName ? String(body.customerName).trim() : "",
-    contactPerson: body.contactPerson ? String(body.contactPerson).trim() : "",
-    email: body.email ? String(body.email).trim().toLowerCase() : undefined,
-    phoneNumber: body.phoneNumber ? String(body.phoneNumber).trim() : "",
-    alternatePhone: body.alternatePhone ? String(body.alternatePhone).trim() : "",
-    address: body.address ? String(body.address).trim() : "",
-    city: body.city ? String(body.city).trim() : "",
-    openingBalance: Number(body.openingBalance || 0),
+    customerCode: body.customerCode
+      ? String(body.customerCode).trim().toUpperCase()
+      : undefined,
+
+    customerName: String(body.customerName || body.name || "").trim(),
+
+    contactPerson: String(body.contactPerson || "").trim(),
+
+    email,
+
+    phoneNumber: String(body.phoneNumber || body.phone || "").trim(),
+
+    alternatePhone: String(body.alternatePhone || "").trim(),
+
+    address: String(body.address || "").trim(),
+
+    city: String(body.city || "").trim(),
+
+    openingBalance: Number(body.openingBalance || body.balance || 0),
+
     creditLimit: Number(body.creditLimit || 0),
-    status: body.status || "Active",
-    notes: body.notes ? String(body.notes).trim() : "",
+
+    status: ["Active", "Inactive"].includes(body.status)
+      ? body.status
+      : "Active",
+
+    notes: String(body.notes || "").trim(),
   };
 };
 
 const getNextCustomerCode = async () => {
-  let code = "";
+  let customerCode = "";
 
   for (let i = 0; i < 5; i++) {
     const counter = await Counter.findOneAndUpdate(
       { name: "customerCode" },
       { $inc: { seq: 1 } },
-      { new: true, upsert: true }
+      {
+        new: true,
+        upsert: true,
+      }
     );
 
-    code = `CUS-${String(counter.seq).padStart(4, "0")}`;
+    customerCode = `CUS-${String(counter.seq).padStart(4, "0")}`;
 
-    const exists = await Customer.findOne({ customerCode: code });
-    if (!exists) return code;
+    const exists = await Customer.findOne({ customerCode });
+    if (!exists) return customerCode;
   }
 
   throw new Error("Unable to generate unique customer code");
@@ -43,10 +63,10 @@ const getNextCustomerCode = async () => {
 const peekNextCustomerCode = async () => {
   const counter = await Counter.findOne({ name: "customerCode" });
   const nextSeq = counter ? counter.seq + 1 : 1;
+
   return `CUS-${String(nextSeq).padStart(4, "0")}`;
 };
 
-// Next customer code preview
 router.get("/next-code", async (req, res) => {
   try {
     const customerCode = await peekNextCustomerCode();
@@ -56,6 +76,8 @@ router.get("/next-code", async (req, res) => {
       customerCode,
     });
   } catch (error) {
+    console.error("Customer Next Code Error:", error);
+
     res.status(500).json({
       success: false,
       message: "Customer code generate nahi hua",
@@ -64,7 +86,6 @@ router.get("/next-code", async (req, res) => {
   }
 });
 
-// Add customer
 router.post("/add", async (req, res) => {
   try {
     const payload = cleanPayload(req.body);
@@ -83,6 +104,13 @@ router.post("/add", async (req, res) => {
       });
     }
 
+    if (!payload.address) {
+      return res.status(400).json({
+        success: false,
+        message: "Address required hai",
+      });
+    }
+
     if (!payload.customerCode) {
       payload.customerCode = await getNextCustomerCode();
     }
@@ -96,6 +124,8 @@ router.post("/add", async (req, res) => {
       data: customer,
     });
   } catch (error) {
+    console.error("Customer Add Error:", error);
+
     if (error.code === 11000) {
       const duplicateField = Object.keys(error.keyPattern || {})[0];
 
@@ -118,7 +148,6 @@ router.post("/add", async (req, res) => {
   }
 });
 
-// Get all customers
 router.get("/all", async (req, res) => {
   try {
     const { search = "", status = "" } = req.query;
@@ -133,8 +162,11 @@ router.get("/all", async (req, res) => {
       query.$or = [
         { customerCode: { $regex: search, $options: "i" } },
         { customerName: { $regex: search, $options: "i" } },
+        { contactPerson: { $regex: search, $options: "i" } },
         { phoneNumber: { $regex: search, $options: "i" } },
+        { alternatePhone: { $regex: search, $options: "i" } },
         { email: { $regex: search, $options: "i" } },
+        { address: { $regex: search, $options: "i" } },
         { city: { $regex: search, $options: "i" } },
       ];
     }
@@ -143,6 +175,8 @@ router.get("/all", async (req, res) => {
 
     res.status(200).json(customers);
   } catch (error) {
+    console.error("Customers Load Error:", error);
+
     res.status(500).json({
       success: false,
       message: "Customers load nahi huay",
@@ -151,7 +185,6 @@ router.get("/all", async (req, res) => {
   }
 });
 
-// Get single customer
 router.get("/:id", async (req, res) => {
   try {
     const customer = await Customer.findById(req.params.id);
@@ -168,6 +201,8 @@ router.get("/:id", async (req, res) => {
       data: customer,
     });
   } catch (error) {
+    console.error("Customer Single Load Error:", error);
+
     res.status(500).json({
       success: false,
       message: "Customer load nahi hua",
@@ -176,7 +211,6 @@ router.get("/:id", async (req, res) => {
   }
 });
 
-// Update customer
 router.put("/update/:id", async (req, res) => {
   try {
     const payload = cleanPayload(req.body);
@@ -192,6 +226,13 @@ router.put("/update/:id", async (req, res) => {
       return res.status(400).json({
         success: false,
         message: "Phone number required hai",
+      });
+    }
+
+    if (!payload.address) {
+      return res.status(400).json({
+        success: false,
+        message: "Address required hai",
       });
     }
 
@@ -221,6 +262,8 @@ router.put("/update/:id", async (req, res) => {
       data: updatedCustomer,
     });
   } catch (error) {
+    console.error("Customer Update Error:", error);
+
     if (error.code === 11000) {
       const duplicateField = Object.keys(error.keyPattern || {})[0];
 
@@ -243,7 +286,6 @@ router.put("/update/:id", async (req, res) => {
   }
 });
 
-// Delete customer
 router.delete("/delete/:id", async (req, res) => {
   try {
     const deletedCustomer = await Customer.findByIdAndDelete(req.params.id);
@@ -260,6 +302,8 @@ router.delete("/delete/:id", async (req, res) => {
       message: "Customer deleted successfully",
     });
   } catch (error) {
+    console.error("Customer Delete Error:", error);
+
     res.status(500).json({
       success: false,
       message: "Customer delete nahi hua",
