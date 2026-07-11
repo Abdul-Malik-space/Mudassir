@@ -2,35 +2,136 @@ const mongoose = require("mongoose");
 
 const salesOrderItemSchema = new mongoose.Schema(
   {
-    description: { type: String, required: true, trim: true },
-    size: { type: String, trim: true, default: "" },
-    cartons: { type: Number, default: 0 },
-    quantity: { type: Number, required: true, min: 0 },
-    unit: { type: String, default: "Rolls", trim: true },
-    unitPrice: { type: Number, required: true, min: 0 },
-    amount: { type: Number, default: 0 },
+    item: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Item",
+      default: null,
+    },
+
+    description: {
+      type: String,
+      required: [true, "Item description is required"],
+      trim: true,
+    },
+
+    size: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+
+    textType: {
+      type: String,
+      enum: ["", "with-text", "without-text"],
+      default: "",
+    },
+
+    cartons: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+
+    quantity: {
+      type: Number,
+      required: [true, "Quantity is required"],
+      min: 0,
+    },
+
+    unit: {
+      type: String,
+      default: "Rolls",
+      trim: true,
+    },
+
+    unitPrice: {
+      type: Number,
+      required: [true, "Unit price is required"],
+      min: 0,
+    },
+
+    amount: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+
+    remarks: {
+      type: String,
+      trim: true,
+      default: "",
+    },
   },
   { _id: false }
 );
 
 const salesOrderSchema = new mongoose.Schema(
   {
-    salesOrderNo: { type: String, required: true, unique: true, trim: true },
+    salesOrderNo: {
+      type: String,
+      required: true,
+      unique: true,
+      trim: true,
+      uppercase: true,
+    },
 
     customer: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Customer",
-      required: true,
+      required: [true, "Customer is required"],
     },
 
-    customerName: { type: String, required: true, trim: true },
-    customerPhone: { type: String, trim: true, default: "" },
-    customerEmail: { type: String, trim: true, default: "" },
-    customerAddress: { type: String, trim: true, default: "" },
+    customerName: {
+      type: String,
+      required: true,
+      trim: true,
+    },
 
-    orderDate: { type: String, required: true },
-    deliveryDate: { type: String, default: "" },
-    poNo: { type: String, trim: true, default: "" },
+    customerPhone: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+
+    customerEmail: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+
+    customerAddress: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+
+    customerCity: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+
+    orderDate: {
+      type: String,
+      required: [true, "Order date is required"],
+    },
+
+    deliveryDate: {
+      type: String,
+      default: "",
+    },
+
+    poNo: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+
+    referenceNo: {
+      type: String,
+      trim: true,
+      default: "",
+    },
 
     taxType: {
       type: String,
@@ -38,7 +139,11 @@ const salesOrderSchema = new mongoose.Schema(
       default: "without-tax",
     },
 
-    taxRate: { type: Number, default: 0 },
+    taxRate: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
 
     items: {
       type: [salesOrderItemSchema],
@@ -50,11 +155,52 @@ const salesOrderSchema = new mongoose.Schema(
       },
     },
 
-    subtotal: { type: Number, default: 0 },
-    salesTax: { type: Number, default: 0 },
-    grandTotal: { type: Number, default: 0 },
-    advance: { type: Number, default: 0 },
-    balance: { type: Number, default: 0 },
+    totalCartons: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+
+    totalQuantity: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+
+    subtotal: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+
+    salesTax: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+
+    grandTotal: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+
+    advance: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+
+    balance: {
+      type: Number,
+      default: 0,
+    },
+
+    paymentStatus: {
+      type: String,
+      enum: ["Unpaid", "Partially Paid", "Paid"],
+      default: "Unpaid",
+    },
 
     status: {
       type: String,
@@ -63,6 +209,7 @@ const salesOrderSchema = new mongoose.Schema(
         "Confirmed",
         "In Production",
         "Ready",
+        "Partially Delivered",
         "Delivered",
         "Invoiced",
         "Cancelled",
@@ -70,7 +217,11 @@ const salesOrderSchema = new mongoose.Schema(
       default: "Draft",
     },
 
-    remarks: { type: String, trim: true, default: "" },
+    remarks: {
+      type: String,
+      trim: true,
+      default: "",
+    },
   },
   { timestamps: true }
 );

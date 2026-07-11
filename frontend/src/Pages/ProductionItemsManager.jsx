@@ -1,11 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect } from "react";
 import {
   PencilSquareIcon,
   TrashIcon,
   PlusIcon,
   MagnifyingGlassIcon,
-  ArrowLeftIcon
-} from '@heroicons/react/24/outline';
+  ArrowLeftIcon,
+} from "@heroicons/react/24/outline";
 import { API_BASE_URL } from "../config/api";
 
 const ProductionItemsManager = () => {
@@ -44,20 +44,64 @@ const ProductionItemsManager = () => {
     requireDieCutting: false,
     requirePasting: false,
 
-    status: "Active"
+    status: "Active",
   };
 
   const [formData, setFormData] = useState(defaultFormData);
   const [searchQuery, setSearchQuery] = useState("");
 
   const API_URL = `${API_BASE_URL}/production-items`;
+
+  const normalizeItems = (data) => {
+    if (Array.isArray(data)) return data;
+    if (Array.isArray(data?.items)) return data.items;
+    if (Array.isArray(data?.productionItems)) return data.productionItems;
+    if (Array.isArray(data?.data)) return data.data;
+    return [];
+  };
+
+  const generateNextJobCode = (existingItems = []) => {
+    const jobNumbers = existingItems
+      .map((item) => item?.code)
+      .filter(Boolean)
+      .map((code) => {
+        const match = String(code).match(/^JOB-(\d+)$/i);
+        return match ? Number(match[1]) : 0;
+      })
+      .filter((num) => Number.isFinite(num) && num > 0);
+
+    const maxNumber = jobNumbers.length > 0 ? Math.max(...jobNumbers) : 0;
+    let nextNumber = maxNumber + 1;
+    let nextCode = `JOB-${nextNumber}`;
+
+    const usedCodes = new Set(
+      existingItems
+        .map((item) => item?.code)
+        .filter(Boolean)
+        .map((code) => String(code).toUpperCase())
+    );
+
+    while (usedCodes.has(nextCode.toUpperCase())) {
+      nextNumber += 1;
+      nextCode = `JOB-${nextNumber}`;
+    }
+
+    return nextCode;
+  };
+
   const fetchItems = async () => {
     try {
       const response = await fetch(`${API_URL}/all`);
       const data = await response.json();
-      setItems(data);
+
+      const normalizedData = normalizeItems(data);
+      setItems(normalizedData);
+
+      return normalizedData;
     } catch (error) {
       console.error("Fetch Error:", error);
+      setItems([]);
+      return [];
     }
   };
 
@@ -65,15 +109,22 @@ const ProductionItemsManager = () => {
     fetchItems();
   }, []);
 
-  const openForm = (item = null) => {
+  const openForm = async (item = null) => {
     if (item) {
       setEditId(item._id);
-      setFormData(item);
-    } else {
-      setEditId(null);
       setFormData({
         ...defaultFormData,
-        code: `JOB-${Math.floor(1000 + Math.random() * 9000)}`
+        ...item,
+      });
+    } else {
+      setEditId(null);
+
+      const latestItems = await fetchItems();
+      const nextJobCode = generateNextJobCode(latestItems);
+
+      setFormData({
+        ...defaultFormData,
+        code: nextJobCode,
       });
     }
 
@@ -99,9 +150,9 @@ const ProductionItemsManager = () => {
       const response = await fetch(url, {
         method: method,
         headers: {
-          "Content-Type": "application/json"
+          "Content-Type": "application/json",
         },
-        body: JSON.stringify(formData)
+        body: JSON.stringify(formData),
       });
 
       const result = await response.json();
@@ -113,6 +164,7 @@ const ProductionItemsManager = () => {
         alert(
           "Error: " +
             (result.error ||
+              result.message ||
               "Something went wrong. Please try again.")
         );
 
@@ -130,12 +182,9 @@ const ProductionItemsManager = () => {
   const deleteItem = async (id) => {
     if (window.confirm("Are you sure you want to delete this item?")) {
       try {
-        const response = await fetch(
-          `${API_URL}/delete/${id}`,
-          {
-            method: "DELETE"
-          }
-        );
+        const response = await fetch(`${API_URL}/delete/${id}`, {
+          method: "DELETE",
+        });
 
         if (response.ok) fetchItems();
       } catch (error) {
@@ -146,27 +195,18 @@ const ProductionItemsManager = () => {
 
   const filteredItems = items.filter(
     (item) =>
-      item.name
-        ?.toLowerCase()
-        .includes(searchQuery.toLowerCase()) ||
-      item.code
-        ?.toLowerCase()
-        .includes(searchQuery.toLowerCase()) ||
-      item.customerName
-        ?.toLowerCase()
-        .includes(searchQuery.toLowerCase())
+      item.name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      item.code?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      item.customerName?.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
   return (
     <div className="max-w-7xl mx-auto p-4 md:p-8">
-
       {/* LIST VIEW */}
       {!isFormOpen && (
         <div className="bg-white rounded-xl shadow-md border border-slate-200 overflow-hidden">
-
           {/* Header */}
           <div className="p-5 border-b border-slate-100 flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-white">
-
             <div>
               <h2 className="text-xl font-bold text-slate-800">
                 Production Items (Job Cards)
@@ -182,25 +222,20 @@ const ProductionItemsManager = () => {
               className="flex items-center bg-blue-700 gap-2 hover:bg-blue-800 text-white px-5 py-2.5 rounded-lg shadow-sm font-semibold text-sm transition-colors"
             >
               <PlusIcon className="w-5 h-5" />
-
               Add New Job / Item
             </button>
           </div>
 
           {/* Search */}
           <div className="p-4 bg-slate-50/50 border-b border-slate-100 flex justify-end">
-
             <div className="relative w-full sm:w-64">
-
               <MagnifyingGlassIcon className="w-5 h-5 absolute left-3 top-2.5 text-slate-400" />
 
               <input
                 type="text"
                 placeholder="Search job or customer..."
                 value={searchQuery}
-                onChange={(e) =>
-                  setSearchQuery(e.target.value)
-                }
+                onChange={(e) => setSearchQuery(e.target.value)}
                 className="w-full pl-10 pr-4 py-2 bg-white border border-slate-300 rounded-lg text-sm outline-none focus:border-cyan-500 shadow-sm"
               />
             </div>
@@ -208,12 +243,9 @@ const ProductionItemsManager = () => {
 
           {/* Table */}
           <div className="overflow-x-auto">
-
             <table className="w-full text-left whitespace-nowrap">
-
               <thead>
                 <tr className="bg-slate-800 text-white">
-
                   <th className="p-4 text-xs font-bold uppercase w-16 text-center">
                     #
                   </th>
@@ -253,16 +285,12 @@ const ProductionItemsManager = () => {
               </thead>
 
               <tbody className="divide-y divide-slate-100">
-
                 {filteredItems.map((item, index) => (
                   <tr
-                    key={item._id}
+                    key={item._id || item.id || index}
                     className="hover:bg-cyan-50/30 transition-colors"
                   >
-
-                    <td className="p-4 text-sm text-center">
-                      {index + 1}
-                    </td>
+                    <td className="p-4 text-sm text-center">{index + 1}</td>
 
                     <td className="p-4 text-sm font-semibold text-slate-700">
                       {item.code}
@@ -277,13 +305,11 @@ const ProductionItemsManager = () => {
                     </td>
 
                     <td className="p-4 text-sm text-slate-700 font-semibold">
-                      {Number(item.quantity).toLocaleString()} {item.unit}
+                      {Number(item.quantity || 0).toLocaleString()} {item.unit}
                     </td>
 
                     <td className="p-4 text-sm text-slate-500">
-
                       <div className="flex flex-col gap-1">
-
                         <div>
                           <span className="bg-slate-100 px-2 py-1 rounded text-xs">
                             {item.paperType}
@@ -305,9 +331,7 @@ const ProductionItemsManager = () => {
                     </td>
 
                     <td className="p-4 text-center">
-
                       <div className="flex justify-center gap-1 text-[10px] font-bold text-white">
-
                         {item.requirePrinting && (
                           <span className="bg-purple-600 px-1.5 py-0.5 rounded">
                             PR
@@ -335,7 +359,6 @@ const ProductionItemsManager = () => {
                     </td>
 
                     <td className="p-4 text-center">
-
                       <span
                         className={`px-3 py-1 text-[10px] font-black rounded-full uppercase ${
                           item.status === "Active"
@@ -347,7 +370,6 @@ const ProductionItemsManager = () => {
                       </span>
 
                       <div className="mt-1">
-
                         <span
                           className={`px-2 py-0.5 rounded text-[10px] font-bold ${
                             item.priority === "Urgent"
@@ -363,9 +385,7 @@ const ProductionItemsManager = () => {
                     </td>
 
                     <td className="p-4">
-
                       <div className="flex justify-center gap-2">
-
                         <button
                           onClick={() => openForm(item)}
                           className="p-2 text-cyan-600 hover:bg-cyan-100 rounded-lg"
@@ -374,7 +394,7 @@ const ProductionItemsManager = () => {
                         </button>
 
                         <button
-                          onClick={() => deleteItem(item._id)}
+                          onClick={() => deleteItem(item._id || item.id)}
                           className="p-2 text-red-500 hover:bg-red-100 rounded-lg"
                         >
                           <TrashIcon className="w-5 h-5" />
@@ -403,12 +423,9 @@ const ProductionItemsManager = () => {
       {/* FORM VIEW */}
       {isFormOpen && (
         <div className="bg-white rounded-xl shadow-md border border-slate-200 overflow-hidden min-h-[70vh]">
-
           {/* Form Header */}
           <div className="flex bg-blue-700 justify-between items-center p-5">
-
             <div className="flex items-center gap-3">
-
               <button
                 type="button"
                 onClick={closeForm}
@@ -433,20 +450,14 @@ const ProductionItemsManager = () => {
             </button>
           </div>
 
-          <form
-            onSubmit={handleSubmit}
-            className="p-6 md:p-8 space-y-8"
-          >
-
+          <form onSubmit={handleSubmit} className="p-6 md:p-8 space-y-8">
             {/* Section 1 */}
             <div>
-
               <h4 className="text-xs font-bold text-blue-700 uppercase tracking-wider mb-4 border-b pb-2">
                 1. Basic Information
               </h4>
 
               <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-
                 <div>
                   <label className="block text-xs font-bold text-slate-500 mb-1">
                     Job Code
@@ -461,7 +472,6 @@ const ProductionItemsManager = () => {
                 </div>
 
                 <div className="md:col-span-2">
-
                   <label className="block text-xs font-bold text-slate-500 mb-1">
                     Item / Job Name
                   </label>
@@ -472,7 +482,7 @@ const ProductionItemsManager = () => {
                     onChange={(e) =>
                       setFormData({
                         ...formData,
-                        name: e.target.value
+                        name: e.target.value,
                       })
                     }
                     className="w-full p-2.5 bg-slate-50 border border-slate-300 rounded-lg outline-none focus:border-cyan-500 focus:bg-white"
@@ -482,7 +492,6 @@ const ProductionItemsManager = () => {
                 </div>
 
                 <div>
-
                   <label className="block text-xs font-bold text-slate-500 mb-1">
                     Customer Name
                   </label>
@@ -493,7 +502,7 @@ const ProductionItemsManager = () => {
                     onChange={(e) =>
                       setFormData({
                         ...formData,
-                        customerName: e.target.value
+                        customerName: e.target.value,
                       })
                     }
                     className="w-full p-2.5 bg-slate-50 border border-slate-300 rounded-lg outline-none focus:border-cyan-500 focus:bg-white"
@@ -503,7 +512,6 @@ const ProductionItemsManager = () => {
                 </div>
 
                 <div>
-
                   <label className="block text-xs font-bold text-slate-500 mb-1">
                     Customer PO
                   </label>
@@ -514,7 +522,7 @@ const ProductionItemsManager = () => {
                     onChange={(e) =>
                       setFormData({
                         ...formData,
-                        customerPO: e.target.value
+                        customerPO: e.target.value,
                       })
                     }
                     className="w-full p-2.5 bg-slate-50 border border-slate-300 rounded-lg outline-none focus:border-cyan-500 focus:bg-white"
@@ -526,15 +534,12 @@ const ProductionItemsManager = () => {
 
             {/* Section 2 */}
             <div>
-
               <h4 className="text-xs font-bold text-blue-700 uppercase tracking-wider mb-4 border-b pb-2">
                 2. Paper & Size Specifications
               </h4>
 
               <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-
                 <div>
-
                   <label className="block text-xs font-bold text-slate-500 mb-1">
                     Paper Type
                   </label>
@@ -544,7 +549,7 @@ const ProductionItemsManager = () => {
                     onChange={(e) =>
                       setFormData({
                         ...formData,
-                        paperType: e.target.value
+                        paperType: e.target.value,
                       })
                     }
                     className="w-full p-2.5 bg-slate-50 border border-slate-300 rounded-lg outline-none focus:border-cyan-500 focus:bg-white"
@@ -559,7 +564,6 @@ const ProductionItemsManager = () => {
                 </div>
 
                 <div>
-
                   <label className="block text-xs font-bold text-slate-500 mb-1">
                     Grammage (GSM)
                   </label>
@@ -570,7 +574,7 @@ const ProductionItemsManager = () => {
                     onChange={(e) =>
                       setFormData({
                         ...formData,
-                        gsm: e.target.value
+                        gsm: e.target.value,
                       })
                     }
                     className="w-full p-2.5 bg-slate-50 border border-slate-300 rounded-lg outline-none focus:border-cyan-500 focus:bg-white"
@@ -580,7 +584,6 @@ const ProductionItemsManager = () => {
                 </div>
 
                 <div>
-
                   <label className="block text-xs font-bold text-slate-500 mb-1">
                     Sheet Size (Open)
                   </label>
@@ -591,7 +594,7 @@ const ProductionItemsManager = () => {
                     onChange={(e) =>
                       setFormData({
                         ...formData,
-                        sheetSize: e.target.value
+                        sheetSize: e.target.value,
                       })
                     }
                     className="w-full p-2.5 bg-slate-50 border border-slate-300 rounded-lg outline-none focus:border-cyan-500 focus:bg-white"
@@ -601,7 +604,6 @@ const ProductionItemsManager = () => {
                 </div>
 
                 <div>
-
                   <label className="block text-xs font-bold text-slate-500 mb-1">
                     Finished Size
                   </label>
@@ -612,7 +614,7 @@ const ProductionItemsManager = () => {
                     onChange={(e) =>
                       setFormData({
                         ...formData,
-                        finishedSize: e.target.value
+                        finishedSize: e.target.value,
                       })
                     }
                     className="w-full p-2.5 bg-slate-50 border border-slate-300 rounded-lg outline-none focus:border-cyan-500 focus:bg-white"
@@ -621,7 +623,6 @@ const ProductionItemsManager = () => {
                 </div>
 
                 <div>
-
                   <label className="block text-xs font-bold text-slate-500 mb-1">
                     Order Qty
                   </label>
@@ -632,7 +633,7 @@ const ProductionItemsManager = () => {
                     onChange={(e) =>
                       setFormData({
                         ...formData,
-                        quantity: e.target.value
+                        quantity: e.target.value,
                       })
                     }
                     className="w-full p-2.5 bg-slate-50 border border-slate-300 rounded-lg outline-none focus:border-cyan-500 focus:bg-white"
@@ -642,7 +643,6 @@ const ProductionItemsManager = () => {
                 </div>
 
                 <div>
-
                   <label className="block text-xs font-bold text-slate-500 mb-1">
                     Unit
                   </label>
@@ -652,7 +652,7 @@ const ProductionItemsManager = () => {
                     onChange={(e) =>
                       setFormData({
                         ...formData,
-                        unit: e.target.value
+                        unit: e.target.value,
                       })
                     }
                     className="w-full p-2.5 bg-slate-50 border border-slate-300 rounded-lg outline-none focus:border-cyan-500 focus:bg-white"
@@ -669,15 +669,12 @@ const ProductionItemsManager = () => {
 
             {/* Section 3 */}
             <div>
-
               <h4 className="text-xs font-bold text-blue-700 uppercase tracking-wider mb-4 border-b pb-2">
                 3. Printing & Machine Specs
               </h4>
 
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-
                 <div>
-
                   <label className="block text-xs font-bold text-slate-500 mb-1">
                     No. of Colors
                   </label>
@@ -688,7 +685,7 @@ const ProductionItemsManager = () => {
                     onChange={(e) =>
                       setFormData({
                         ...formData,
-                        noOfColors: e.target.value
+                        noOfColors: e.target.value,
                       })
                     }
                     className="w-full p-2.5 bg-slate-50 border border-slate-300 rounded-lg outline-none focus:border-cyan-500 focus:bg-white"
@@ -697,7 +694,6 @@ const ProductionItemsManager = () => {
                 </div>
 
                 <div>
-
                   <label className="block text-xs font-bold text-slate-500 mb-1">
                     Die / Plate Number
                   </label>
@@ -708,7 +704,7 @@ const ProductionItemsManager = () => {
                     onChange={(e) =>
                       setFormData({
                         ...formData,
-                        dieNo: e.target.value
+                        dieNo: e.target.value,
                       })
                     }
                     className="w-full p-2.5 bg-slate-50 border border-slate-300 rounded-lg outline-none focus:border-cyan-500 focus:bg-white"
@@ -717,7 +713,6 @@ const ProductionItemsManager = () => {
                 </div>
 
                 <div>
-
                   <label className="block text-xs font-bold text-slate-500 mb-1">
                     Allocated Sheets
                   </label>
@@ -728,7 +723,7 @@ const ProductionItemsManager = () => {
                     onChange={(e) =>
                       setFormData({
                         ...formData,
-                        totalSheets: e.target.value
+                        totalSheets: e.target.value,
                       })
                     }
                     className="w-full p-2.5 bg-slate-50 border border-slate-300 rounded-lg outline-none focus:border-cyan-500 focus:bg-white"
@@ -737,7 +732,6 @@ const ProductionItemsManager = () => {
                 </div>
 
                 <div>
-
                   <label className="block text-xs font-bold text-slate-500 mb-1">
                     Delivery Date
                   </label>
@@ -748,7 +742,7 @@ const ProductionItemsManager = () => {
                     onChange={(e) =>
                       setFormData({
                         ...formData,
-                        deliveryDate: e.target.value
+                        deliveryDate: e.target.value,
                       })
                     }
                     className="w-full p-2.5 bg-slate-50 border border-slate-300 rounded-lg outline-none focus:border-cyan-500 focus:bg-white"
@@ -756,7 +750,6 @@ const ProductionItemsManager = () => {
                 </div>
 
                 <div>
-
                   <label className="block text-xs font-bold text-slate-500 mb-1">
                     Priority
                   </label>
@@ -766,7 +759,7 @@ const ProductionItemsManager = () => {
                     onChange={(e) =>
                       setFormData({
                         ...formData,
-                        priority: e.target.value
+                        priority: e.target.value,
                       })
                     }
                     className="w-full p-2.5 bg-slate-50 border border-slate-300 rounded-lg outline-none focus:border-cyan-500 focus:bg-white"
@@ -781,7 +774,6 @@ const ProductionItemsManager = () => {
 
             {/* Section 4 */}
             <div>
-
               <h4 className="text-xs font-bold text-blue-700 uppercase tracking-wider mb-4 border-b pb-2">
                 4. Remarks / Special Instructions
               </h4>
@@ -792,7 +784,7 @@ const ProductionItemsManager = () => {
                 onChange={(e) =>
                   setFormData({
                     ...formData,
-                    remarks: e.target.value
+                    remarks: e.target.value,
                   })
                 }
                 placeholder="Write any special production instructions here..."
@@ -802,26 +794,24 @@ const ProductionItemsManager = () => {
 
             {/* Section 5 */}
             <div>
-
               <h4 className="text-xs font-bold text-blue-700 uppercase tracking-wider mb-2 border-b pb-2">
                 5. Required Production Steps
               </h4>
 
               <p className="text-[11px] text-slate-400 mb-4">
-                Enable the required production processes for this job to route the workflow correctly.
+                Enable the required production processes for this job to route
+                the workflow correctly.
               </p>
 
               <div className="grid grid-cols-2 md:grid-cols-5 gap-4 bg-slate-50 p-5 rounded-xl border border-slate-200">
-
                 <label className="flex items-center gap-2 cursor-pointer select-none">
-
                   <input
                     type="checkbox"
                     checked={formData.requirePrinting}
                     onChange={(e) =>
                       setFormData({
                         ...formData,
-                        requirePrinting: e.target.checked
+                        requirePrinting: e.target.checked,
                       })
                     }
                     className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
@@ -833,14 +823,13 @@ const ProductionItemsManager = () => {
                 </label>
 
                 <label className="flex items-center gap-2 cursor-pointer select-none">
-
                   <input
                     type="checkbox"
                     checked={formData.requireLamination}
                     onChange={(e) =>
                       setFormData({
                         ...formData,
-                        requireLamination: e.target.checked
+                        requireLamination: e.target.checked,
                       })
                     }
                     className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
@@ -852,14 +841,13 @@ const ProductionItemsManager = () => {
                 </label>
 
                 <label className="flex items-center gap-2 cursor-pointer select-none">
-
                   <input
                     type="checkbox"
                     checked={formData.requireDieCutting}
                     onChange={(e) =>
                       setFormData({
                         ...formData,
-                        requireDieCutting: e.target.checked
+                        requireDieCutting: e.target.checked,
                       })
                     }
                     className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
@@ -871,14 +859,13 @@ const ProductionItemsManager = () => {
                 </label>
 
                 <label className="flex items-center gap-2 cursor-pointer select-none">
-
                   <input
                     type="checkbox"
                     checked={formData.requirePasting}
                     onChange={(e) =>
                       setFormData({
                         ...formData,
-                        requirePasting: e.target.checked
+                        requirePasting: e.target.checked,
                       })
                     }
                     className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
@@ -890,13 +877,12 @@ const ProductionItemsManager = () => {
                 </label>
 
                 <div>
-
                   <select
                     value={formData.status}
                     onChange={(e) =>
                       setFormData({
                         ...formData,
-                        status: e.target.value
+                        status: e.target.value,
                       })
                     }
                     className="w-full p-1.5 bg-white border border-slate-300 text-xs rounded font-bold outline-none focus:border-cyan-500"
@@ -910,7 +896,6 @@ const ProductionItemsManager = () => {
 
             {/* Actions */}
             <div className="flex gap-4 border-t pt-6 justify-end">
-
               <button
                 type="button"
                 onClick={closeForm}

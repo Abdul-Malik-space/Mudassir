@@ -21,10 +21,78 @@ const emptyItem = {
   quantity: "",
   unit: "Rolls",
   unitPrice: "",
+  textType: "", // with-text / without-text / blank
 };
 
 const todayDate = () => new Date().toISOString().slice(0, 10);
 const money = (value) => `Rs. ${Number(value || 0).toLocaleString()}`;
+
+const safeText = (value) => {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+};
+
+const calculateItemAmount = (item) => {
+  return Number(item.quantity || 0) * Number(item.unitPrice || 0);
+};
+
+const isWithTextItem = (item) => {
+  const value =
+    item?.textType ??
+    item?.textStatus ??
+    item?.textOption ??
+    item?.withText ??
+    item?.hasText ??
+    item?.isWithText ??
+    "";
+
+  if (typeof value === "boolean") return value;
+
+  const normalized = String(value).toLowerCase().trim();
+
+  return [
+    "with-text",
+    "with text",
+    "with_text",
+    "yes",
+    "true",
+    "1",
+    "printed",
+    "text",
+  ].includes(normalized);
+};
+
+const getTextTypeValue = (item) => {
+  if (isWithTextItem(item)) return "with-text";
+
+  const value =
+    item?.textType ??
+    item?.textStatus ??
+    item?.textOption ??
+    item?.withText ??
+    item?.hasText ??
+    item?.isWithText ??
+    "";
+
+  const normalized = String(value).toLowerCase().trim();
+
+  if (
+    normalized === "without-text" ||
+    normalized === "without text" ||
+    normalized === "without_text" ||
+    normalized === "no" ||
+    normalized === "false" ||
+    normalized === "0"
+  ) {
+    return "without-text";
+  }
+
+  return "";
+};
 
 const RequiredLabel = ({ children }) => (
   <label className="text-xs font-bold text-slate-600 flex items-center gap-1">
@@ -129,7 +197,7 @@ const Invoices = () => {
 
   const totals = useMemo(() => {
     const subtotal = form.items.reduce((sum, item) => {
-      return sum + Number(item.quantity || 0) * Number(item.unitPrice || 0);
+      return sum + calculateItemAmount(item);
     }, 0);
 
     const salesTax = form.taxType === "with-tax" ? subtotal * 0.18 : 0;
@@ -209,6 +277,7 @@ const Invoices = () => {
               quantity: item.quantity || "",
               unit: item.unit || "Rolls",
               unitPrice: getRateFromSalesOrder(item, index, order),
+              textType: getTextTypeValue(item),
             }))
           : [{ ...emptyItem }],
     });
@@ -245,12 +314,17 @@ const Invoices = () => {
       return;
     }
 
-    const validItems = form.items.filter(
-      (item) =>
-        item.description.trim() &&
-        Number(item.quantity || 0) > 0 &&
-        Number(item.unitPrice || 0) >= 0
-    );
+    const validItems = form.items
+      .filter(
+        (item) =>
+          item.description.trim() &&
+          Number(item.quantity || 0) > 0 &&
+          Number(item.unitPrice || 0) >= 0
+      )
+      .map((item) => ({
+        ...item,
+        amount: calculateItemAmount(item),
+      }));
 
     if (validItems.length === 0) {
       alert("Please at least one valid invoice item add karein");
@@ -300,7 +374,8 @@ const Invoices = () => {
 
     setForm({
       invoiceNo: invoice.invoiceNo || "",
-      deliveryChallan: invoice.deliveryChallan?._id || invoice.deliveryChallan || "",
+      deliveryChallan:
+        invoice.deliveryChallan?._id || invoice.deliveryChallan || "",
       invoiceDate: invoice.invoiceDate || todayDate(),
       poNo: invoice.poNo || "",
       taxType: invoice.taxType || "without-tax",
@@ -309,7 +384,13 @@ const Invoices = () => {
       paidAmount: invoice.paidAmount || "",
       status: invoice.status || "Draft",
       remarks: invoice.remarks || "",
-      items: invoice.items?.length ? invoice.items : [{ ...emptyItem }],
+      items: invoice.items?.length
+        ? invoice.items.map((item) => ({
+            ...emptyItem,
+            ...item,
+            textType: getTextTypeValue(item),
+          }))
+        : [{ ...emptyItem }],
     });
 
     setShowForm(true);
@@ -334,179 +415,389 @@ const Invoices = () => {
   };
 
   const printInvoice = (invoice) => {
-    const rows = invoice.items
-      .map(
-        (item, index) => `
-        <tr>
-          <td>${index + 1}</td>
-          <td>${item.description || ""}<br/><small>${item.size || ""}</small></td>
-          <td>${item.cartons || ""}</td>
-          <td>${item.quantity || ""}</td>
-          <td>${item.unit || ""}</td>
-          <td>${Number(item.unitPrice || 0).toLocaleString()}</td>
-          <td>${Number(item.amount || 0).toLocaleString()}</td>
-        </tr>
-      `
-      )
-      .join("");
+    const buildRows = () => {
+      return invoice.items
+        .map((item, index) => {
+          const textBadge = isWithTextItem(item)
+            ? `<span class="text-badge">With Text</span>`
+            : "";
+
+          const amount =
+            Number(item.amount || 0) > 0 ? item.amount : calculateItemAmount(item);
+
+          return `
+            <tr>
+              <td class="center">${index + 1}</td>
+              <td>
+                <div class="desc-line">
+                  <span>${safeText(item.description || "")}</span>
+                  ${textBadge}
+                </div>
+                ${
+                  item.size
+                    ? `<div class="size-line">${safeText(item.size)}</div>`
+                    : ""
+                }
+              </td>
+              <td class="center">${safeText(item.cartons || "")}</td>
+              <td class="center">${safeText(item.quantity || "")}</td>
+              <td class="center">${safeText(item.unit || "")}</td>
+              <td class="right">${Number(item.unitPrice || 0).toLocaleString()}</td>
+              <td class="right">${Number(amount || 0).toLocaleString()}</td>
+            </tr>
+          `;
+        })
+        .join("");
+    };
 
     const taxRow =
       invoice.taxType === "with-tax"
         ? `<div><span>Sales Tax 18%</span><b>${money(invoice.salesTax)}</b></div>`
         : `<div><span>Sales Tax</span><b>Without Tax</b></div>`;
 
+    const invoiceCopies = ["ALKARAM", "ALIF"];
+
+    const buildInvoicePage = (companyName) => `
+      <section class="invoice-page">
+        <div class="top">
+          <h1>${companyName}</h1>
+          <p>Commercial Invoice</p>
+          <p>Lahore, Pakistan</p>
+        </div>
+
+        <div class="title">COMMERCIAL INVOICE</div>
+
+        <div class="meta">
+          <div class="box">
+            <div class="field-row">
+              <b>Customer Name:</b>
+              <span>${safeText(invoice.customerName || "")}</span>
+            </div>
+            <div class="field-row">
+              <b>Address:</b>
+              <span>${safeText(invoice.customerAddress || "")}</span>
+            </div>
+            <div class="field-row">
+              <b>Phone:</b>
+              <span>${safeText(invoice.customerPhone || "")}</span>
+            </div>
+            <div class="field-row">
+              <b>Sales Tax Reg #:</b>
+              <span>${safeText(invoice.salesTaxRegNo || "-")}</span>
+            </div>
+            <div class="field-row">
+              <b>National Tax #:</b>
+              <span>${safeText(invoice.nationalTaxNo || "-")}</span>
+            </div>
+          </div>
+
+          <div class="box">
+            <div class="field-row">
+              <b>Invoice No:</b>
+              <span>${safeText(invoice.invoiceNo || "")}</span>
+            </div>
+            <div class="field-row">
+              <b>Dated:</b>
+              <span>${safeText(invoice.invoiceDate || "")}</span>
+            </div>
+            <div class="field-row">
+              <b>Delivery Challan:</b>
+              <span>${safeText(invoice.challanNo || "")}</span>
+            </div>
+            <div class="field-row">
+              <b>Sales Order:</b>
+              <span>${safeText(invoice.salesOrderNo || "")}</span>
+            </div>
+            <div class="field-row">
+              <b>PO #:</b>
+              <span>${safeText(invoice.poNo || "")}</span>
+            </div>
+          </div>
+        </div>
+
+        <table>
+          <thead>
+            <tr>
+              <th style="width: 45px;">Sr</th>
+              <th>Description</th>
+              <th style="width: 85px;">Cartons</th>
+              <th style="width: 85px;">Qty</th>
+              <th style="width: 85px;">Unit</th>
+              <th style="width: 110px;">Unit Price</th>
+              <th style="width: 120px;">Amount</th>
+            </tr>
+          </thead>
+          <tbody>${buildRows()}</tbody>
+        </table>
+
+        <div class="bottom-area">
+          <div class="remarks">
+            <b>Remarks:</b>
+            <span>${safeText(invoice.remarks || "")}</span>
+          </div>
+
+          <div class="totals">
+            <div><span>Total</span><b>${money(invoice.subtotal)}</b></div>
+            ${taxRow}
+            <div class="grand">
+              <span>Tax Inclusive Value</span>
+              <b>${money(invoice.grandTotal)}</b>
+            </div>
+            <div><span>Paid Amount</span><b>${money(invoice.paidAmount)}</b></div>
+            <div><span>Balance</span><b>${money(invoice.balance)}</b></div>
+          </div>
+        </div>
+
+        <div class="footer">
+          <div class="line">Prepared By</div>
+          <div class="line">For the Company</div>
+        </div>
+      </section>
+    `;
+
     const printWindow = window.open("", "_blank");
 
     printWindow.document.write(`
       <html>
         <head>
-          <title>${invoice.invoiceNo}</title>
+          <title>${safeText(invoice.invoiceNo || "Invoice")}</title>
+
           <style>
-            body {
-              font-family: Arial, sans-serif;
-              padding: 32px;
-              color: #111827;
+            @page {
+              size: A4 landscape;
+              margin: 8mm;
             }
+
+            * {
+              box-sizing: border-box;
+            }
+
+            html,
+            body {
+              margin: 0;
+              padding: 0;
+              background: #ffffff;
+              color: #111827;
+              font-family: Arial, sans-serif;
+            }
+
+            body {
+              font-size: 14px;
+            }
+
+            .invoice-page {
+              width: 100%;
+              min-height: 190mm;
+              padding: 4mm;
+              display: flex;
+              flex-direction: column;
+              page-break-after: always;
+              break-after: page;
+            }
+
+            .invoice-page:last-child {
+              page-break-after: auto;
+              break-after: auto;
+            }
+
             .top {
               text-align: center;
               border-bottom: 2px solid #111827;
-              padding-bottom: 10px;
+              padding-bottom: 8px;
             }
+
             .top h1 {
               margin: 0;
-              font-size: 30px;
+              font-size: 34px;
+              line-height: 1.1;
               text-transform: uppercase;
               letter-spacing: 1px;
+              font-weight: 800;
             }
+
             .top p {
-              margin: 4px 0;
-              font-size: 12px;
+              margin: 3px 0;
+              font-size: 13px;
+              font-weight: 500;
             }
+
             .title {
               text-align: center;
-              font-size: 18px;
-              font-weight: bold;
+              font-size: 20px;
+              font-weight: 800;
               text-decoration: underline;
-              margin: 18px 0;
+              margin: 12px 0;
+              letter-spacing: 0.5px;
             }
+
             .meta {
               display: grid;
               grid-template-columns: 1fr 1fr;
               gap: 12px;
               margin-bottom: 12px;
             }
+
             .box {
-              border: 1px solid #111827;
-              padding: 10px;
-              min-height: 80px;
-              font-size: 13px;
+              border: 1.5px solid #111827;
+              padding: 10px 12px;
+              min-height: 88px;
+              font-size: 14px;
+              line-height: 1.5;
             }
+
+            .field-row {
+              display: flex;
+              gap: 6px;
+              margin-bottom: 2px;
+            }
+
+            .field-row b {
+              min-width: 130px;
+            }
+
             table {
               width: 100%;
               border-collapse: collapse;
-              margin-top: 12px;
+              margin-top: 8px;
             }
-            th, td {
-              border: 1px solid #111827;
-              padding: 7px;
-              font-size: 12px;
-              text-align: left;
+
+            th,
+            td {
+              border: 1.2px solid #111827;
+              padding: 8px;
+              font-size: 14px;
+              vertical-align: top;
             }
+
             th {
               background: #f3f4f6;
               text-align: center;
+              font-weight: 800;
             }
+
+            .center {
+              text-align: center;
+            }
+
+            .right {
+              text-align: right;
+            }
+
+            .desc-line {
+              display: flex;
+              align-items: center;
+              gap: 8px;
+              font-weight: 700;
+              font-size: 14px;
+            }
+
+            .size-line {
+              margin-top: 3px;
+              font-size: 12px;
+              color: #374151;
+            }
+
+            .text-badge {
+              display: inline-block;
+              padding: 2px 7px;
+              border: 1px solid #111827;
+              border-radius: 10px;
+              font-size: 11px;
+              font-weight: 800;
+              white-space: nowrap;
+            }
+
+            .bottom-area {
+              display: grid;
+              grid-template-columns: 1fr 390px;
+              gap: 20px;
+              margin-top: 12px;
+              align-items: start;
+            }
+
+            .remarks {
+              font-size: 14px;
+              min-height: 80px;
+              padding-top: 4px;
+            }
+
+            .remarks b {
+              display: block;
+              margin-bottom: 6px;
+            }
+
             .totals {
-              width: 340px;
-              margin-left: auto;
-              margin-top: 14px;
-              font-size: 13px;
+              width: 100%;
+              font-size: 14px;
             }
+
             .totals div {
               display: flex;
               justify-content: space-between;
               border-bottom: 1px solid #d1d5db;
-              padding: 6px 0;
+              padding: 7px 0;
+              gap: 20px;
             }
+
+            .totals span {
+              font-weight: 600;
+            }
+
+            .totals b {
+              font-weight: 800;
+            }
+
             .grand {
-              font-size: 15px;
-              font-weight: bold;
+              font-size: 16px;
+              font-weight: 900;
               border-top: 2px solid #111827;
+              border-bottom: 2px solid #111827 !important;
             }
+
             .footer {
-              margin-top: 70px;
+              margin-top: auto;
+              padding-top: 38px;
               display: flex;
               justify-content: space-between;
-              font-size: 13px;
+              font-size: 14px;
+              font-weight: 700;
             }
+
             .line {
-              margin-top: 34px;
-              border-top: 1px solid #111827;
-              padding-top: 6px;
-              width: 220px;
+              border-top: 1.5px solid #111827;
+              padding-top: 7px;
+              width: 240px;
               text-align: center;
+            }
+
+            @media print {
+              html,
+              body {
+                -webkit-print-color-adjust: exact;
+                print-color-adjust: exact;
+              }
+
+              .invoice-page {
+                page-break-after: always;
+                break-after: page;
+              }
+
+              .invoice-page:last-child {
+                page-break-after: auto;
+                break-after: auto;
+              }
             }
           </style>
         </head>
+
         <body>
-          <div class="top">
-            <h1>Urwa Packages</h1>
-            <p>Commercial Invoice</p>
-            <p>Lahore, Pakistan</p>
-          </div>
+          ${invoiceCopies.map((companyName) => buildInvoicePage(companyName)).join("")}
 
-          <div class="title">COMMERCIAL INVOICE</div>
-
-          <div class="meta">
-            <div class="box">
-              <b>Customer Name:</b><br/>
-              ${invoice.customerName || ""}<br/>
-              <b>Address:</b> ${invoice.customerAddress || ""}<br/>
-              <b>Phone:</b> ${invoice.customerPhone || ""}<br/>
-              <b>Sales Tax Reg #:</b> ${invoice.salesTaxRegNo || "-"}<br/>
-              <b>National Tax #:</b> ${invoice.nationalTaxNo || "-"}
-            </div>
-
-            <div class="box">
-              <b>Invoice No:</b> ${invoice.invoiceNo || ""}<br/>
-              <b>Dated:</b> ${invoice.invoiceDate || ""}<br/>
-              <b>Delivery Challan:</b> ${invoice.challanNo || ""}<br/>
-              <b>Sales Order:</b> ${invoice.salesOrderNo || ""}<br/>
-              <b>PO #:</b> ${invoice.poNo || ""}
-            </div>
-          </div>
-
-          <table>
-            <thead>
-              <tr>
-                <th style="width:50px;">Sr</th>
-                <th>Description</th>
-                <th>Cartons</th>
-                <th>Qty</th>
-                <th>Unit</th>
-                <th>Unit Price</th>
-                <th>Amount</th>
-              </tr>
-            </thead>
-            <tbody>${rows}</tbody>
-          </table>
-
-          <div class="totals">
-            <div><span>Total</span><b>${money(invoice.subtotal)}</b></div>
-            ${taxRow}
-            <div class="grand"><span>Tax Inclusive Value</span><b>${money(invoice.grandTotal)}</b></div>
-            <div><span>Paid Amount</span><b>${money(invoice.paidAmount)}</b></div>
-            <div><span>Balance</span><b>${money(invoice.balance)}</b></div>
-          </div>
-
-          <p><b>Remarks:</b> ${invoice.remarks || ""}</p>
-
-          <div class="footer">
-            <div class="line">Prepared By</div>
-            <div class="line">For the Company</div>
-          </div>
-
-          <script>window.print();</script>
+          <script>
+            window.onload = function () {
+              window.print();
+            };
+          </script>
         </body>
       </html>
     `);
@@ -552,7 +843,9 @@ const Invoices = () => {
                 <RequiredLabel>Invoice No</RequiredLabel>
                 <input
                   value={form.invoiceNo}
-                  onChange={(e) => setForm({ ...form, invoiceNo: e.target.value })}
+                  onChange={(e) =>
+                    setForm({ ...form, invoiceNo: e.target.value })
+                  }
                   className="w-full border rounded-lg px-3 py-2 mt-1"
                   placeholder="INV-2026-0001"
                 />
@@ -579,7 +872,9 @@ const Invoices = () => {
                 <input
                   type="date"
                   value={form.invoiceDate}
-                  onChange={(e) => setForm({ ...form, invoiceDate: e.target.value })}
+                  onChange={(e) =>
+                    setForm({ ...form, invoiceDate: e.target.value })
+                  }
                   className="w-full border rounded-lg px-3 py-2 mt-1"
                 />
               </div>
@@ -624,7 +919,9 @@ const Invoices = () => {
                 <NormalLabel>Sales Tax Reg #</NormalLabel>
                 <input
                   value={form.salesTaxRegNo}
-                  onChange={(e) => setForm({ ...form, salesTaxRegNo: e.target.value })}
+                  onChange={(e) =>
+                    setForm({ ...form, salesTaxRegNo: e.target.value })
+                  }
                   className="w-full border rounded-lg px-3 py-2 mt-1"
                   placeholder="03-00-0000-000-00"
                 />
@@ -634,7 +931,9 @@ const Invoices = () => {
                 <NormalLabel>National Tax #</NormalLabel>
                 <input
                   value={form.nationalTaxNo}
-                  onChange={(e) => setForm({ ...form, nationalTaxNo: e.target.value })}
+                  onChange={(e) =>
+                    setForm({ ...form, nationalTaxNo: e.target.value })
+                  }
                   className="w-full border rounded-lg px-3 py-2 mt-1"
                   placeholder="0000000-0"
                 />
@@ -645,7 +944,9 @@ const Invoices = () => {
                 <input
                   type="number"
                   value={form.paidAmount}
-                  onChange={(e) => setForm({ ...form, paidAmount: e.target.value })}
+                  onChange={(e) =>
+                    setForm({ ...form, paidAmount: e.target.value })
+                  }
                   className="w-full border rounded-lg px-3 py-2 mt-1"
                   placeholder="0"
                 />
@@ -685,6 +986,7 @@ const Invoices = () => {
                         Description <span className="text-red-600">*</span>
                       </th>
                       <th className="p-2 text-left">Size</th>
+                      <th className="p-2 text-left">Text</th>
                       <th className="p-2 text-left">Cartons</th>
                       <th className="p-2 text-left">
                         Qty <span className="text-red-600">*</span>
@@ -704,7 +1006,9 @@ const Invoices = () => {
                         <td className="p-2 min-w-[240px]">
                           <input
                             value={item.description}
-                            onChange={(e) => updateItem(index, "description", e.target.value)}
+                            onChange={(e) =>
+                              updateItem(index, "description", e.target.value)
+                            }
                             className="w-full border rounded px-2 py-1.5"
                             placeholder="Packing Tape Printed"
                           />
@@ -713,17 +1017,37 @@ const Invoices = () => {
                         <td className="p-2 min-w-[150px]">
                           <input
                             value={item.size}
-                            onChange={(e) => updateItem(index, "size", e.target.value)}
+                            onChange={(e) =>
+                              updateItem(index, "size", e.target.value)
+                            }
                             className="w-full border rounded px-2 py-1.5"
                             placeholder='2" x 72 Yards'
                           />
+                        </td>
+
+                        <td className="p-2 min-w-[140px]">
+                          <select
+                            value={item.textType || ""}
+                            onChange={(e) =>
+                              updateItem(index, "textType", e.target.value)
+                            }
+                            className="w-full border rounded px-2 py-1.5 bg-white"
+                          >
+                            <option value="">No Label</option>
+                            <option value="with-text">With Text</option>
+                            <option value="without-text">
+                              Without Text
+                            </option>
+                          </select>
                         </td>
 
                         <td className="p-2 min-w-[100px]">
                           <input
                             type="number"
                             value={item.cartons}
-                            onChange={(e) => updateItem(index, "cartons", e.target.value)}
+                            onChange={(e) =>
+                              updateItem(index, "cartons", e.target.value)
+                            }
                             className="w-full border rounded px-2 py-1.5"
                             placeholder="5"
                           />
@@ -733,7 +1057,9 @@ const Invoices = () => {
                           <input
                             type="number"
                             value={item.quantity}
-                            onChange={(e) => updateItem(index, "quantity", e.target.value)}
+                            onChange={(e) =>
+                              updateItem(index, "quantity", e.target.value)
+                            }
                             className="w-full border rounded px-2 py-1.5"
                             placeholder="450"
                           />
@@ -752,14 +1078,16 @@ const Invoices = () => {
                           <input
                             type="number"
                             value={item.unitPrice}
-                            onChange={(e) => updateItem(index, "unitPrice", e.target.value)}
+                            onChange={(e) =>
+                              updateItem(index, "unitPrice", e.target.value)
+                            }
                             className="w-full border rounded px-2 py-1.5"
                             placeholder="190"
                           />
                         </td>
 
                         <td className="p-2 text-right font-bold">
-                          {money(Number(item.quantity || 0) * Number(item.unitPrice || 0))}
+                          {money(calculateItemAmount(item))}
                         </td>
 
                         <td className="p-2 text-center">
@@ -795,7 +1123,9 @@ const Invoices = () => {
                 </div>
 
                 <div className="flex justify-between">
-                  <span>Sales Tax {form.taxType === "with-tax" ? "18%" : "0%"}</span>
+                  <span>
+                    Sales Tax {form.taxType === "with-tax" ? "18%" : "0%"}
+                  </span>
                   <b>{money(totals.salesTax)}</b>
                 </div>
 
@@ -919,18 +1249,24 @@ const Invoices = () => {
               ) : (
                 invoices.map((invoice) => (
                   <tr key={invoice._id} className="border-t hover:bg-slate-50">
-                    <td className="p-3 font-bold text-blue-700">{invoice.invoiceNo}</td>
+                    <td className="p-3 font-bold text-blue-700">
+                      {invoice.invoiceNo}
+                    </td>
 
                     <td className="p-3">
                       <div className="font-semibold">{invoice.customerName}</div>
-                      <div className="text-xs text-slate-500">{invoice.customerPhone}</div>
+                      <div className="text-xs text-slate-500">
+                        {invoice.customerPhone}
+                      </div>
                     </td>
 
                     <td className="p-3">{invoice.challanNo}</td>
 
                     <td className="p-3">{invoice.invoiceDate}</td>
 
-                    <td className="p-3 text-right font-bold">{money(invoice.grandTotal)}</td>
+                    <td className="p-3 text-right font-bold">
+                      {money(invoice.grandTotal)}
+                    </td>
 
                     <td className="p-3 text-right font-bold text-red-600">
                       {money(invoice.balance)}

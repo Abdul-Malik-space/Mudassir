@@ -1,95 +1,73 @@
-
-import { Zap } from 'lucide-react';
+import React, { useEffect, useState } from "react";
 import logoImg from "./logo.png";
-import React, { useState } from 'react';
+
 import {
+  Zap,
   LayoutDashboard,
-  UserPlus,
   Users,
   Store,
   Package,
   ShoppingCart,
-  Building2,
   Factory,
   CheckCircle2,
   Settings,
   List,
-  Layers,
-  Tags,
-  Ruler,
   ChevronDown,
   Warehouse,
   Wallet,
   Landmark,
   BarChart3,
-  Receipt
-} from 'lucide-react';
+  Receipt,
+  BookOpen,
+  Banknote,
+  ArrowDownCircle,
+  ArrowUpCircle,
+} from "lucide-react";
+
 const menuItems = [
   {
     id: "dashboard",
     icon: LayoutDashboard,
     label: "Dashboard",
-    active: true,
   },
   {
     id: "customers",
     icon: Users,
     label: "Customer",
-    // submenu: [
-    //   { id: "add-customer", label: "Add Customer" },
-      
-    // ],
   },
   {
     id: "vendors",
     icon: Store,
     label: "Vendor",
-    // submenu: [
-    //   // { id: "add-vendor", label: "Add Vendor" },
-      
-    // ],
-  },
-  {
-    id: "traders",
-    icon: UserPlus,
-    label: "Trader",
-    // submenu: [
-    //   { id: "add-trader", label: "Add Trader" },
-      
-    // ],
   },
   {
     id: "items",
     icon: Package,
     label: "Items",
     submenu: [
-      { id: "list-items", label: "List Items" },
-      { id: "categories-list", label: "Categories List" },
-      { id: "brand-list", label: "Brand List" },
-      { id: "unit-list", label: "Unit List" },
+      { id: "list-items", label: "List Items", icon: List },
+      { id: "categories-list", label: "Categories List", icon: List },
+      { id: "brand-list", label: "Brand List", icon: List },
+      { id: "unit-list", label: "Unit List", icon: List },
     ],
   },
   {
     id: "purchase",
     icon: ShoppingCart,
     label: "Purchase",
+    submenu: [
+      { id: "purchase-orders", label: "Purchase Orders", icon: List },
+      { id: "grn", label: "GRN", icon: Package },
+      { id: "purchases", label: "Purchases", icon: Receipt },
+    ],
   },
-  // {
-  //   id: "departments",
-  //   icon: Building2,
-  //   label: "Departments",
-  // },
   {
     id: "production",
     icon: Factory,
     label: "Production",
     submenu: [
-      { id: "production-items", label: "production-items" },
-      { id: "lamination", label: "Lamination" },
-      { id: "printing", label: "Printing" },
-      { id: "die-cutting", label: "Die Cutting" },
-      { id: "pasting", label: "Pasting" },
-      { id: "other-work", label: "Other Work" },
+      { id: "production-items", label: "Production Items", icon: List },
+      { id: "printing", label: "Printing", icon: List },
     ],
   },
   {
@@ -97,58 +75,113 @@ const menuItems = [
     icon: CheckCircle2,
     label: "Ready Product",
   },
-
-
   {
-  id: "sales",
-  icon: ShoppingCart,
-  label: "Sales",
-  submenu: [
-    { id: "sales-orders", label: "Sales Orders" },
-    { id: "delivery-challans", label: "Delivery Challans" },
-    { id: "invoices", label: "Invoices" },
-  ],
+    id: "sales",
+    icon: ShoppingCart,
+    label: "Sales",
+    submenu: [
+      { id: "sales-orders", label: "Sales Orders", icon: List },
+      { id: "delivery-challans", label: "Delivery Challans", icon: Package },
+      { id: "invoices", label: "Invoices", icon: Receipt },
+    ],
+  },
+  {
+  id: "general-journal",
+  icon: BookOpen,
+  label: "General Journal",
 },
-  { id: "expense", icon: Wallet, label: "Expense" },
-  { id: "payroll", icon: Users, label: "Payroll" },
-  { id: "accounts", icon: Landmark, label: "Accounts" },
-  { id: "warehouses", icon: Warehouse, label: "UrwaGodam" },
-  { id: "reports", icon: BarChart3, label: "Reports" },
-  { id: "settings", icon: Settings, label: "Settings" },
-
+  {
+    id: "expense",
+    icon: Wallet,
+    label: "Expense",
+  },
+  {
+    id: "payroll",
+    icon: Users,
+    label: "Payroll",
+  },
+  {
+    id: "accounts",
+    icon: Landmark,
+    label: "Accounts",
+  },
+  {
+    id: "warehouses",
+    icon: Warehouse,
+    label: "UrwaGodam",
+  },
+  {
+    id: "reports",
+    icon: BarChart3,
+    label: "Reports",
+  },
+  {
+    id: "settings",
+    icon: Settings,
+    label: "Settings",
+  },
 ];
 
-const Sidebar = ({ collapsed, onToggle, currentPage, onPageChange }) => {
-
-  const [expandedItems, setExpandedItems] = useState(new Set(["analytics"]));
+const Sidebar = ({
+  collapsed = false,
+  onToggle,
+  currentPage = "dashboard",
+  onPageChange,
+}) => {
+  const [expandedItems, setExpandedItems] = useState(new Set());
 
   const toggleExpanded = (itemId) => {
-    const newExpanded = new Set(expandedItems);
+    setExpandedItems((prev) => {
+      const newExpanded = new Set(prev);
 
-    if (newExpanded.has(itemId)) {
-      newExpanded.delete(itemId);
-    } else {
-      newExpanded.add(itemId);
-    }
+      if (newExpanded.has(itemId)) {
+        newExpanded.delete(itemId);
+      } else {
+        newExpanded.add(itemId);
+      }
 
-    setExpandedItems(newExpanded);
+      return newExpanded;
+    });
   };
+
+  const handlePageChange = (pageId) => {
+    if (onPageChange) {
+      onPageChange(pageId);
+    }
+  };
+
+  const isSubmenuActive = (item) => {
+    return item.submenu?.some((subitem) => subitem.id === currentPage);
+  };
+
+  useEffect(() => {
+    menuItems.forEach((item) => {
+      if (item.submenu?.some((subitem) => subitem.id === currentPage)) {
+        setExpandedItems((prev) => {
+          const newExpanded = new Set(prev);
+          newExpanded.add(item.id);
+          return newExpanded;
+        });
+      }
+    });
+  }, [currentPage]);
+
   return (
     <div
-      className={`${collapsed ? "w-20" : "w-72"
-        } transition-all duration-300 ease-in-out bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl border-r border-slate-200/50 dark:border-slate-700/50 flex flex-col relative z-10`}
+      className={`${
+        collapsed ? "w-20" : "w-72"
+      } transition-all duration-300 ease-in-out bg-white/90 dark:bg-slate-900/90 backdrop-blur-xl border-r border-slate-200/60 dark:border-slate-700/60 flex flex-col relative z-10 shadow-sm`}
     >
       {/* Logo Section */}
-      <div className="p-6 border-b border-slate-200/50 dark:border-slate-700/50">
-        <div className="flex items-center space-x-3">
-          {/* Icon Box */}
-          <div className="w-10 h-10 bg-gradient-to-r from-blue-600 to-purple-600 rounded-xl flex items-center justify-center shadow-lg">
+      <div className="p-5 border-b border-slate-200/60 dark:border-slate-700/60">
+        <div className="flex items-center gap-3">
+          <div className="w-11 h-11 bg-gradient-to-r from-blue-600 to-purple-600 rounded-2xl flex items-center justify-center shadow-lg shadow-blue-500/25">
             <Zap className="w-6 h-6 text-white" />
           </div>
-          {/* Conditional Rendering */}
+
           {!collapsed && (
             <div>
-              <h1 className="text-xl font-bold text-slate-800 dark:text-white">
+              <h1 className="text-xl font-bold text-slate-800 dark:text-white leading-tight">
                 M.ERP
               </h1>
               <p className="text-xs text-slate-500 dark:text-slate-400">
@@ -156,73 +189,102 @@ const Sidebar = ({ collapsed, onToggle, currentPage, onPageChange }) => {
               </p>
             </div>
           )}
-
         </div>
       </div>
 
-      {/* Navigation i will display dynmic display */}
-
+      {/* Navigation */}
       <nav className="flex-1 p-4 space-y-2 overflow-y-auto">
         {menuItems.map((item) => {
+          const Icon = item.icon;
+          const hasSubmenu = Boolean(item.submenu);
+          const itemActive = currentPage === item.id;
+          const childActive = isSubmenuActive(item);
+          const isExpanded = expandedItems.has(item.id);
+          const parentActive = itemActive || childActive;
+
           return (
-            <div key={item.id}>
+            <div key={item.id} className="space-y-1">
               <button
-                className={`w-full flex items-center justify-between p-3 rounded-xl transition-all duration-200 ${currentPage === item.id || item.active
-                  ? "bg-gradient-to-r from-blue-500 to-purple-600 text-white shadow-lg shadow-blue-500/25"
-                  : "text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800/50"
-                  }`}
+                title={collapsed ? item.label : ""}
+                className={`w-full flex items-center justify-between p-3 rounded-2xl transition-all duration-300 group ${
+                  parentActive
+                    ? "bg-gradient-to-r from-blue-500 to-purple-600 text-white shadow-lg shadow-blue-500/25"
+                    : "text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800/60 hover:text-slate-900 dark:hover:text-white"
+                }`}
                 onClick={() => {
-                  if (item.submenu) {
+                  if (hasSubmenu) {
                     toggleExpanded(item.id);
                   } else {
-                    onPageChange(item.id);
+                    handlePageChange(item.id);
                   }
                 }}
               >
-                <div className="flex items-center space-x-3">
-                  <item.icon className="w-5 h-5" />
-
-                  {/* Conditional Rendering */}
+                <div className="flex items-center gap-3 min-w-0">
+                  <Icon
+                    className={`w-5 h-5 shrink-0 ${
+                      parentActive
+                        ? "text-white"
+                        : "text-slate-500 dark:text-slate-400 group-hover:text-blue-600 dark:group-hover:text-blue-400"
+                    }`}
+                  />
 
                   {!collapsed && (
-                    <>
-                      <span className="font-medium ml-2">{item.label}</span>
-                      {item.badge && (
-                        <span className="px-2 py-1 text-xs bg-red-500 text-white rounded-full">
-                          {item.badge}
-                        </span>
-                      )}
-
-                      {item.count && (
-                        <span className="px-2 py-1 text-xs bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300 rounded-full">
-                          {item.count}
-                        </span>
-
-                      )}
-                    </>
+                    <span className="font-medium truncate">{item.label}</span>
                   )}
-
-
-
                 </div>
-                {!collapsed && item.submenu && (
-                  <ChevronDown className={`w-4 h-4 transition-transform`} />
+
+                {!collapsed && hasSubmenu && (
+                  <ChevronDown
+                    className={`w-4 h-4 transition-transform duration-300 ${
+                      isExpanded ? "rotate-180" : "rotate-0"
+                    }`}
+                  />
                 )}
               </button>
 
-              {/* Sub Menus */}
-              {!collapsed && item.submenu && expandedItems.has(item.id) && (
-                <div className="ml-8 mt-2 space-y-1">
-                  {item.submenu.map((subitem) => {
-                    return (
-                      <button
-                        onClick={() => onPageChange(subitem.id)}
-                        className="w-full text-left p-2 text-sm text-slate-600 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800/50 rounded-lg transition-all"
-                      >
-                        {subitem.label}
-                      </button>
-                    );
-                  })}
+              {/* Sub Menu */}
+              {!collapsed && hasSubmenu && (
+                <div
+                  className={`overflow-hidden transition-all duration-300 ease-in-out ${
+                    isExpanded
+                      ? "max-h-96 opacity-100 translate-y-0"
+                      : "max-h-0 opacity-0 -translate-y-1"
+                  }`}
+                >
+                  <div className="ml-4 mt-2 pl-4 border-l border-slate-200 dark:border-slate-700 space-y-1">
+                    {item.submenu.map((subitem) => {
+                      const SubIcon = subitem.icon || List;
+                      const subActive = currentPage === subitem.id;
+
+                      return (
+                        <button
+                          key={subitem.id}
+                          onClick={() => handlePageChange(subitem.id)}
+                          className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm transition-all duration-200 ${
+                            subActive
+                              ? "bg-blue-50 dark:bg-blue-500/10 text-blue-700 dark:text-blue-300 font-semibold shadow-sm"
+                              : "text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800/60 hover:text-slate-800 dark:hover:text-slate-200"
+                          }`}
+                        >
+                          <span
+                            className={`w-7 h-7 rounded-lg flex items-center justify-center transition-all ${
+                              subActive
+                                ? "bg-blue-100 dark:bg-blue-500/20"
+                                : "bg-slate-100 dark:bg-slate-800"
+                            }`}
+                          >
+                            <SubIcon className="w-4 h-4" />
+                          </span>
+
+                          <span className="truncate">{subitem.label}</span>
+
+                          {subActive && (
+                            <span className="ml-auto w-2 h-2 rounded-full bg-blue-600 dark:bg-blue-300" />
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
               )}
             </div>
@@ -230,27 +292,31 @@ const Sidebar = ({ collapsed, onToggle, currentPage, onPageChange }) => {
         })}
       </nav>
 
-      {/* user Profile */}
-      {collapsed && <div className="p-4 border-t border-slate-200/50 dark:border-slate-700/50">
-        <div className="flex items-center space-x-3 p-3 rounded-xl bg-slate-50 dark:bg-slate-800/50">
+      {/* User Profile */}
+      <div className="p-4 border-t border-slate-200/60 dark:border-slate-700/60">
+        <div
+          className={`flex items-center ${
+            collapsed ? "justify-center" : "gap-3"
+          } p-3 rounded-2xl bg-slate-50 dark:bg-slate-800/60`}
+        >
           <img
             src={logoImg}
             alt="Urwa Packages Logo"
             className="w-10 h-10 rounded-full ring-2 ring-blue-500"
           />
 
-          <div className='flex-1 min-w-0'>
-            <div className='flex-1 min-w-1'>
-              <p className="text-sm font-medium text-slate-800 dark:text-white truncate">
+          {!collapsed && (
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-semibold text-slate-800 dark:text-white truncate">
                 Urwa Packages
               </p>
               <p className="text-xs text-slate-500 dark:text-slate-400 truncate">
                 Packaging Solutions
               </p>
             </div>
-          </div>
+          )}
         </div>
-      </div>}
+      </div>
     </div>
   );
 };

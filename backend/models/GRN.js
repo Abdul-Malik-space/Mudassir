@@ -1,6 +1,6 @@
 const mongoose = require("mongoose");
 
-const invoiceItemSchema = new mongoose.Schema(
+const grnItemSchema = new mongoose.Schema(
   {
     item: {
       type: mongoose.Schema.Types.ObjectId,
@@ -20,33 +20,45 @@ const invoiceItemSchema = new mongoose.Schema(
       default: "",
     },
 
-    textType: {
-      type: String,
-      enum: ["", "with-text", "without-text"],
-      default: "",
-    },
-
-    cartons: {
+    orderedQty: {
       type: Number,
       default: 0,
       min: 0,
     },
 
-    quantity: {
+    receivedQty: {
       type: Number,
-      required: [true, "Quantity is required"],
+      required: [true, "Received quantity is required"],
+      min: 0,
+    },
+
+    rejectedQty: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+
+    acceptedQty: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+
+    pendingQty: {
+      type: Number,
+      default: 0,
       min: 0,
     },
 
     unit: {
       type: String,
       trim: true,
-      default: "Rolls",
+      default: "Pcs",
     },
 
     unitPrice: {
       type: Number,
-      required: [true, "Unit price is required"],
+      default: 0,
       min: 0,
     },
 
@@ -65,9 +77,9 @@ const invoiceItemSchema = new mongoose.Schema(
   { _id: false }
 );
 
-const invoiceSchema = new mongoose.Schema(
+const grnSchema = new mongoose.Schema(
   {
-    invoiceNo: {
+    grnNo: {
       type: String,
       required: true,
       unique: true,
@@ -75,119 +87,142 @@ const invoiceSchema = new mongoose.Schema(
       uppercase: true,
     },
 
-    deliveryChallan: {
+    purchaseOrder: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: "DeliveryChallan",
-      required: [true, "Delivery Challan is required"],
-      unique: true,
+      ref: "PurchaseOrder",
+      required: [true, "Purchase Order is required"],
+    },
+
+    purchaseOrderNo: {
+      type: String,
+      required: true,
+      trim: true,
+    },
+
+    vendor: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Vendor",
+      required: [true, "Vendor is required"],
+    },
+
+    vendorName: {
+      type: String,
+      required: true,
+      trim: true,
+    },
+
+    vendorPhone: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+
+    vendorEmail: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+
+    vendorAddress: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+
+    receivedDate: {
+      type: String,
+      required: [true, "Received date is required"],
     },
 
     challanNo: {
       type: String,
-      required: true,
       trim: true,
+      default: "",
     },
 
-    salesOrder: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "SalesOrder",
-      required: [true, "Sales Order is required"],
-    },
-
-    salesOrderNo: {
-      type: String,
-      required: true,
-      trim: true,
-    },
-
-    customer: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "Customer",
-      required: [true, "Customer is required"],
-    },
-
-    customerName: {
-      type: String,
-      required: true,
-      trim: true,
-    },
-
-    customerPhone: {
+    invoiceNo: {
       type: String,
       trim: true,
       default: "",
     },
 
-    customerEmail: {
+    vehicleNo: {
       type: String,
       trim: true,
       default: "",
     },
 
-    customerAddress: {
+    warehouse: {
+      type: String,
+      trim: true,
+      default: "Main Warehouse",
+    },
+
+    receivedBy: {
       type: String,
       trim: true,
       default: "",
     },
 
-    customerCity: {
+    checkedBy: {
       type: String,
       trim: true,
       default: "",
     },
 
-    invoiceDate: {
+    inspectionStatus: {
       type: String,
-      required: [true, "Invoice date is required"],
+      enum: ["Pending", "Passed", "Failed", "Partial"],
+      default: "Pending",
     },
 
-    poNo: {
+    status: {
       type: String,
-      trim: true,
-      default: "",
+      enum: ["Draft", "Received", "Posted", "Cancelled"],
+      default: "Received",
     },
 
-    taxType: {
+    purchaseStatus: {
       type: String,
-      enum: ["without-tax", "with-tax"],
-      default: "without-tax",
-    },
-
-    taxRate: {
-      type: Number,
-      default: 0,
-      min: 0,
-    },
-
-    salesTaxRegNo: {
-      type: String,
-      trim: true,
-      default: "",
-    },
-
-    nationalTaxNo: {
-      type: String,
-      trim: true,
-      default: "",
+      enum: ["Not Purchased", "Purchased"],
+      default: "Not Purchased",
     },
 
     items: {
-      type: [invoiceItemSchema],
+      type: [grnItemSchema],
       validate: {
         validator: function (items) {
           return items && items.length > 0;
         },
-        message: "At least one invoice item is required",
+        message: "At least one GRN item is required",
       },
     },
 
-    totalCartons: {
+    totalOrderedQty: {
       type: Number,
       default: 0,
       min: 0,
     },
 
-    totalQuantity: {
+    totalReceivedQty: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+
+    totalRejectedQty: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+
+    totalAcceptedQty: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+
+    totalPendingQty: {
       type: Number,
       default: 0,
       min: 0,
@@ -199,41 +234,6 @@ const invoiceSchema = new mongoose.Schema(
       min: 0,
     },
 
-    salesTax: {
-      type: Number,
-      default: 0,
-      min: 0,
-    },
-
-    grandTotal: {
-      type: Number,
-      default: 0,
-      min: 0,
-    },
-
-    paidAmount: {
-      type: Number,
-      default: 0,
-      min: 0,
-    },
-
-    balance: {
-      type: Number,
-      default: 0,
-    },
-
-    paymentStatus: {
-      type: String,
-      enum: ["Unpaid", "Partial", "Partially Paid", "Paid"],
-      default: "Unpaid",
-    },
-
-    status: {
-      type: String,
-      enum: ["Draft", "Issued", "Paid", "Cancelled"],
-      default: "Draft",
-    },
-
     remarks: {
       type: String,
       trim: true,
@@ -243,4 +243,4 @@ const invoiceSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-module.exports = mongoose.model("Invoice", invoiceSchema);
+module.exports = mongoose.model("GRN", grnSchema);

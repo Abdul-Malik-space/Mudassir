@@ -1,18 +1,15 @@
 const express = require("express");
 const router = express.Router();
 
-const SalesOrder = require("../models/SalesOrder");
-const Customer = require("../models/customer");
+const PurchaseOrder = require("../models/PurchaseOrder");
+const Vendor = require("../models/vendor");
 const Counter = require("../models/Counter");
 
 const allowedStatuses = [
   "Draft",
-  "Confirmed",
-  "In Production",
-  "Ready",
-  "Partially Delivered",
-  "Delivered",
-  "Invoiced",
+  "Ordered",
+  "Partially Received",
+  "Received",
   "Cancelled",
 ];
 
@@ -27,7 +24,32 @@ const getPaymentStatus = (grandTotal, advance) => {
   return "Partially Paid";
 };
 
-const cleanSalesOrderItems = (items = []) => {
+const getNextPurchaseOrderNo = async () => {
+  let purchaseOrderNo = "";
+
+  for (let i = 0; i < 5; i++) {
+    const counter = await Counter.findOneAndUpdate(
+      { name: "purchaseOrderNo" },
+      { $inc: { seq: 1 } },
+      { new: true, upsert: true }
+    );
+
+    purchaseOrderNo = `PO-${String(counter.seq).padStart(4, "0")}`;
+
+    const exists = await PurchaseOrder.findOne({ purchaseOrderNo });
+    if (!exists) return purchaseOrderNo;
+  }
+
+  throw new Error("Unable to generate unique purchase order number");
+};
+
+const peekNextPurchaseOrderNo = async () => {
+  const counter = await Counter.findOne({ name: "purchaseOrderNo" });
+  const nextSeq = counter ? counter.seq + 1 : 1;
+  return `PO-${String(nextSeq).padStart(4, "0")}`;
+};
+
+const cleanPurchaseItems = (items = []) => {
   return items
     .filter(
       (item) =>
@@ -39,30 +61,27 @@ const cleanSalesOrderItems = (items = []) => {
     .map((item) => {
       const quantity = Number(item.quantity || 0);
       const unitPrice = Number(item.unitPrice || 0);
-      const cartons = Number(item.cartons || 0);
+      const receivedQty = Number(item.receivedQty || 0);
       const amount = quantity * unitPrice;
 
       return {
         item: item.item || null,
         description: String(item.description || "").trim(),
         size: String(item.size || "").trim(),
-        textType: item.textType || "",
-        cartons,
+        cartons: Number(item.cartons || 0),
         quantity,
-        unit: String(item.unit || "Rolls").trim(),
+        unit: String(item.unit || "Pcs").trim(),
         unitPrice,
         amount,
+        receivedQty,
+        pendingQty: Math.max(quantity - receivedQty, 0),
         remarks: String(item.remarks || "").trim(),
       };
     });
 };
 
-const calculateOrderTotals = (
-  items = [],
-  taxType = "without-tax",
-  advance = 0
-) => {
-  const cleanItems = cleanSalesOrderItems(items);
+const calculateTotals = (items = [], taxType = "without-tax", advance = 0) => {
+  const cleanItems = cleanPurchaseItems(items);
 
   const subtotal = cleanItems.reduce(
     (sum, item) => sum + Number(item.amount || 0),
@@ -86,6 +105,7 @@ const calculateOrderTotals = (
   const taxRate = finalTaxType === "with-tax" ? 18 : 0;
   const salesTax = finalTaxType === "with-tax" ? subtotal * 0.18 : 0;
   const grandTotal = subtotal + salesTax;
+
   const finalAdvance = Number(advance || 0);
   const balance = grandTotal - finalAdvance;
 
@@ -104,64 +124,39 @@ const calculateOrderTotals = (
   };
 };
 
-const getNextSalesOrderNo = async () => {
-  let salesOrderNo = "";
-
-  for (let i = 0; i < 5; i++) {
-    const counter = await Counter.findOneAndUpdate(
-      { name: "salesOrderNo" },
-      { $inc: { seq: 1 } },
-      { new: true, upsert: true }
-    );
-
-    salesOrderNo = `SO-${String(counter.seq).padStart(4, "0")}`;
-
-    const exists = await SalesOrder.findOne({ salesOrderNo });
-    if (!exists) return salesOrderNo;
-  }
-
-  throw new Error("Unable to generate unique sales order number");
-};
-
-const peekNextSalesOrderNo = async () => {
-  const counter = await Counter.findOne({ name: "salesOrderNo" });
-  const nextSeq = counter ? counter.seq + 1 : 1;
-  return `SO-${String(nextSeq).padStart(4, "0")}`;
-};
-
-const buildCustomerSnapshot = (customer) => {
+const buildVendorSnapshot = (vendor) => {
   return {
-    customer: customer._id,
-    customerName: customer.customerName || customer.name || "",
-    customerPhone: customer.phoneNumber || customer.phone || "",
-    customerEmail: customer.email || "",
-    customerAddress: customer.address || "",
-    customerCity: customer.city || "",
+    vendor: vendor._id,
+    vendorName: vendor.vendorName || vendor.name || "",
+    vendorPhone: vendor.phoneNumber || vendor.phone || "",
+    vendorEmail: vendor.email || "",
+    vendorAddress: vendor.address || "",
+    vendorCity: vendor.city || "",
+    vendorNtn: vendor.ntn || "",
+    vendorStrn: vendor.strn || "",
   };
 };
 
-// Next sales order no preview
 router.get("/next-no", async (req, res) => {
   try {
-    const salesOrderNo = await peekNextSalesOrderNo();
+    const purchaseOrderNo = await peekNextPurchaseOrderNo();
 
     res.status(200).json({
       success: true,
-      salesOrderNo,
+      purchaseOrderNo,
     });
   } catch (error) {
     res.status(500).json({
       success: false,
-      message: "Sales order number generate nahi hua",
+      message: "Purchase order number generate nahi hua",
       error: error.message,
     });
   }
 });
 
-// Get all sales orders
 router.get("/all", async (req, res) => {
   try {
-    const { search = "", status = "", customer = "" } = req.query;
+    const { search = "", status = "", vendor = "" } = req.query;
 
     const query = {};
 
@@ -169,47 +164,45 @@ router.get("/all", async (req, res) => {
       query.status = status;
     }
 
-    if (customer) {
-      query.customer = customer;
+    if (vendor) {
+      query.vendor = vendor;
     }
 
     if (search) {
       query.$or = [
-        { salesOrderNo: { $regex: search, $options: "i" } },
-        { customerName: { $regex: search, $options: "i" } },
-        { customerPhone: { $regex: search, $options: "i" } },
-        { poNo: { $regex: search, $options: "i" } },
+        { purchaseOrderNo: { $regex: search, $options: "i" } },
+        { vendorName: { $regex: search, $options: "i" } },
+        { vendorPhone: { $regex: search, $options: "i" } },
         { referenceNo: { $regex: search, $options: "i" } },
         { "items.description": { $regex: search, $options: "i" } },
       ];
     }
 
-    const orders = await SalesOrder.find(query)
-      .populate("customer", "customerName phoneNumber email address city")
+    const orders = await PurchaseOrder.find(query)
+      .populate("vendor", "vendorName phoneNumber email address city ntn strn")
       .sort({ createdAt: -1 });
 
     res.status(200).json(orders);
   } catch (error) {
     res.status(500).json({
       success: false,
-      message: "Sales orders load nahi huay",
+      message: "Purchase orders load nahi huay",
       error: error.message,
     });
   }
 });
 
-// Get single sales order
 router.get("/:id", async (req, res) => {
   try {
-    const order = await SalesOrder.findById(req.params.id).populate(
-      "customer",
-      "customerName phoneNumber email address city"
+    const order = await PurchaseOrder.findById(req.params.id).populate(
+      "vendor",
+      "vendorName phoneNumber email address city ntn strn"
     );
 
     if (!order) {
       return res.status(404).json({
         success: false,
-        message: "Sales order not found",
+        message: "Purchase order not found",
       });
     }
 
@@ -220,21 +213,19 @@ router.get("/:id", async (req, res) => {
   } catch (error) {
     res.status(500).json({
       success: false,
-      message: "Sales order load nahi hua",
+      message: "Purchase order load nahi hua",
       error: error.message,
     });
   }
 });
 
-// Add sales order
 router.post("/add", async (req, res) => {
   try {
     const {
-      salesOrderNo,
-      customer,
+      purchaseOrderNo,
+      vendor,
       orderDate,
-      deliveryDate,
-      poNo,
+      expectedDate,
       referenceNo,
       taxType,
       items,
@@ -243,10 +234,10 @@ router.post("/add", async (req, res) => {
       remarks,
     } = req.body;
 
-    if (!customer) {
+    if (!vendor) {
       return res.status(400).json({
         success: false,
-        message: "Customer required hai",
+        message: "Vendor required hai",
       });
     }
 
@@ -257,16 +248,16 @@ router.post("/add", async (req, res) => {
       });
     }
 
-    const selectedCustomer = await Customer.findById(customer);
+    const selectedVendor = await Vendor.findById(vendor);
 
-    if (!selectedCustomer) {
+    if (!selectedVendor) {
       return res.status(404).json({
         success: false,
-        message: "Customer not found",
+        message: "Vendor not found",
       });
     }
 
-    const totals = calculateOrderTotals(items, taxType, advance);
+    const totals = calculateTotals(items, taxType, advance);
 
     if (totals.cleanItems.length === 0) {
       return res.status(400).json({
@@ -282,19 +273,18 @@ router.post("/add", async (req, res) => {
       });
     }
 
-    const finalSalesOrderNo = salesOrderNo
-      ? String(salesOrderNo).trim().toUpperCase()
-      : await getNextSalesOrderNo();
+    const finalPurchaseOrderNo = purchaseOrderNo
+      ? String(purchaseOrderNo).trim().toUpperCase()
+      : await getNextPurchaseOrderNo();
 
-    const customerSnapshot = buildCustomerSnapshot(selectedCustomer);
+    const vendorSnapshot = buildVendorSnapshot(selectedVendor);
 
-    const order = new SalesOrder({
-      salesOrderNo: finalSalesOrderNo,
-      ...customerSnapshot,
+    const purchaseOrder = new PurchaseOrder({
+      purchaseOrderNo: finalPurchaseOrderNo,
+      ...vendorSnapshot,
 
       orderDate,
-      deliveryDate: deliveryDate || "",
-      poNo: poNo || "",
+      expectedDate: expectedDate || "",
       referenceNo: referenceNo || "",
 
       taxType: totals.taxType,
@@ -315,65 +305,71 @@ router.post("/add", async (req, res) => {
       remarks: remarks || "",
     });
 
-    const savedOrder = await order.save();
+    const savedOrder = await purchaseOrder.save();
 
-    const populatedOrder = await SalesOrder.findById(savedOrder._id).populate(
-      "customer",
-      "customerName phoneNumber email address city"
+    const populatedOrder = await PurchaseOrder.findById(savedOrder._id).populate(
+      "vendor",
+      "vendorName phoneNumber email address city ntn strn"
     );
 
     res.status(201).json({
       success: true,
-      message: "Sales order created successfully",
+      message: "Purchase order created successfully",
       data: populatedOrder,
     });
   } catch (error) {
     if (error.code === 11000) {
       return res.status(400).json({
         success: false,
-        message: "Ye sales order number already used hai",
+        message: "Ye purchase order number already used hai",
       });
     }
 
     res.status(400).json({
       success: false,
-      message: "Sales order save nahi hua",
+      message: "Purchase order save nahi hua",
       error: error.message,
     });
   }
 });
 
-// Update sales order
 router.put("/update/:id", async (req, res) => {
   try {
-    const existingOrder = await SalesOrder.findById(req.params.id);
+    const existingOrder = await PurchaseOrder.findById(req.params.id);
 
     if (!existingOrder) {
       return res.status(404).json({
         success: false,
-        message: "Sales order not found",
+        message: "Purchase order not found",
+      });
+    }
+
+    if (existingOrder.status === "Received") {
+      return res.status(400).json({
+        success: false,
+        message: "Received purchase order update nahi ho sakta",
       });
     }
 
     if (existingOrder.status === "Cancelled") {
       return res.status(400).json({
         success: false,
-        message: "Cancelled sales order update nahi ho sakta",
+        message: "Cancelled purchase order update nahi ho sakta",
       });
     }
 
-    const selectedCustomer = await Customer.findById(
-      req.body.customer || existingOrder.customer
+    const selectedVendor = await Vendor.findById(
+      req.body.vendor || existingOrder.vendor
     );
 
-    if (!selectedCustomer) {
+    if (!selectedVendor) {
       return res.status(404).json({
         success: false,
-        message: "Customer not found",
+        message: "Vendor not found",
       });
     }
 
-    const totals = calculateOrderTotals(
+    const totals = calculateTotals(
       req.body.items || existingOrder.items,
       req.body.taxType || existingOrder.taxType,
       req.body.advance ?? existingOrder.advance
@@ -393,20 +389,19 @@ router.put("/update/:id", async (req, res) => {
       });
     }
 
-    const customerSnapshot = buildCustomerSnapshot(selectedCustomer);
+    const vendorSnapshot = buildVendorSnapshot(selectedVendor);
 
-    const updatedOrder = await SalesOrder.findByIdAndUpdate(
+    const updatedOrder = await PurchaseOrder.findByIdAndUpdate(
       req.params.id,
       {
-        salesOrderNo: req.body.salesOrderNo
-          ? String(req.body.salesOrderNo).trim().toUpperCase()
-          : existingOrder.salesOrderNo,
+        purchaseOrderNo: req.body.purchaseOrderNo
+          ? String(req.body.purchaseOrderNo).trim().toUpperCase()
+          : existingOrder.purchaseOrderNo,
 
-        ...customerSnapshot,
+        ...vendorSnapshot,
 
         orderDate: req.body.orderDate || existingOrder.orderDate,
-        deliveryDate: req.body.deliveryDate || "",
-        poNo: req.body.poNo || "",
+        expectedDate: req.body.expectedDate || "",
         referenceNo: req.body.referenceNo || "",
 
         taxType: totals.taxType,
@@ -433,30 +428,29 @@ router.put("/update/:id", async (req, res) => {
         new: true,
         runValidators: true,
       }
-    ).populate("customer", "customerName phoneNumber email address city");
+    ).populate("vendor", "vendorName phoneNumber email address city ntn strn");
 
     res.status(200).json({
       success: true,
-      message: "Sales order updated successfully",
+      message: "Purchase order updated successfully",
       data: updatedOrder,
     });
   } catch (error) {
     if (error.code === 11000) {
       return res.status(400).json({
         success: false,
-        message: "Ye sales order number already used hai",
+        message: "Ye purchase order number already used hai",
       });
     }
 
     res.status(400).json({
       success: false,
-      message: "Sales order update nahi hua",
+      message: "Purchase order update nahi hua",
       error: error.message,
     });
   }
 });
 
-// Update only status
 router.patch("/status/:id", async (req, res) => {
   try {
     const { status } = req.body;
@@ -468,22 +462,22 @@ router.patch("/status/:id", async (req, res) => {
       });
     }
 
-    const order = await SalesOrder.findByIdAndUpdate(
+    const order = await PurchaseOrder.findByIdAndUpdate(
       req.params.id,
       { status },
       { new: true, runValidators: true }
-    ).populate("customer", "customerName phoneNumber email address city");
+    ).populate("vendor", "vendorName phoneNumber email address city ntn strn");
 
     if (!order) {
       return res.status(404).json({
         success: false,
-        message: "Sales order not found",
+        message: "Purchase order not found",
       });
     }
 
     res.status(200).json({
       success: true,
-      message: "Status updated successfully",
+      message: "Purchase order status updated successfully",
       data: order,
     });
   } catch (error) {
@@ -495,26 +489,34 @@ router.patch("/status/:id", async (req, res) => {
   }
 });
 
-// Delete sales order
 router.delete("/delete/:id", async (req, res) => {
   try {
-    const order = await SalesOrder.findByIdAndDelete(req.params.id);
+    const order = await PurchaseOrder.findById(req.params.id);
 
     if (!order) {
       return res.status(404).json({
         success: false,
-        message: "Sales order not found",
+        message: "Purchase order not found",
       });
     }
 
+    if (["Partially Received", "Received"].includes(order.status)) {
+      return res.status(400).json({
+        success: false,
+        message: "Received purchase order delete nahi ho sakta",
+      });
+    }
+
+    await PurchaseOrder.findByIdAndDelete(req.params.id);
+
     res.status(200).json({
       success: true,
-      message: "Sales order deleted successfully",
+      message: "Purchase order deleted successfully",
     });
   } catch (error) {
     res.status(500).json({
       success: false,
-      message: "Sales order delete nahi hua",
+      message: "Purchase order delete nahi hua",
       error: error.message,
     });
   }
