@@ -81,13 +81,19 @@ const customerSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-customerSchema.pre("save", function (next) {
-  if (this.email === "") this.email = undefined;
-  next();
+// Important: no next() here
+customerSchema.pre("save", function () {
+  if (!this.email || this.email === "") {
+    this.email = undefined;
+  }
+
+  this.openingBalance = Number(this.openingBalance || 0);
+  this.creditLimit = Number(this.creditLimit || 0);
 });
 
-customerSchema.pre("findOneAndUpdate", function (next) {
-  const update = this.getUpdate();
+// Important: no next() here
+customerSchema.pre("findOneAndUpdate", function () {
+  const update = this.getUpdate() || {};
 
   if (update.email === "") {
     update.email = undefined;
@@ -102,7 +108,6 @@ customerSchema.pre("findOneAndUpdate", function (next) {
   }
 
   this.setUpdate(update);
-  next();
 });
 
 module.exports = mongoose.model("Customer", customerSchema);
