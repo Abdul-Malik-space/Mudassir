@@ -99,13 +99,19 @@ const vendorSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-vendorSchema.pre("save", function (next) {
-  if (this.email === "") this.email = undefined;
-  next();
+// Important: no next() here
+vendorSchema.pre("save", function () {
+  if (!this.email || this.email === "") {
+    this.email = undefined;
+  }
+
+  this.openingBalance = Number(this.openingBalance || 0);
+  this.creditLimit = Number(this.creditLimit || 0);
 });
 
-vendorSchema.pre("findOneAndUpdate", function (next) {
-  const update = this.getUpdate();
+// Important: no next() here
+vendorSchema.pre("findOneAndUpdate", function () {
+  const update = this.getUpdate() || {};
 
   if (update.email === "") {
     update.email = undefined;
@@ -120,7 +126,6 @@ vendorSchema.pre("findOneAndUpdate", function (next) {
   }
 
   this.setUpdate(update);
-  next();
 });
 
 module.exports = mongoose.model("Vendor", vendorSchema);

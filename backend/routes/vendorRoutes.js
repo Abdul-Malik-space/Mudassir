@@ -4,43 +4,43 @@ const router = express.Router();
 const Vendor = require("../models/vendor");
 const Counter = require("../models/Counter");
 
-const cleanPayload = (body) => {
+const cleanPayload = (body = {}) => {
+  const email = body.email ? String(body.email).trim().toLowerCase() : undefined;
+
   return {
     vendorCode: body.vendorCode
       ? String(body.vendorCode).trim().toUpperCase()
       : undefined,
 
-    vendorName: body.vendorName ? String(body.vendorName).trim() : "",
+    vendorName: String(body.vendorName || body.name || "").trim(),
 
-    contactPerson: body.contactPerson
-      ? String(body.contactPerson).trim()
-      : "",
+    contactPerson: String(body.contactPerson || "").trim(),
 
-    phoneNumber: body.phoneNumber ? String(body.phoneNumber).trim() : "",
+    phoneNumber: String(body.phoneNumber || body.phone || "").trim(),
 
-    alternatePhone: body.alternatePhone
-      ? String(body.alternatePhone).trim()
-      : "",
+    alternatePhone: String(body.alternatePhone || "").trim(),
 
-    email: body.email ? String(body.email).trim().toLowerCase() : undefined,
+    email,
 
-    address: body.address ? String(body.address).trim() : "",
+    address: String(body.address || "").trim(),
 
-    city: body.city ? String(body.city).trim() : "",
+    city: String(body.city || "").trim(),
 
-    ntn: body.ntn ? String(body.ntn).trim() : "",
+    ntn: String(body.ntn || "").trim(),
 
-    strn: body.strn ? String(body.strn).trim() : "",
+    strn: String(body.strn || "").trim(),
 
-    openingBalance: Number(body.openingBalance || 0),
+    openingBalance: Number(body.openingBalance || body.balance || 0),
 
     creditLimit: Number(body.creditLimit || 0),
 
-    paymentTerms: body.paymentTerms ? String(body.paymentTerms).trim() : "",
+    paymentTerms: String(body.paymentTerms || "").trim(),
 
-    status: body.status || "Active",
+    status: ["Active", "Inactive"].includes(body.status)
+      ? body.status
+      : "Active",
 
-    notes: body.notes ? String(body.notes).trim() : "",
+    notes: String(body.notes || "").trim(),
   };
 };
 
@@ -51,7 +51,10 @@ const getNextVendorCode = async () => {
     const counter = await Counter.findOneAndUpdate(
       { name: "vendorCode" },
       { $inc: { seq: 1 } },
-      { new: true, upsert: true }
+      {
+        returnDocument: "after",
+        upsert: true,
+      }
     );
 
     vendorCode = `VEN-${String(counter.seq).padStart(4, "0")}`;
@@ -66,10 +69,10 @@ const getNextVendorCode = async () => {
 const peekNextVendorCode = async () => {
   const counter = await Counter.findOne({ name: "vendorCode" });
   const nextSeq = counter ? counter.seq + 1 : 1;
+
   return `VEN-${String(nextSeq).padStart(4, "0")}`;
 };
 
-// Next vendor code
 router.get("/next-code", async (req, res) => {
   try {
     const vendorCode = await peekNextVendorCode();
@@ -79,6 +82,8 @@ router.get("/next-code", async (req, res) => {
       vendorCode,
     });
   } catch (error) {
+    console.error("Vendor Next Code Error:", error);
+
     res.status(500).json({
       success: false,
       message: "Vendor code generate nahi hua",
@@ -87,7 +92,6 @@ router.get("/next-code", async (req, res) => {
   }
 });
 
-// Add vendor
 router.post("/add", async (req, res) => {
   try {
     const payload = cleanPayload(req.body);
@@ -106,6 +110,13 @@ router.post("/add", async (req, res) => {
       });
     }
 
+    if (!payload.address) {
+      return res.status(400).json({
+        success: false,
+        message: "Address required hai",
+      });
+    }
+
     if (!payload.vendorCode) {
       payload.vendorCode = await getNextVendorCode();
     }
@@ -119,6 +130,8 @@ router.post("/add", async (req, res) => {
       data: vendor,
     });
   } catch (error) {
+    console.error("Vendor Add Error:", error);
+
     if (error.code === 11000) {
       const duplicateField = Object.keys(error.keyPattern || {})[0];
 
@@ -141,7 +154,6 @@ router.post("/add", async (req, res) => {
   }
 });
 
-// Get all vendors
 router.get("/all", async (req, res) => {
   try {
     const { search = "", status = "" } = req.query;
@@ -158,7 +170,9 @@ router.get("/all", async (req, res) => {
         { vendorName: { $regex: search, $options: "i" } },
         { contactPerson: { $regex: search, $options: "i" } },
         { phoneNumber: { $regex: search, $options: "i" } },
+        { alternatePhone: { $regex: search, $options: "i" } },
         { email: { $regex: search, $options: "i" } },
+        { address: { $regex: search, $options: "i" } },
         { city: { $regex: search, $options: "i" } },
         { ntn: { $regex: search, $options: "i" } },
         { strn: { $regex: search, $options: "i" } },
@@ -169,6 +183,8 @@ router.get("/all", async (req, res) => {
 
     res.status(200).json(vendors);
   } catch (error) {
+    console.error("Vendors Load Error:", error);
+
     res.status(500).json({
       success: false,
       message: "Vendors load nahi huay",
@@ -177,7 +193,6 @@ router.get("/all", async (req, res) => {
   }
 });
 
-// Get single vendor
 router.get("/:id", async (req, res) => {
   try {
     const vendor = await Vendor.findById(req.params.id);
@@ -194,6 +209,8 @@ router.get("/:id", async (req, res) => {
       data: vendor,
     });
   } catch (error) {
+    console.error("Vendor Single Load Error:", error);
+
     res.status(500).json({
       success: false,
       message: "Vendor load nahi hua",
@@ -202,7 +219,6 @@ router.get("/:id", async (req, res) => {
   }
 });
 
-// Update vendor
 router.put("/update/:id", async (req, res) => {
   try {
     const payload = cleanPayload(req.body);
@@ -221,6 +237,13 @@ router.put("/update/:id", async (req, res) => {
       });
     }
 
+    if (!payload.address) {
+      return res.status(400).json({
+        success: false,
+        message: "Address required hai",
+      });
+    }
+
     if (!payload.vendorCode) {
       delete payload.vendorCode;
     }
@@ -229,7 +252,7 @@ router.put("/update/:id", async (req, res) => {
       req.params.id,
       payload,
       {
-        new: true,
+        returnDocument: "after",
         runValidators: true,
       }
     );
@@ -247,6 +270,8 @@ router.put("/update/:id", async (req, res) => {
       data: updatedVendor,
     });
   } catch (error) {
+    console.error("Vendor Update Error:", error);
+
     if (error.code === 11000) {
       const duplicateField = Object.keys(error.keyPattern || {})[0];
 
@@ -269,7 +294,6 @@ router.put("/update/:id", async (req, res) => {
   }
 });
 
-// Delete vendor
 router.delete("/delete/:id", async (req, res) => {
   try {
     const deletedVendor = await Vendor.findByIdAndDelete(req.params.id);
@@ -286,6 +310,8 @@ router.delete("/delete/:id", async (req, res) => {
       message: "Vendor deleted successfully",
     });
   } catch (error) {
+    console.error("Vendor Delete Error:", error);
+
     res.status(500).json({
       success: false,
       message: "Vendor delete nahi hua",

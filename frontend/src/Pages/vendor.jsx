@@ -63,24 +63,61 @@ const VendorManager = () => {
     setShowForm(true);
   };
 
-  const handleSave = async () => {
-    if (!formData.vendorName || !formData.phoneNumber || !formData.address) {
-      alert('Please fill all required fields.');
-      return;
-    }
-    const payload = { ...formData, openingBalance: Number(formData.openingBalance || 0) };
-    const url = editId ? `${API_URL}/update/${editId}` : `${API_URL}/add`;
-    const method = editId ? 'PUT' : 'POST';
-    try {
-      const response = await fetch(url, {
-        method,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-      if (response.ok) { fetchVendors(); closeForm(); }
-      else alert('Server Error');
-    } catch (err) { alert('Network Error'); }
+ const handleSave = async () => {
+  if (!formData.vendorName || !formData.phoneNumber || !formData.address) {
+    alert("Please fill all required fields.");
+    return;
+  }
+
+  const vendorName = String(formData.vendorName || "").trim();
+  const phoneNumber = String(formData.phoneNumber || "").trim();
+  const openingBalance = Number(formData.openingBalance || 0);
+
+  const payload = {
+    vendorName,
+    phoneNumber,
+    alternatePhone: String(formData.alternatePhone || "").trim(),
+    address: String(formData.address || "").trim(),
+    city: String(formData.city || "").trim(),
+    openingBalance,
+    status: formData.status || "Active",
+    notes: String(formData.notes || "").trim(),
+
+    // old backend compatibility
+    name: vendorName,
+    phone: phoneNumber,
+    balance: openingBalance,
   };
+
+  const email = String(formData.email || "").trim().toLowerCase();
+  if (email) {
+    payload.email = email;
+  }
+
+  const url = editId ? `${API_URL}/update/${editId}` : `${API_URL}/add`;
+  const method = editId ? "PUT" : "POST";
+
+  try {
+    const response = await fetch(url, {
+      method,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+
+    const data = await response.json().catch(() => ({}));
+
+    if (response.ok) {
+      await fetchVendors();
+      closeForm();
+    } else {
+      console.error("Vendor Save Backend Error:", data);
+      alert(data.message || data.error || "Vendor save nahi hua");
+    }
+  } catch (err) {
+    console.error("Vendor Network Error:", err);
+    alert("Network Error");
+  }
+};
 
   const deleteVendor = async (id) => {
     if (window.confirm('Are you sure you want to delete this vendor?')) {
