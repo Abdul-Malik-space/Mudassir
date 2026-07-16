@@ -1,4 +1,9 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, {
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
+
 import {
   ArrowDownRight,
   ArrowUpRight,
@@ -8,21 +13,50 @@ import {
   Users,
 } from "lucide-react";
 
-const numberFormatter = new Intl.NumberFormat("en-PK", {
-  maximumFractionDigits: 0,
-});
+import { API_BASE_URL } from "../../config/api";
+
+const numberFormatter = new Intl.NumberFormat(
+  "en-PK",
+  {
+    maximumFractionDigits: 0,
+  }
+);
 
 const emptyStats = {
-  totalRevenue: { value: 0, change: 0, trend: "up" },
-  totalExpenses: { value: 0, change: 0, trend: "up" },
-  totalCustomers: { value: 0, change: 0, trend: "up" },
-  readyProducts: { value: 0, change: 0, trend: "up" },
+  totalRevenue: {
+    value: 0,
+    change: 0,
+    trend: "up",
+  },
+
+  totalExpenses: {
+    value: 0,
+    change: 0,
+    trend: "up",
+  },
+
+  totalCustomers: {
+    value: 0,
+    change: 0,
+    trend: "up",
+  },
+
+  readyProducts: {
+    value: 0,
+    change: 0,
+    trend: "up",
+  },
 };
 
 function StatsGrid() {
-  const [stats, setStats] = useState(emptyStats);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
+  const [stats, setStats] =
+    useState(emptyStats);
+
+  const [loading, setLoading] =
+    useState(true);
+
+  const [error, setError] =
+    useState("");
 
   useEffect(() => {
     const controller = new AbortController();
@@ -32,24 +66,90 @@ function StatsGrid() {
         setLoading(true);
         setError("");
 
-        const response = await fetch("/api/dashboard/stats", {
+        const apiUrl =
+          `${API_BASE_URL}/dashboard/stats`;
+
+        console.log(
+          "Dashboard Stats API:",
+          apiUrl
+        );
+
+        const response = await fetch(apiUrl, {
+          method: "GET",
+
+          headers: {
+            Accept: "application/json",
+          },
+
           signal: controller.signal,
         });
 
-        const result = await response.json();
+        const contentType =
+          response.headers.get(
+            "content-type"
+          ) || "";
 
-        if (!response.ok || !result.success) {
-          throw new Error(result.message || "Dashboard data could not be loaded.");
+        /*
+        اگر API سے HTML واپس آئے تو
+        response.json() نہ چلائیں۔
+        */
+
+        if (
+          !contentType.includes(
+            "application/json"
+          )
+        ) {
+          const responseText =
+            await response.text();
+
+          console.error(
+            "Stats API returned non-JSON:",
+            responseText.slice(0, 300)
+          );
+
+          throw new Error(
+            `Stats API نے JSON کے بجائے ${
+              contentType || "نامعلوم response"
+            } واپس کیا۔ API URL چیک کریں: ${apiUrl}`
+          );
         }
 
-        setStats({ ...emptyStats, ...result.data });
+        const result =
+          await response.json();
+
+        if (
+          !response.ok ||
+          !result.success
+        ) {
+          throw new Error(
+            result.error ||
+              result.message ||
+              "Dashboard data could not be loaded."
+          );
+        }
+
+        setStats({
+          ...emptyStats,
+          ...(result.data || {}),
+        });
       } catch (err) {
         if (err.name !== "AbortError") {
-          console.error("StatsGrid error:", err);
-          setError(err.message || "Dashboard data could not be loaded.");
+          console.error(
+            "StatsGrid error:",
+            err
+          );
+
+          setError(
+            err.message ||
+              "Dashboard data could not be loaded."
+          );
+
+          setStats(emptyStats);
         }
       } finally {
-        if (!controller.signal.aborted) {
+        if (
+          !controller.signal.aborted
+        ) {
           setLoading(false);
         }
       }
@@ -57,42 +157,99 @@ function StatsGrid() {
 
     loadStats();
 
-    return () => controller.abort();
+    return () => {
+      controller.abort();
+    };
   }, []);
 
   const statsData = useMemo(
     () => [
       {
         title: "Total Revenue",
-        value: `Rs ${numberFormatter.format(stats.totalRevenue.value)}`,
-        change: stats.totalRevenue.change,
-        trend: stats.totalRevenue.trend,
+
+        value: `Rs ${numberFormatter.format(
+          Number(
+            stats.totalRevenue?.value || 0
+          )
+        )}`,
+
+        change: Number(
+          stats.totalRevenue?.change || 0
+        ),
+
+        trend:
+          stats.totalRevenue?.trend || "up",
+
         icon: DollarSign,
-        color: "from-emerald-500 to-teal-600",
+
+        color:
+          "from-emerald-500 to-teal-600",
       },
+
       {
         title: "Total Expenses",
-        value: `Rs ${numberFormatter.format(stats.totalExpenses.value)}`,
-        change: stats.totalExpenses.change,
-        trend: stats.totalExpenses.trend,
+
+        value: `Rs ${numberFormatter.format(
+          Number(
+            stats.totalExpenses?.value || 0
+          )
+        )}`,
+
+        change: Number(
+          stats.totalExpenses?.change || 0
+        ),
+
+        trend:
+          stats.totalExpenses?.trend || "up",
+
         icon: ShoppingCart,
-        color: "from-blue-500 to-indigo-600",
+
+        color:
+          "from-blue-500 to-indigo-600",
       },
+
       {
         title: "Total Urwa Customers",
-        value: numberFormatter.format(stats.totalCustomers.value),
-        change: stats.totalCustomers.change,
-        trend: stats.totalCustomers.trend,
+
+        value: numberFormatter.format(
+          Number(
+            stats.totalCustomers?.value || 0
+          )
+        ),
+
+        change: Number(
+          stats.totalCustomers?.change || 0
+        ),
+
+        trend:
+          stats.totalCustomers?.trend || "up",
+
         icon: Users,
-        color: "from-purple-500 to-pink-600",
+
+        color:
+          "from-purple-500 to-pink-600",
       },
+
       {
         title: "Urwa Ready Products",
-        value: numberFormatter.format(stats.readyProducts.value),
-        change: stats.readyProducts.change,
-        trend: stats.readyProducts.trend,
+
+        value: numberFormatter.format(
+          Number(
+            stats.readyProducts?.value || 0
+          )
+        ),
+
+        change: Number(
+          stats.readyProducts?.change || 0
+        ),
+
+        trend:
+          stats.readyProducts?.trend || "up",
+
         icon: Eye,
-        color: "from-orange-500 to-red-600",
+
+        color:
+          "from-orange-500 to-red-600",
       },
     ],
     [stats]
@@ -109,8 +266,13 @@ function StatsGrid() {
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
         {statsData.map((item) => {
           const Icon = item.icon;
-          const isUp = item.trend !== "down";
-          const changeText = `${item.change > 0 ? "+" : ""}${Number(
+
+          const isUp =
+            item.trend !== "down";
+
+          const changeText = `${
+            item.change > 0 ? "+" : ""
+          }${Number(
             item.change || 0
           ).toFixed(1)}%`;
 
@@ -126,7 +288,9 @@ function StatsGrid() {
                   </p>
 
                   <p className="mb-4 text-3xl font-bold text-slate-800 dark:text-white">
-                    {loading ? "..." : item.value}
+                    {loading
+                      ? "..."
+                      : item.value}
                   </p>
 
                   <div className="flex items-center space-x-2">
@@ -136,8 +300,16 @@ function StatsGrid() {
                       <ArrowDownRight className="h-4 w-4 text-rose-500" />
                     )}
 
-                    <span className={isUp ? "text-emerald-600" : "text-rose-600"}>
-                      {loading ? "..." : changeText}
+                    <span
+                      className={
+                        isUp
+                          ? "text-emerald-600"
+                          : "text-rose-600"
+                      }
+                    >
+                      {loading
+                        ? "..."
+                        : changeText}
                     </span>
 
                     <span className="text-sm text-slate-500 dark:text-slate-400">
