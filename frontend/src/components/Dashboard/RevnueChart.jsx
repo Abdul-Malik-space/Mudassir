@@ -14,6 +14,16 @@ import {
   Tooltip,
 } from "recharts";
 
+import {
+  API_BASE_URL,
+} from "../../config/api";
+
+/*
+|--------------------------------------------------------------------------
+| Months
+|--------------------------------------------------------------------------
+*/
+
 const MONTHS = [
   "Jan",
   "Feb",
@@ -29,6 +39,12 @@ const MONTHS = [
   "Dec",
 ];
 
+/*
+|--------------------------------------------------------------------------
+| Empty Chart Data
+|--------------------------------------------------------------------------
+*/
+
 const EMPTY_DATA = MONTHS.map(
   (month, index) => ({
     month,
@@ -39,172 +55,361 @@ const EMPTY_DATA = MONTHS.map(
   })
 );
 
-const formatCurrency = (value) => {
-  return `Rs ${Number(value || 0).toLocaleString(
-    "en-PK",
+/*
+|--------------------------------------------------------------------------
+| API Request Helper
+|--------------------------------------------------------------------------
+*/
+
+const apiRequest = async (
+  endpoint,
+  options = {}
+) => {
+  const {
+    headers = {},
+    ...requestOptions
+  } = options;
+
+  const requestUrl =
+    `${API_BASE_URL}${endpoint}`;
+
+  const response = await fetch(
+    requestUrl,
     {
-      maximumFractionDigits: 0,
+      ...requestOptions,
+
+      headers: {
+        Accept: "application/json",
+        ...headers,
+      },
     }
-  )}`;
+  );
+
+  const contentType =
+    response.headers.get(
+      "content-type"
+    ) || "";
+
+  /*
+  |--------------------------------------------------------------------------
+  | JSON کے بجائے HTML آنے کی صورت
+  |--------------------------------------------------------------------------
+  */
+
+  if (
+    !contentType.includes(
+      "application/json"
+    )
+  ) {
+    const responseText =
+      await response.text();
+
+    console.error(
+      "Revenue Chart API returned non-JSON:",
+      {
+        requestUrl,
+        status: response.status,
+        contentType,
+        response:
+          responseText.slice(0, 300),
+      }
+    );
+
+    throw new Error(
+      `Revenue Chart API نے JSON کے بجائے HTML واپس کیا۔ Status: ${response.status}`
+    );
+  }
+
+  const result =
+    await response.json();
+
+  if (
+    !response.ok ||
+    result.success === false
+  ) {
+    throw new Error(
+      result.error ||
+        result.message ||
+        `Request failed with status ${response.status}`
+    );
+  }
+
+  return result;
 };
 
+/*
+|--------------------------------------------------------------------------
+| Currency Formatter
+|--------------------------------------------------------------------------
+*/
+
+const formatCurrency = (value) => {
+  return `Rs ${Number(
+    value || 0
+  ).toLocaleString("en-PK", {
+    maximumFractionDigits: 0,
+  })}`;
+};
+
+/*
+|--------------------------------------------------------------------------
+| Y Axis Formatter
+|--------------------------------------------------------------------------
+*/
+
 const formatYAxisValue = (value) => {
-  const amount = Number(value || 0);
+  const amount =
+    Number(value || 0);
 
-  if (Math.abs(amount) >= 10000000) {
-    return `Rs ${(amount / 10000000).toFixed(1)}Cr`;
+  if (
+    Math.abs(amount) >=
+    10000000
+  ) {
+    return `Rs ${(
+      amount / 10000000
+    ).toFixed(1)}Cr`;
   }
 
-  if (Math.abs(amount) >= 100000) {
-    return `Rs ${(amount / 100000).toFixed(1)}L`;
+  if (
+    Math.abs(amount) >= 100000
+  ) {
+    return `Rs ${(
+      amount / 100000
+    ).toFixed(1)}L`;
   }
 
-  if (Math.abs(amount) >= 1000) {
-    return `Rs ${(amount / 1000).toFixed(0)}k`;
+  if (
+    Math.abs(amount) >= 1000
+  ) {
+    return `Rs ${(
+      amount / 1000
+    ).toFixed(0)}k`;
   }
 
   return `Rs ${amount}`;
 };
 
+/*
+|--------------------------------------------------------------------------
+| Normalize Monthly Data
+|--------------------------------------------------------------------------
+*/
+
+const normalizeMonthlyData = (
+  records
+) => {
+  if (!Array.isArray(records)) {
+    return EMPTY_DATA;
+  }
+
+  return EMPTY_DATA.map(
+    (emptyRecord) => {
+      const matchedRecord =
+        records.find((record) => {
+          const recordMonthNumber =
+            Number(
+              record.monthNumber ||
+                record.month_number ||
+                record.monthNo
+            );
+
+          return (
+            recordMonthNumber ===
+            emptyRecord.monthNumber
+          );
+        });
+
+      if (!matchedRecord) {
+        return emptyRecord;
+      }
+
+      const revenue =
+        Number(
+          matchedRecord.revenue || 0
+        );
+
+      const expenses =
+        Number(
+          matchedRecord.expenses || 0
+        );
+
+      return {
+        ...emptyRecord,
+        ...matchedRecord,
+
+        month:
+          matchedRecord.month ||
+          emptyRecord.month,
+
+        monthNumber:
+          emptyRecord.monthNumber,
+
+        revenue,
+        expenses,
+
+        profit:
+          matchedRecord.profit !==
+          undefined
+            ? Number(
+                matchedRecord.profit ||
+                  0
+              )
+            : revenue - expenses,
+      };
+    }
+  );
+};
+
+/*
+|--------------------------------------------------------------------------
+| Main Component
+|--------------------------------------------------------------------------
+*/
+
 function RevenueChart() {
-  const currentYear = new Date().getFullYear();
+  const currentYear =
+    new Date().getFullYear();
 
-  const [selectedYear, setSelectedYear] =
-    useState(currentYear);
+  const [
+    selectedYear,
+    setSelectedYear,
+  ] = useState(currentYear);
 
-  const [selectedMetric, setSelectedMetric] =
-    useState("both");
+  const [
+    selectedMetric,
+    setSelectedMetric,
+  ] = useState("both");
 
-  const [data, setData] = useState(EMPTY_DATA);
+  const [data, setData] =
+    useState(EMPTY_DATA);
 
-  const [totals, setTotals] = useState({
-    revenue: 0,
-    expenses: 0,
-    profit: 0,
-  });
+  const [totals, setTotals] =
+    useState({
+      revenue: 0,
+      expenses: 0,
+      profit: 0,
+    });
 
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] =
+    useState(true);
 
-  const [error, setError] = useState("");
+  const [error, setError] =
+    useState("");
 
-  const [showAll, setShowAll] = useState(false);
+  const [showAll, setShowAll] =
+    useState(false);
 
   /*
   |--------------------------------------------------------------------------
-  | Revenue chart API
+  | Revenue Chart API
   |--------------------------------------------------------------------------
   */
 
   useEffect(() => {
-    const controller = new AbortController();
+    const controller =
+      new AbortController();
 
-    const fetchRevenueChart = async () => {
-      try {
-        setLoading(true);
-        setError("");
+    const fetchRevenueChart =
+      async () => {
+        try {
+          setLoading(true);
+          setError("");
 
-        const response = await fetch(
-          `/api/dashboard/revenue-chart?year=${selectedYear}`,
-          {
-            signal: controller.signal,
-          }
-        );
+          const result =
+            await apiRequest(
+              `/dashboard/revenue-chart?year=${selectedYear}`,
+              {
+                signal:
+                  controller.signal,
+              }
+            );
 
-        const result = await response.json();
+          const formattedData =
+            normalizeMonthlyData(
+              result.data
+            );
 
-        if (!response.ok || !result.success) {
-          throw new Error(
-            result.message ||
-              "Revenue chart data could not be loaded."
-          );
-        }
+          setData(formattedData);
 
-        const formattedData = Array.isArray(
-          result.data
-        )
-          ? result.data.map((record) => {
-              const revenue = Number(
-                record.revenue || 0
-              );
+          const calculatedRevenue =
+            formattedData.reduce(
+              (total, record) =>
+                total +
+                Number(
+                  record.revenue ||
+                    0
+                ),
+              0
+            );
 
-              const expenses = Number(
-                record.expenses || 0
-              );
+          const calculatedExpenses =
+            formattedData.reduce(
+              (total, record) =>
+                total +
+                Number(
+                  record.expenses ||
+                    0
+                ),
+              0
+            );
 
-              return {
-                ...record,
-                revenue,
-                expenses,
-
-                profit:
-                  record.profit !== undefined
-                    ? Number(record.profit || 0)
-                    : revenue - expenses,
-              };
-            })
-          : EMPTY_DATA;
-
-        setData(formattedData);
-
-        const calculatedRevenue =
-          formattedData.reduce(
-            (total, record) =>
-              total +
-              Number(record.revenue || 0),
-            0
-          );
-
-        const calculatedExpenses =
-          formattedData.reduce(
-            (total, record) =>
-              total +
-              Number(record.expenses || 0),
-            0
-          );
-
-        setTotals({
-          revenue: Number(
-            result.totals?.revenue ??
-              calculatedRevenue
-          ),
-
-          expenses: Number(
-            result.totals?.expenses ??
-              calculatedExpenses
-          ),
-
-          profit: Number(
-            result.totals?.profit ??
-              calculatedRevenue -
-                calculatedExpenses
-          ),
-        });
-      } catch (error) {
-        if (error.name !== "AbortError") {
-          console.error(
-            "Revenue chart load error:",
-            error
-          );
-
-          setError(
-            error.message ||
-              "Revenue chart data could not be loaded."
-          );
-
-          setData(EMPTY_DATA);
+          const calculatedProfit =
+            calculatedRevenue -
+            calculatedExpenses;
 
           setTotals({
-            revenue: 0,
-            expenses: 0,
-            profit: 0,
+            revenue: Number(
+              result.totals
+                ?.revenue ??
+                calculatedRevenue
+            ),
+
+            expenses: Number(
+              result.totals
+                ?.expenses ??
+                calculatedExpenses
+            ),
+
+            profit: Number(
+              result.totals
+                ?.profit ??
+                calculatedProfit
+            ),
           });
+        } catch (
+          requestError
+        ) {
+          if (
+            requestError.name !==
+            "AbortError"
+          ) {
+            console.error(
+              "Revenue chart load error:",
+              requestError
+            );
+
+            setError(
+              requestError.message ||
+                "Revenue chart data could not be loaded."
+            );
+
+            setData(EMPTY_DATA);
+
+            setTotals({
+              revenue: 0,
+              expenses: 0,
+              profit: 0,
+            });
+          }
+        } finally {
+          if (
+            !controller.signal
+              .aborted
+          ) {
+            setLoading(false);
+          }
         }
-      } finally {
-        if (!controller.signal.aborted) {
-          setLoading(false);
-        }
-      }
-    };
+      };
 
     fetchRevenueChart();
 
@@ -215,51 +420,82 @@ function RevenueChart() {
 
   /*
   |--------------------------------------------------------------------------
-  | Selected chart data موجود ہے یا نہیں
+  | Check Selected Data
   |--------------------------------------------------------------------------
   */
 
   const hasData = useMemo(() => {
-    if (selectedMetric === "revenue") {
+    if (
+      selectedMetric === "revenue"
+    ) {
       return data.some(
         (record) =>
-          Number(record.revenue) > 0
+          Number(
+            record.revenue
+          ) > 0
       );
     }
 
-    if (selectedMetric === "expenses") {
+    if (
+      selectedMetric ===
+      "expenses"
+    ) {
       return data.some(
         (record) =>
-          Number(record.expenses) > 0
+          Number(
+            record.expenses
+          ) > 0
       );
     }
 
     return data.some(
       (record) =>
-        Number(record.revenue) > 0 ||
-        Number(record.expenses) > 0
+        Number(
+          record.revenue
+        ) > 0 ||
+        Number(
+          record.expenses
+        ) > 0
     );
   }, [data, selectedMetric]);
 
   /*
   |--------------------------------------------------------------------------
-  | Chart heading کے نیچے selected information
+  | Chart Description
   |--------------------------------------------------------------------------
   */
 
-  const chartDescription = useMemo(() => {
-    if (selectedMetric === "revenue") {
-      return `Monthly revenue for ${selectedYear}`;
-    }
+  const chartDescription =
+    useMemo(() => {
+      if (
+        selectedMetric ===
+        "revenue"
+      ) {
+        return `Monthly revenue for ${selectedYear}`;
+      }
 
-    if (selectedMetric === "expenses") {
-      return `Monthly expenses for ${selectedYear}`;
-    }
+      if (
+        selectedMetric ===
+        "expenses"
+      ) {
+        return `Monthly expenses for ${selectedYear}`;
+      }
 
-    return `Monthly revenue and expenses for ${selectedYear}`;
-  }, [selectedMetric, selectedYear]);
+      return `Monthly revenue and expenses for ${selectedYear}`;
+    }, [
+      selectedMetric,
+      selectedYear,
+    ]);
 
-  const metricButtonClass = (metric) => {
+  /*
+  |--------------------------------------------------------------------------
+  | Metric Button Class
+  |--------------------------------------------------------------------------
+  */
+
+  const metricButtonClass = (
+    metric
+  ) => {
     const isActive =
       selectedMetric === metric;
 
@@ -296,7 +532,10 @@ function RevenueChart() {
               value={selectedYear}
               onChange={(event) =>
                 setSelectedYear(
-                  Number(event.target.value)
+                  Number(
+                    event.target
+                      .value
+                  )
                 )
               }
               className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
@@ -304,7 +543,8 @@ function RevenueChart() {
               {[0, 1, 2, 3, 4].map(
                 (yearsBack) => {
                   const year =
-                    currentYear - yearsBack;
+                    currentYear -
+                    yearsBack;
 
                   return (
                     <option
@@ -322,7 +562,9 @@ function RevenueChart() {
             <button
               type="button"
               onClick={() =>
-                setSelectedMetric("both")
+                setSelectedMetric(
+                  "both"
+                )
               }
               className={metricButtonClass(
                 "both"
@@ -341,7 +583,9 @@ function RevenueChart() {
             <button
               type="button"
               onClick={() =>
-                setSelectedMetric("revenue")
+                setSelectedMetric(
+                  "revenue"
+                )
               }
               className={metricButtonClass(
                 "revenue"
@@ -356,7 +600,9 @@ function RevenueChart() {
             <button
               type="button"
               onClick={() =>
-                setSelectedMetric("expenses")
+                setSelectedMetric(
+                  "expenses"
+                )
               }
               className={metricButtonClass(
                 "expenses"
@@ -370,7 +616,9 @@ function RevenueChart() {
             {/* View All */}
             <button
               type="button"
-              onClick={() => setShowAll(true)}
+              onClick={() =>
+                setShowAll(true)
+              }
               className="rounded-lg px-3 py-2 text-sm font-semibold text-blue-600 transition hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-slate-800"
             >
               View All
@@ -380,7 +628,7 @@ function RevenueChart() {
 
         {/* Error */}
         {error && (
-          <div className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">
+          <div className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-300">
             {error}
           </div>
         )}
@@ -390,7 +638,8 @@ function RevenueChart() {
           {loading && (
             <div className="absolute inset-0 z-10 flex items-center justify-center rounded-xl bg-white/80 dark:bg-slate-900/80">
               <p className="text-sm text-slate-500">
-                Loading revenue chart...
+                Loading revenue
+                chart...
               </p>
             </div>
           )}
@@ -401,7 +650,8 @@ function RevenueChart() {
               <div className="absolute inset-0 z-10 flex items-center justify-center">
                 <p className="text-center text-sm text-slate-500">
                   No{" "}
-                  {selectedMetric === "both"
+                  {selectedMetric ===
+                  "both"
                     ? "revenue or expense"
                     : selectedMetric}{" "}
                   data found for{" "}
@@ -491,40 +741,63 @@ function RevenueChart() {
                   backgroundColor:
                     "rgba(255, 255, 255, 0.97)",
                   border: "none",
-                  borderRadius: "12px",
+                  borderRadius:
+                    "12px",
                   boxShadow:
                     "0 10px 40px rgba(0, 0, 0, 0.1)",
                 }}
-                formatter={(value, name) => [
-                  formatCurrency(value),
+                formatter={(
+                  value,
+                  name
+                ) => [
+                  formatCurrency(
+                    value
+                  ),
 
-                  name === "revenue"
+                  name ===
+                  "revenue"
                     ? "Revenue"
                     : "Expenses",
                 ]}
               />
 
-              {(selectedMetric === "both" ||
+              {(selectedMetric ===
+                "both" ||
                 selectedMetric ===
                   "revenue") && (
                 <Bar
                   dataKey="revenue"
                   fill="url(#revenueGradient)"
-                  radius={[4, 4, 0, 0]}
+                  radius={[
+                    4,
+                    4,
+                    0,
+                    0,
+                  ]}
                   maxBarSize={40}
-                  animationDuration={500}
+                  animationDuration={
+                    500
+                  }
                 />
               )}
 
-              {(selectedMetric === "both" ||
+              {(selectedMetric ===
+                "both" ||
                 selectedMetric ===
                   "expenses") && (
                 <Bar
                   dataKey="expenses"
                   fill="url(#expensesGradient)"
-                  radius={[4, 4, 0, 0]}
+                  radius={[
+                    4,
+                    4,
+                    0,
+                    0,
+                  ]}
                   maxBarSize={40}
-                  animationDuration={500}
+                  animationDuration={
+                    500
+                  }
                 />
               )}
             </BarChart>
@@ -536,10 +809,13 @@ function RevenueChart() {
           <button
             type="button"
             onClick={() =>
-              setSelectedMetric("revenue")
+              setSelectedMetric(
+                "revenue"
+              )
             }
             className={`rounded-xl p-3 text-left transition ${
-              selectedMetric === "revenue"
+              selectedMetric ===
+              "revenue"
                 ? "bg-purple-50 dark:bg-purple-900/20"
                 : "hover:bg-slate-50 dark:hover:bg-slate-800"
             }`}
@@ -558,10 +834,13 @@ function RevenueChart() {
           <button
             type="button"
             onClick={() =>
-              setSelectedMetric("expenses")
+              setSelectedMetric(
+                "expenses"
+              )
             }
             className={`rounded-xl p-3 text-left transition ${
-              selectedMetric === "expenses"
+              selectedMetric ===
+              "expenses"
                 ? "bg-slate-100 dark:bg-slate-800"
                 : "hover:bg-slate-50 dark:hover:bg-slate-800"
             }`}
@@ -580,10 +859,13 @@ function RevenueChart() {
           <button
             type="button"
             onClick={() =>
-              setSelectedMetric("both")
+              setSelectedMetric(
+                "both"
+              )
             }
             className={`rounded-xl p-3 text-left transition ${
-              selectedMetric === "both"
+              selectedMetric ===
+              "both"
                 ? "bg-blue-50 dark:bg-blue-900/20"
                 : "hover:bg-slate-50 dark:hover:bg-slate-800"
             }`}
@@ -611,7 +893,9 @@ function RevenueChart() {
       {showAll && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
-          onClick={() => setShowAll(false)}
+          onClick={() =>
+            setShowAll(false)
+          }
         >
           <div
             className="max-h-[90vh] w-full max-w-4xl overflow-hidden rounded-2xl bg-white shadow-2xl dark:bg-slate-900"
@@ -623,11 +907,13 @@ function RevenueChart() {
             <div className="flex items-center justify-between border-b border-slate-200 px-6 py-4 dark:border-slate-700">
               <div>
                 <h3 className="text-xl font-bold text-slate-800 dark:text-white">
-                  Revenue and Expense Details
+                  Revenue and
+                  Expense Details
                 </h3>
 
                 <p className="text-sm text-slate-500">
-                  Complete monthly details for{" "}
+                  Complete monthly
+                  details for{" "}
                   {selectedYear}
                 </p>
               </div>
@@ -649,7 +935,9 @@ function RevenueChart() {
               <button
                 type="button"
                 onClick={() =>
-                  setSelectedMetric("both")
+                  setSelectedMetric(
+                    "both"
+                  )
                 }
                 className={metricButtonClass(
                   "both"
@@ -661,7 +949,9 @@ function RevenueChart() {
               <button
                 type="button"
                 onClick={() =>
-                  setSelectedMetric("revenue")
+                  setSelectedMetric(
+                    "revenue"
+                  )
                 }
                 className={metricButtonClass(
                   "revenue"
@@ -673,7 +963,9 @@ function RevenueChart() {
               <button
                 type="button"
                 onClick={() =>
-                  setSelectedMetric("expenses")
+                  setSelectedMetric(
+                    "expenses"
+                  )
                 }
                 className={metricButtonClass(
                   "expenses"
@@ -716,53 +1008,57 @@ function RevenueChart() {
                 </thead>
 
                 <tbody>
-                  {data.map((record) => (
-                    <tr
-                      key={
-                        record.monthNumber
-                      }
-                      className="border-t border-slate-100 dark:border-slate-800"
-                    >
-                      <td className="px-6 py-4 text-sm font-medium text-slate-700 dark:text-slate-200">
-                        {record.month}
-                      </td>
-
-                      {selectedMetric !==
-                        "expenses" && (
-                        <td className="px-6 py-4 text-right text-sm text-slate-700 dark:text-slate-300">
-                          {formatCurrency(
-                            record.revenue
-                          )}
+                  {data.map(
+                    (record) => (
+                      <tr
+                        key={
+                          record.monthNumber
+                        }
+                        className="border-t border-slate-100 dark:border-slate-800"
+                      >
+                        <td className="px-6 py-4 text-sm font-medium text-slate-700 dark:text-slate-200">
+                          {
+                            record.month
+                          }
                         </td>
-                      )}
 
-                      {selectedMetric !==
-                        "revenue" && (
-                        <td className="px-6 py-4 text-right text-sm text-slate-700 dark:text-slate-300">
-                          {formatCurrency(
-                            record.expenses
-                          )}
-                        </td>
-                      )}
+                        {selectedMetric !==
+                          "expenses" && (
+                          <td className="px-6 py-4 text-right text-sm text-slate-700 dark:text-slate-300">
+                            {formatCurrency(
+                              record.revenue
+                            )}
+                          </td>
+                        )}
 
-                      {selectedMetric ===
-                        "both" && (
-                        <td
-                          className={`px-6 py-4 text-right text-sm font-semibold ${
-                            Number(
+                        {selectedMetric !==
+                          "revenue" && (
+                          <td className="px-6 py-4 text-right text-sm text-slate-700 dark:text-slate-300">
+                            {formatCurrency(
+                              record.expenses
+                            )}
+                          </td>
+                        )}
+
+                        {selectedMetric ===
+                          "both" && (
+                          <td
+                            className={`px-6 py-4 text-right text-sm font-semibold ${
+                              Number(
+                                record.profit
+                              ) >= 0
+                                ? "text-emerald-600"
+                                : "text-red-600"
+                            }`}
+                          >
+                            {formatCurrency(
                               record.profit
-                            ) >= 0
-                              ? "text-emerald-600"
-                              : "text-red-600"
-                          }`}
-                        >
-                          {formatCurrency(
-                            record.profit
-                          )}
-                        </td>
-                      )}
-                    </tr>
-                  ))}
+                            )}
+                          </td>
+                        )}
+                      </tr>
+                    )
+                  )}
                 </tbody>
 
                 <tfoot className="bg-slate-50 font-bold dark:bg-slate-800">
@@ -793,7 +1089,8 @@ function RevenueChart() {
                       "both" && (
                       <td
                         className={`px-6 py-4 text-right text-sm ${
-                          totals.profit >= 0
+                          totals.profit >=
+                          0
                             ? "text-emerald-600"
                             : "text-red-600"
                         }`}

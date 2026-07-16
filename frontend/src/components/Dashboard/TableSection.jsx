@@ -10,6 +10,90 @@ import {
   X,
 } from "lucide-react";
 
+import {
+  API_BASE_URL,
+} from "../../config/api";
+
+/*
+|--------------------------------------------------------------------------
+| API Request Helper
+|--------------------------------------------------------------------------
+*/
+
+const apiRequest = async (
+  endpoint,
+  options = {}
+) => {
+  const response = await fetch(
+    `${API_BASE_URL}${endpoint}`,
+    {
+      headers: {
+        Accept: "application/json",
+        ...(options.body
+          ? {
+              "Content-Type":
+                "application/json",
+            }
+          : {}),
+        ...(options.headers || {}),
+      },
+
+      ...options,
+    }
+  );
+
+  const contentType =
+    response.headers.get(
+      "content-type"
+    ) || "";
+
+  /*
+  |--------------------------------------------------------------------------
+  | JSON کے بجائے HTML آنے کی صورت
+  |--------------------------------------------------------------------------
+  */
+
+  if (
+    !contentType.includes(
+      "application/json"
+    )
+  ) {
+    const responseText =
+      await response.text();
+
+    console.error(
+      "Table Section API returned non-JSON:",
+      {
+        url: `${API_BASE_URL}${endpoint}`,
+        status: response.status,
+        contentType,
+        response:
+          responseText.slice(0, 300),
+      }
+    );
+
+    throw new Error(
+      `API نے JSON کے بجائے HTML واپس کیا۔ Status: ${response.status}`
+    );
+  }
+
+  const result =
+    await response.json();
+
+  if (
+    !response.ok ||
+    result.success === false
+  ) {
+    throw new Error(
+      result.error ||
+        result.message ||
+        `Request failed with status ${response.status}`
+    );
+  }
+
+  return result;
+};
+
 /*
 |--------------------------------------------------------------------------
 | Currency
@@ -35,21 +119,28 @@ const formatDate = (value) => {
     return "-";
   }
 
-  const textValue = String(value);
+  const textValue =
+    String(value);
 
   if (
-    /^\d{4}-\d{2}-\d{2}/.test(textValue)
+    /^\d{4}-\d{2}-\d{2}/.test(
+      textValue
+    )
   ) {
     return textValue.slice(0, 10);
   }
 
   const date = new Date(value);
 
-  if (Number.isNaN(date.getTime())) {
+  if (
+    Number.isNaN(date.getTime())
+  ) {
     return textValue;
   }
 
-  return date.toLocaleDateString("en-CA");
+  return date.toLocaleDateString(
+    "en-CA"
+  );
 };
 
 /*
@@ -58,8 +149,12 @@ const formatDate = (value) => {
 |--------------------------------------------------------------------------
 */
 
-const getStatusColor = (status = "") => {
-  switch (status.toLowerCase()) {
+const getStatusColor = (
+  status = ""
+) => {
+  switch (
+    String(status).toLowerCase()
+  ) {
     case "delivered":
     case "invoiced":
     case "completed":
@@ -90,8 +185,13 @@ const getStatusColor = (status = "") => {
 |--------------------------------------------------------------------------
 */
 
-function RecentOrdersTable({ orders }) {
-  if (!orders.length) {
+function RecentOrdersTable({
+  orders = [],
+}) {
+  if (
+    !Array.isArray(orders) ||
+    orders.length === 0
+  ) {
     return (
       <div className="px-6 py-12 text-center text-sm text-slate-500">
         No sales orders found.
@@ -104,81 +204,108 @@ function RecentOrdersTable({ orders }) {
       <table className="w-full min-w-[900px]">
         <thead>
           <tr className="border-b border-slate-100 dark:border-slate-800">
-            <th className="p-4 text-left text-sm font-semibold text-slate-600">
+            <th className="p-4 text-left text-sm font-semibold text-slate-600 dark:text-slate-400">
               Order ID
             </th>
 
-            <th className="p-4 text-left text-sm font-semibold text-slate-600">
+            <th className="p-4 text-left text-sm font-semibold text-slate-600 dark:text-slate-400">
               Customer
             </th>
 
-            <th className="p-4 text-left text-sm font-semibold text-slate-600">
+            <th className="p-4 text-left text-sm font-semibold text-slate-600 dark:text-slate-400">
               Product
             </th>
 
-            <th className="p-4 text-left text-sm font-semibold text-slate-600">
+            <th className="p-4 text-left text-sm font-semibold text-slate-600 dark:text-slate-400">
               Amount
             </th>
 
-            <th className="p-4 text-left text-sm font-semibold text-slate-600">
+            <th className="p-4 text-left text-sm font-semibold text-slate-600 dark:text-slate-400">
               Status
             </th>
 
-            <th className="p-4 text-left text-sm font-semibold text-slate-600">
+            <th className="p-4 text-left text-sm font-semibold text-slate-600 dark:text-slate-400">
               Date
             </th>
           </tr>
         </thead>
 
         <tbody>
-          {orders.map((order, index) => (
-            <tr
-              key={`${order.orderId}-${index}`}
-              className="border-b border-slate-50 transition-colors hover:bg-slate-50/50 dark:border-slate-800/50 dark:hover:bg-slate-800/50"
-            >
-              <td className="p-4 text-sm font-medium text-slate-700 dark:text-slate-300">
-                {order.orderId}
-              </td>
+          {orders.map(
+            (order, index) => {
+              const orderId =
+                order.orderId ||
+                order.id ||
+                `Order-${index + 1}`;
 
-              <td className="p-4 text-sm text-slate-600 dark:text-slate-400">
-                {order.customer}
-              </td>
+              const customer =
+                order.customer ||
+                "Unknown Customer";
 
-              <td className="max-w-[260px] p-4 text-sm text-slate-600 dark:text-slate-400">
-                <span
-                  className="block truncate"
-                  title={order.product}
+              const product =
+                order.product ||
+                "No product";
+
+              const status =
+                order.status ||
+                "Draft";
+
+              return (
+                <tr
+                  key={`${orderId}-${index}`}
+                  className="border-b border-slate-50 transition-colors hover:bg-slate-50/50 dark:border-slate-800/50 dark:hover:bg-slate-800/50"
                 >
-                  {order.product}
-                </span>
+                  <td className="p-4 text-sm font-medium text-slate-700 dark:text-slate-300">
+                    {orderId}
+                  </td>
 
-                {Number(order.itemCount) >
-                  1 && (
-                  <span className="text-xs text-slate-400">
-                    {order.itemCount} items
-                  </span>
-                )}
-              </td>
+                  <td className="p-4 text-sm text-slate-600 dark:text-slate-400">
+                    {customer}
+                  </td>
 
-              <td className="p-4 text-sm font-semibold text-slate-700 dark:text-slate-300">
-                {formatCurrency(order.amount)}
-              </td>
+                  <td className="max-w-[260px] p-4 text-sm text-slate-600 dark:text-slate-400">
+                    <span
+                      className="block truncate"
+                      title={product}
+                    >
+                      {product}
+                    </span>
 
-              <td className="p-4">
-                <span
-                  className={`rounded-full px-2.5 py-1 text-xs font-medium ${getStatusColor(
-                    order.status
-                  )}`}
-                >
-                  {order.status}
-                </span>
-              </td>
+                    {Number(
+                      order.itemCount || 0
+                    ) > 1 && (
+                      <span className="text-xs text-slate-400">
+                        {order.itemCount}{" "}
+                        items
+                      </span>
+                    )}
+                  </td>
 
-              <td className="p-4 text-sm text-slate-600 dark:text-slate-400">
-                {formatDate(order.date)}
-              </td>
-            </tr>
-          ))}
+                  <td className="p-4 text-sm font-semibold text-slate-700 dark:text-slate-300">
+                    {formatCurrency(
+                      order.amount
+                    )}
+                  </td>
+
+                  <td className="p-4">
+                    <span
+                      className={`rounded-full px-2.5 py-1 text-xs font-medium ${getStatusColor(
+                        status
+                      )}`}
+                    >
+                      {status}
+                    </span>
+                  </td>
+
+                  <td className="p-4 text-sm text-slate-600 dark:text-slate-400">
+                    {formatDate(
+                      order.date
+                    )}
+                  </td>
+                </tr>
+              );
+            }
+          )}
         </tbody>
       </table>
     </div>
@@ -191,14 +318,20 @@ function RecentOrdersTable({ orders }) {
 |--------------------------------------------------------------------------
 */
 
-function TrendIndicator({ product }) {
-  if (product.trend === "up") {
+function TrendIndicator({
+  product,
+}) {
+  if (
+    product?.trend === "up"
+  ) {
     return (
       <TrendingUp className="h-3.5 w-3.5 text-emerald-500" />
     );
   }
 
-  if (product.trend === "down") {
+  if (
+    product?.trend === "down"
+  ) {
     return (
       <TrendingDown className="h-3.5 w-3.5 text-red-500" />
     );
@@ -215,66 +348,95 @@ function TrendIndicator({ product }) {
 |--------------------------------------------------------------------------
 */
 
-function TopProductsList({ products }) {
-  if (!products.length) {
+function TopProductsList({
+  products = [],
+}) {
+  if (
+    !Array.isArray(products) ||
+    products.length === 0
+  ) {
     return (
       <div className="px-6 py-12 text-center text-sm text-slate-500">
-        No product sales found for this year.
+        No product sales found for
+        this year.
       </div>
     );
   }
 
   return (
     <div className="space-y-2 p-6">
-      {products.map((product, index) => (
-        <div
-          key={`${product.name}-${index}`}
-          className="flex items-center justify-between rounded-xl p-4 transition-colors hover:bg-slate-50 dark:hover:bg-slate-800/50"
-        >
-          <div className="min-w-0 flex-1">
-            <h4 className="truncate text-sm font-semibold text-slate-800 dark:text-white">
-              {product.name}
-            </h4>
+      {products.map(
+        (product, index) => {
+          const trend =
+            product.trend ||
+            "same";
 
-            <p className="text-xs text-slate-500 dark:text-slate-400">
-              {Number(
-                product.sales || 0
-              ).toLocaleString("en-PK")}{" "}
-              units
-              {" • "}
-              {Number(
-                product.salesCount || 0
-              ).toLocaleString("en-PK")}{" "}
-              transactions
-            </p>
-          </div>
+          const name =
+            product.name ||
+            "Unnamed Product";
 
-          <div className="ml-4 text-right">
-            <p className="text-sm font-semibold text-slate-800 dark:text-white">
-              {formatCurrency(product.revenue)}
-            </p>
+          return (
+            <div
+              key={`${name}-${index}`}
+              className="flex items-center justify-between rounded-xl p-4 transition-colors hover:bg-slate-50 dark:hover:bg-slate-800/50"
+            >
+              <div className="min-w-0 flex-1">
+                <h4 className="truncate text-sm font-semibold text-slate-800 dark:text-white">
+                  {name}
+                </h4>
 
-            <div className="flex items-center justify-end gap-1">
-              <TrendIndicator
-                product={product}
-              />
+                <p className="text-xs text-slate-500 dark:text-slate-400">
+                  {Number(
+                    product.sales || 0
+                  ).toLocaleString(
+                    "en-PK"
+                  )}{" "}
+                  units
+                  {" • "}
+                  {Number(
+                    product.salesCount ||
+                      0
+                  ).toLocaleString(
+                    "en-PK"
+                  )}{" "}
+                  transactions
+                </p>
+              </div>
 
-              <span
-                className={`text-xs font-medium ${
-                  product.trend === "up"
-                    ? "text-emerald-500"
-                    : product.trend ===
-                        "down"
-                      ? "text-red-500"
-                      : "text-slate-400"
-                }`}
-              >
-                {product.change}
-              </span>
+              <div className="ml-4 text-right">
+                <p className="text-sm font-semibold text-slate-800 dark:text-white">
+                  {formatCurrency(
+                    product.revenue
+                  )}
+                </p>
+
+                <div className="flex items-center justify-end gap-1">
+                  <TrendIndicator
+                    product={{
+                      ...product,
+                      trend,
+                    }}
+                  />
+
+                  <span
+                    className={`text-xs font-medium ${
+                      trend === "up"
+                        ? "text-emerald-500"
+                        : trend ===
+                            "down"
+                          ? "text-red-500"
+                          : "text-slate-400"
+                    }`}
+                  >
+                    {product.change ||
+                      "0%"}
+                  </span>
+                </div>
+              </div>
             </div>
-          </div>
-        </div>
-      ))}
+          );
+        }
+      )}
     </div>
   );
 }
@@ -341,19 +503,20 @@ function TableSection() {
   const currentYear =
     new Date().getFullYear();
 
-  const [summary, setSummary] = useState({
-    recentOrders: {
-      items: [],
-      total: 0,
-      hasMore: false,
-    },
+  const [summary, setSummary] =
+    useState({
+      recentOrders: {
+        items: [],
+        total: 0,
+        hasMore: false,
+      },
 
-    topProducts: {
-      items: [],
-      total: 0,
-      hasMore: false,
-    },
-  });
+      topProducts: {
+        items: [],
+        total: 0,
+        hasMore: false,
+      },
+    });
 
   const [loading, setLoading] =
     useState(true);
@@ -361,14 +524,20 @@ function TableSection() {
   const [error, setError] =
     useState("");
 
-  const [activeModal, setActiveModal] =
-    useState(null);
+  const [
+    activeModal,
+    setActiveModal,
+  ] = useState(null);
 
-  const [modalLoading, setModalLoading] =
-    useState(false);
+  const [
+    modalLoading,
+    setModalLoading,
+  ] = useState(false);
 
-  const [modalError, setModalError] =
-    useState("");
+  const [
+    modalError,
+    setModalError,
+  ] = useState("");
 
   const [
     allRecentOrders,
@@ -382,89 +551,125 @@ function TableSection() {
 
   /*
   |--------------------------------------------------------------------------
-  | Dashboard summary load
+  | Dashboard Summary Load
   |--------------------------------------------------------------------------
   */
 
   useEffect(() => {
-    const controller = new AbortController();
+    const controller =
+      new AbortController();
 
-    const loadSummary = async () => {
-      try {
-        setLoading(true);
-        setError("");
+    const loadSummary =
+      async () => {
+        try {
+          setLoading(true);
+          setError("");
 
-        const response = await fetch(
-          `/api/dashboard/table-section?year=${currentYear}&recentLimit=5&productLimit=5`,
-          {
-            signal: controller.signal,
+          const result =
+            await apiRequest(
+              `/dashboard/table-section?year=${currentYear}&recentLimit=5&productLimit=5`,
+              {
+                signal:
+                  controller.signal,
+              }
+            );
+
+          setSummary({
+            recentOrders: {
+              items:
+                Array.isArray(
+                  result
+                    .recentOrders
+                    ?.items
+                )
+                  ? result
+                      .recentOrders
+                      .items
+                  : [],
+
+              total: Number(
+                result
+                  .recentOrders
+                  ?.total || 0
+              ),
+
+              hasMore:
+                Boolean(
+                  result
+                    .recentOrders
+                    ?.hasMore
+                ),
+            },
+
+            topProducts: {
+              items:
+                Array.isArray(
+                  result
+                    .topProducts
+                    ?.items
+                )
+                  ? result
+                      .topProducts
+                      .items
+                  : [],
+
+              total: Number(
+                result
+                  .topProducts
+                  ?.total || 0
+              ),
+
+              hasMore:
+                Boolean(
+                  result
+                    .topProducts
+                    ?.hasMore
+                ),
+            },
+          });
+        } catch (requestError) {
+          if (
+            requestError.name !==
+            "AbortError"
+          ) {
+            console.error(
+              "Table section load error:",
+              requestError
+            );
+
+            setError(
+              requestError.message ||
+                "Table section data could not be loaded."
+            );
+
+            setSummary({
+              recentOrders: {
+                items: [],
+                total: 0,
+                hasMore: false,
+              },
+
+              topProducts: {
+                items: [],
+                total: 0,
+                hasMore: false,
+              },
+            });
           }
-        );
-
-        const result = await response.json();
-
-        if (!response.ok || !result.success) {
-          throw new Error(
-            result.message ||
-              "Table section data could not be loaded."
-          );
+        } finally {
+          if (
+            !controller.signal.aborted
+          ) {
+            setLoading(false);
+          }
         }
-
-        setSummary({
-          recentOrders: {
-            items: Array.isArray(
-              result.recentOrders?.items
-            )
-              ? result.recentOrders.items
-              : [],
-
-            total: Number(
-              result.recentOrders?.total || 0
-            ),
-
-            hasMore: Boolean(
-              result.recentOrders?.hasMore
-            ),
-          },
-
-          topProducts: {
-            items: Array.isArray(
-              result.topProducts?.items
-            )
-              ? result.topProducts.items
-              : [],
-
-            total: Number(
-              result.topProducts?.total || 0
-            ),
-
-            hasMore: Boolean(
-              result.topProducts?.hasMore
-            ),
-          },
-        });
-      } catch (error) {
-        if (error.name !== "AbortError") {
-          console.error(
-            "Table section load error:",
-            error
-          );
-
-          setError(
-            error.message ||
-              "Table section data could not be loaded."
-          );
-        }
-      } finally {
-        if (!controller.signal.aborted) {
-          setLoading(false);
-        }
-      }
-    };
+      };
 
     loadSummary();
 
-    return () => controller.abort();
+    return () => {
+      controller.abort();
+    };
   }, [currentYear]);
 
   /*
@@ -473,46 +678,47 @@ function TableSection() {
   |--------------------------------------------------------------------------
   */
 
-  const openRecentOrders = async () => {
-    setActiveModal("recentOrders");
-    setModalError("");
-
-    if (allRecentOrders.length > 0) {
-      return;
-    }
-
-    try {
-      setModalLoading(true);
-
-      const response = await fetch(
-        "/api/dashboard/table-section/recent-orders"
+  const openRecentOrders =
+    async () => {
+      setActiveModal(
+        "recentOrders"
       );
 
-      const result = await response.json();
+      setModalError("");
 
-      if (!response.ok || !result.success) {
-        throw new Error(
-          result.message ||
-            "Recent orders could not be loaded."
-        );
+      if (
+        allRecentOrders.length > 0
+      ) {
+        return;
       }
 
-      setAllRecentOrders(
-        Array.isArray(result.data)
-          ? result.data
-          : []
-      );
-    } catch (error) {
-      console.error(
-        "All recent orders error:",
-        error
-      );
+      try {
+        setModalLoading(true);
 
-      setModalError(error.message);
-    } finally {
-      setModalLoading(false);
-    }
-  };
+        const result =
+          await apiRequest(
+            "/dashboard/table-section/recent-orders"
+          );
+
+        setAllRecentOrders(
+          Array.isArray(result.data)
+            ? result.data
+            : []
+        );
+      } catch (requestError) {
+        console.error(
+          "All recent orders error:",
+          requestError
+        );
+
+        setModalError(
+          requestError.message ||
+            "Recent orders could not be loaded."
+        );
+      } finally {
+        setModalLoading(false);
+      }
+    };
 
   /*
   |--------------------------------------------------------------------------
@@ -520,46 +726,53 @@ function TableSection() {
   |--------------------------------------------------------------------------
   */
 
-  const openTopProducts = async () => {
-    setActiveModal("topProducts");
-    setModalError("");
-
-    if (allTopProducts.length > 0) {
-      return;
-    }
-
-    try {
-      setModalLoading(true);
-
-      const response = await fetch(
-        `/api/dashboard/table-section/top-products?year=${currentYear}`
+  const openTopProducts =
+    async () => {
+      setActiveModal(
+        "topProducts"
       );
 
-      const result = await response.json();
+      setModalError("");
 
-      if (!response.ok || !result.success) {
-        throw new Error(
-          result.message ||
-            "Top products could not be loaded."
-        );
+      if (
+        allTopProducts.length > 0
+      ) {
+        return;
       }
 
-      setAllTopProducts(
-        Array.isArray(result.data)
-          ? result.data
-          : []
-      );
-    } catch (error) {
-      console.error(
-        "All top products error:",
-        error
-      );
+      try {
+        setModalLoading(true);
 
-      setModalError(error.message);
-    } finally {
-      setModalLoading(false);
-    }
-  };
+        const result =
+          await apiRequest(
+            `/dashboard/table-section/top-products?year=${currentYear}`
+          );
+
+        setAllTopProducts(
+          Array.isArray(result.data)
+            ? result.data
+            : []
+        );
+      } catch (requestError) {
+        console.error(
+          "All top products error:",
+          requestError
+        );
+
+        setModalError(
+          requestError.message ||
+            "Top products could not be loaded."
+        );
+      } finally {
+        setModalLoading(false);
+      }
+    };
+
+  /*
+  |--------------------------------------------------------------------------
+  | Close Modal
+  |--------------------------------------------------------------------------
+  */
 
   const closeModal = () => {
     setActiveModal(null);
@@ -570,7 +783,7 @@ function TableSection() {
     <>
       <div className="space-y-6">
         {error && (
-          <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">
+          <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-300">
             {error}
           </div>
         )}
@@ -585,20 +798,25 @@ function TableSection() {
                 </h3>
 
                 <p className="text-sm text-slate-500 dark:text-slate-400">
-                  Latest customer sales orders
+                  Latest customer sales
+                  orders
                 </p>
               </div>
 
-              {summary.recentOrders
+              {summary
+                .recentOrders
                 .hasMore && (
                 <button
                   type="button"
-                  onClick={openRecentOrders}
+                  onClick={
+                    openRecentOrders
+                  }
                   className="text-sm font-medium text-blue-600 transition hover:text-blue-700"
                 >
                   View All (
                   {
-                    summary.recentOrders
+                    summary
+                      .recentOrders
                       .total
                   }
                   )
@@ -609,12 +827,15 @@ function TableSection() {
 
           {loading ? (
             <div className="px-6 py-12 text-center text-sm text-slate-500">
-              Loading recent orders...
+              Loading recent
+              orders...
             </div>
           ) : (
             <RecentOrdersTable
               orders={
-                summary.recentOrders.items
+                summary
+                  .recentOrders
+                  .items
               }
             />
           )}
@@ -630,21 +851,26 @@ function TableSection() {
                 </h3>
 
                 <p className="text-sm text-slate-500 dark:text-slate-400">
-                  Best performing products for{" "}
+                  Best performing
+                  products for{" "}
                   {currentYear}
                 </p>
               </div>
 
-              {summary.topProducts
+              {summary
+                .topProducts
                 .hasMore && (
                 <button
                   type="button"
-                  onClick={openTopProducts}
+                  onClick={
+                    openTopProducts
+                  }
                   className="text-sm font-medium text-blue-600 transition hover:text-blue-700"
                 >
                   View All (
                   {
-                    summary.topProducts
+                    summary
+                      .topProducts
                       .total
                   }
                   )
@@ -655,12 +881,15 @@ function TableSection() {
 
           {loading ? (
             <div className="px-6 py-12 text-center text-sm text-slate-500">
-              Loading top products...
+              Loading top
+              products...
             </div>
           ) : (
             <TopProductsList
               products={
-                summary.topProducts.items
+                summary
+                  .topProducts
+                  .items
               }
             />
           )}
@@ -668,7 +897,8 @@ function TableSection() {
       </div>
 
       {/* Recent Orders Modal */}
-      {activeModal === "recentOrders" && (
+      {activeModal ===
+        "recentOrders" && (
         <DataModal
           title="All Recent Orders"
           subtitle={`${summary.recentOrders.total} sales orders`}
@@ -676,22 +906,26 @@ function TableSection() {
         >
           {modalLoading ? (
             <div className="px-6 py-16 text-center text-sm text-slate-500">
-              Loading all orders...
+              Loading all
+              orders...
             </div>
           ) : modalError ? (
-            <div className="m-6 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">
+            <div className="m-6 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-300">
               {modalError}
             </div>
           ) : (
             <RecentOrdersTable
-              orders={allRecentOrders}
+              orders={
+                allRecentOrders
+              }
             />
           )}
         </DataModal>
       )}
 
       {/* Top Products Modal */}
-      {activeModal === "topProducts" && (
+      {activeModal ===
+        "topProducts" && (
         <DataModal
           title="All Top Products"
           subtitle={`Product performance for ${currentYear}`}
@@ -699,15 +933,18 @@ function TableSection() {
         >
           {modalLoading ? (
             <div className="px-6 py-16 text-center text-sm text-slate-500">
-              Loading all products...
+              Loading all
+              products...
             </div>
           ) : modalError ? (
-            <div className="m-6 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">
+            <div className="m-6 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-300">
               {modalError}
             </div>
           ) : (
             <TopProductsList
-              products={allTopProducts}
+              products={
+                allTopProducts
+              }
             />
           )}
         </DataModal>

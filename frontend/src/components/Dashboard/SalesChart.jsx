@@ -1,4 +1,9 @@
-import React, { useEffect, useState } from "react";
+import React, {
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
+
 import {
   PieChart,
   Pie,
@@ -6,6 +11,14 @@ import {
   ResponsiveContainer,
   Tooltip,
 } from "recharts";
+
+import { API_BASE_URL } from "../../config/api";
+
+/*
+|--------------------------------------------------------------------------
+| Chart Colors
+|--------------------------------------------------------------------------
+*/
 
 const COLORS = [
   "#3b82f6",
@@ -15,19 +28,114 @@ const COLORS = [
   "#ef4444",
 ];
 
-const formatCurrency = (value) => {
-  return `Rs ${Number(value || 0).toLocaleString("en-PK", {
-    maximumFractionDigits: 0,
-  })}`;
+/*
+|--------------------------------------------------------------------------
+| API Request Helper
+|--------------------------------------------------------------------------
+*/
+
+const apiRequest = async (
+  endpoint,
+  options = {}
+) => {
+  const requestUrl = `${API_BASE_URL}${endpoint}`;
+
+  const response = await fetch(requestUrl, {
+    headers: {
+      Accept: "application/json",
+
+      ...(options.body
+        ? {
+            "Content-Type": "application/json",
+          }
+        : {}),
+
+      ...(options.headers || {}),
+    },
+
+    ...options,
+  });
+
+  const contentType =
+    response.headers.get("content-type") || "";
+
+  /*
+  |--------------------------------------------------------------------------
+  | JSON کے بجائے HTML آنے کی صورت
+  |--------------------------------------------------------------------------
+  */
+
+  if (!contentType.includes("application/json")) {
+    const responseText = await response.text();
+
+    console.error(
+      "Sales Chart API returned non-JSON:",
+      {
+        requestUrl,
+        status: response.status,
+        contentType,
+        response: responseText.slice(0, 300),
+      }
+    );
+
+    throw new Error(
+      `Sales Chart API نے JSON کے بجائے HTML واپس کیا۔ Status: ${response.status}`
+    );
+  }
+
+  const result = await response.json();
+
+  if (!response.ok || result.success === false) {
+    throw new Error(
+      result.error ||
+        result.message ||
+        `Request failed with status ${response.status}`
+    );
+  }
+
+  return result;
 };
+
+/*
+|--------------------------------------------------------------------------
+| Currency Formatter
+|--------------------------------------------------------------------------
+*/
+
+const formatCurrency = (value) => {
+  return `Rs ${Number(value || 0).toLocaleString(
+    "en-PK",
+    {
+      maximumFractionDigits: 0,
+    }
+  )}`;
+};
+
+/*
+|--------------------------------------------------------------------------
+| Sales Chart Component
+|--------------------------------------------------------------------------
+*/
 
 function SalesChart() {
   const currentYear = new Date().getFullYear();
 
   const [data, setData] = useState([]);
-  const [totalSalesAmount, setTotalSalesAmount] = useState(0);
+
+  const [
+    totalSalesAmount,
+    setTotalSalesAmount,
+  ] = useState(0);
+
   const [loading, setLoading] = useState(true);
+
   const [error, setError] = useState("");
+
+  /*
+  |--------------------------------------------------------------------------
+  | Sales Chart Data Load
+  |--------------------------------------------------------------------------
+  */
 
   useEffect(() => {
     const controller = new AbortController();
@@ -37,40 +145,56 @@ function SalesChart() {
         setLoading(true);
         setError("");
 
-        const response = await fetch(
-          `/api/dashboard/sales-chart?year=${currentYear}`,
+        const result = await apiRequest(
+          `/dashboard/sales-chart?year=${currentYear}`,
           {
             signal: controller.signal,
           }
         );
 
-        const result = await response.json();
-
-        if (!response.ok || !result.success) {
-          throw new Error(
-            result.message || "Sales chart data could not be loaded."
-          );
-        }
-
-        const formattedData = Array.isArray(result.data)
+        const formattedData = Array.isArray(
+          result.data
+        )
           ? result.data.map((item, index) => ({
-              name: item.name || "Uncategorized",
+              name:
+                item.name || "Uncategorized",
+
               amount: Number(item.amount || 0),
-              quantity: Number(item.quantity || 0),
-              salesCount: Number(item.salesCount || 0),
-              percentage: Number(item.percentage || 0),
-              color: COLORS[index % COLORS.length],
+
+              quantity: Number(
+                item.quantity || 0
+              ),
+
+              salesCount: Number(
+                item.salesCount || 0
+              ),
+
+              percentage: Number(
+                item.percentage || 0
+              ),
+
+              color:
+                COLORS[index % COLORS.length],
             }))
           : [];
 
         setData(formattedData);
-        setTotalSalesAmount(Number(result.totalSalesAmount || 0));
-      } catch (error) {
-        if (error.name !== "AbortError") {
-          console.error("Sales chart load error:", error);
+
+        setTotalSalesAmount(
+          Number(result.totalSalesAmount || 0)
+        );
+      } catch (requestError) {
+        if (
+          requestError.name !== "AbortError"
+        ) {
+          console.error(
+            "Sales chart load error:",
+            requestError
+          );
 
           setError(
-            error.message || "Sales chart data could not be loaded."
+            requestError.message ||
+              "Sales chart data could not be loaded."
           );
 
           setData([]);
@@ -90,10 +214,21 @@ function SalesChart() {
     };
   }, [currentYear]);
 
-  const hasData = data.some((item) => item.amount > 0);
+  /*
+  |--------------------------------------------------------------------------
+  | Check Chart Data
+  |--------------------------------------------------------------------------
+  */
+
+  const hasData = useMemo(() => {
+    return data.some(
+      (item) => Number(item.amount) > 0
+    );
+  }, [data]);
 
   return (
-    <div className="bg-white dark:bg-slate-900 backdrop-blur-xl rounded-b-2xl p-6 border border-slate-200/50 dark:border-slate-700/50">
+    <div className="rounded-b-2xl border border-slate-200/50 bg-white p-6 backdrop-blur-xl dark:border-slate-700/50 dark:bg-slate-900">
+      {/* Header */}
       <div className="mb-4">
         <h3 className="text-lg font-bold text-slate-800 dark:text-white">
           Sales by Category
@@ -104,12 +239,14 @@ function SalesChart() {
         </p>
       </div>
 
+      {/* Error */}
       {error && (
-        <div className="mb-4 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-600">
+        <div className="mb-4 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-600 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-300">
           {error}
         </div>
       )}
 
+      {/* Chart */}
       <div className="relative h-48">
         {loading && (
           <div className="absolute inset-0 z-10 flex items-center justify-center rounded-xl bg-white/80 dark:bg-slate-900/80">
@@ -122,12 +259,16 @@ function SalesChart() {
         {!loading && !error && !hasData && (
           <div className="absolute inset-0 z-10 flex items-center justify-center">
             <span className="text-center text-sm text-slate-500">
-              No sales data found for {currentYear}.
+              No sales data found for{" "}
+              {currentYear}.
             </span>
           </div>
         )}
 
-        <ResponsiveContainer width="100%" height="100%">
+        <ResponsiveContainer
+          width="100%"
+          height="100%"
+        >
           <PieChart>
             <Pie
               data={data}
@@ -138,6 +279,7 @@ function SalesChart() {
               paddingAngle={5}
               dataKey="amount"
               nameKey="name"
+              isAnimationActive={!loading}
             >
               {data.map((entry, index) => (
                 <Cell
@@ -149,18 +291,30 @@ function SalesChart() {
 
             <Tooltip
               contentStyle={{
-                backgroundColor: "rgba(255, 255, 255, 0.97)",
+                backgroundColor:
+                  "rgba(255, 255, 255, 0.97)",
                 border: "none",
                 borderRadius: "12px",
-                boxShadow: "0 10px 40px rgba(0, 0, 0, 0.1)",
+                boxShadow:
+                  "0 10px 40px rgba(0, 0, 0, 0.1)",
               }}
-              formatter={(value, name, item) => {
+              formatter={(
+                value,
+                name,
+                tooltipItem
+              ) => {
                 const percentage =
-                  item?.payload?.percentage || 0;
+                  Number(
+                    tooltipItem?.payload
+                      ?.percentage || 0
+                  );
 
                 return [
-                  `${formatCurrency(value)} (${percentage}%)`,
-                  name,
+                  `${formatCurrency(
+                    value
+                  )} (${percentage}%)`,
+
+                  name || "Sales",
                 ];
               }}
             />
@@ -174,12 +328,15 @@ function SalesChart() {
             </span>
 
             <span className="text-sm font-bold text-slate-800 dark:text-white">
-              {formatCurrency(totalSalesAmount)}
+              {formatCurrency(
+                totalSalesAmount
+              )}
             </span>
           </div>
         )}
       </div>
 
+      {/* Categories List */}
       <div className="mt-4 space-y-3">
         {data.map((item, index) => (
           <div
@@ -194,14 +351,31 @@ function SalesChart() {
                 }}
               />
 
-              <span className="truncate text-sm text-slate-600 dark:text-slate-400">
-                {item.name}
-              </span>
+              <div className="min-w-0">
+                <span className="block truncate text-sm text-slate-600 dark:text-slate-400">
+                  {item.name}
+                </span>
+
+                <span className="block text-xs text-slate-400">
+                  {Number(
+                    item.quantity || 0
+                  ).toLocaleString("en-PK")}{" "}
+                  units
+                  {" • "}
+                  {Number(
+                    item.salesCount || 0
+                  ).toLocaleString("en-PK")}{" "}
+                  transactions
+                </span>
+              </div>
             </div>
 
-            <div className="ml-3 text-right">
+            <div className="ml-3 flex-shrink-0 text-right">
               <span className="block text-sm font-medium text-slate-800 dark:text-white">
-                {item.percentage}%
+                {Number(
+                  item.percentage || 0
+                ).toFixed(1)}
+                %
               </span>
 
               <span className="block text-xs text-slate-400">

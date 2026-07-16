@@ -14,6 +14,90 @@ import {
   X,
 } from "lucide-react";
 
+import {
+  API_BASE_URL,
+} from "../../config/api";
+
+/*
+|--------------------------------------------------------------------------
+| API Request Helper
+|--------------------------------------------------------------------------
+*/
+
+const apiRequest = async (
+  endpoint,
+  options = {}
+) => {
+  const response = await fetch(
+    `${API_BASE_URL}${endpoint}`,
+    {
+      headers: {
+        Accept: "application/json",
+        ...(options.body
+          ? {
+              "Content-Type":
+                "application/json",
+            }
+          : {}),
+        ...(options.headers || {}),
+      },
+
+      ...options,
+    }
+  );
+
+  const contentType =
+    response.headers.get(
+      "content-type"
+    ) || "";
+
+  /*
+  |--------------------------------------------------------------------------
+  | اگر Backend JSON کے بجائے HTML واپس کرے
+  |--------------------------------------------------------------------------
+  */
+
+  if (
+    !contentType.includes(
+      "application/json"
+    )
+  ) {
+    const responseText =
+      await response.text();
+
+    console.error(
+      "Activity Feed API returned non-JSON:",
+      {
+        url: `${API_BASE_URL}${endpoint}`,
+        status: response.status,
+        contentType,
+        response:
+          responseText.slice(0, 300),
+      }
+    );
+
+    throw new Error(
+      `API نے JSON کے بجائے HTML واپس کیا۔ Status: ${response.status}`
+    );
+  }
+
+  const result =
+    await response.json();
+
+  if (
+    !response.ok ||
+    result.success === false
+  ) {
+    throw new Error(
+      result.error ||
+        result.message ||
+        `Request failed with status ${response.status}`
+    );
+  }
+
+  return result;
+};
+
 /*
 |--------------------------------------------------------------------------
 | Activity Type Configuration
@@ -23,56 +107,49 @@ import {
 const ACTIVITY_CONFIG = {
   customer: {
     icon: User,
-    color:
-      "text-blue-500",
+    color: "text-blue-500",
     background:
       "bg-blue-100 dark:bg-blue-900/30",
   },
 
   order: {
     icon: ShoppingCart,
-    color:
-      "text-emerald-500",
+    color: "text-emerald-500",
     background:
       "bg-emerald-100 dark:bg-emerald-900/30",
   },
 
   sale: {
     icon: CreditCard,
-    color:
-      "text-purple-500",
+    color: "text-purple-500",
     background:
       "bg-purple-100 dark:bg-purple-900/30",
   },
 
   delivery: {
     icon: Truck,
-    color:
-      "text-pink-500",
+    color: "text-pink-500",
     background:
       "bg-pink-100 dark:bg-pink-900/30",
   },
 
   grn: {
     icon: ClipboardCheck,
-    color:
-      "text-orange-500",
+    color: "text-orange-500",
     background:
       "bg-orange-100 dark:bg-orange-900/30",
   },
 
   readyProduct: {
     icon: Package,
-    color:
-      "text-cyan-500",
+    color: "text-cyan-500",
     background:
       "bg-cyan-100 dark:bg-cyan-900/30",
   },
 
   default: {
     icon: Package,
-    color:
-      "text-slate-500",
+    color: "text-slate-500",
     background:
       "bg-slate-100 dark:bg-slate-800",
   },
@@ -84,36 +161,47 @@ const ACTIVITY_CONFIG = {
 |--------------------------------------------------------------------------
 */
 
-const formatRelativeTime = (value) => {
+const formatRelativeTime = (
+  value
+) => {
   if (!value) {
     return "Unknown time";
   }
 
-  const activityDate = new Date(value);
+  const activityDate =
+    new Date(value);
 
   if (
-    Number.isNaN(activityDate.getTime())
+    Number.isNaN(
+      activityDate.getTime()
+    )
   ) {
     return "Unknown time";
   }
 
-  const currentDate = new Date();
+  const currentDate =
+    new Date();
 
-  const differenceInSeconds = Math.max(
-    0,
-    Math.floor(
-      (currentDate - activityDate) /
-        1000
-    )
-  );
+  const differenceInSeconds =
+    Math.max(
+      0,
+      Math.floor(
+        (currentDate -
+          activityDate) /
+          1000
+      )
+    );
 
-  if (differenceInSeconds < 60) {
+  if (
+    differenceInSeconds < 60
+  ) {
     return "Just now";
   }
 
-  const minutes = Math.floor(
-    differenceInSeconds / 60
-  );
+  const minutes =
+    Math.floor(
+      differenceInSeconds / 60
+    );
 
   if (minutes < 60) {
     return `${minutes} minute${
@@ -121,7 +209,8 @@ const formatRelativeTime = (value) => {
     } ago`;
   }
 
-  const hours = Math.floor(minutes / 60);
+  const hours =
+    Math.floor(minutes / 60);
 
   if (hours < 24) {
     return `${hours} hour${
@@ -129,7 +218,8 @@ const formatRelativeTime = (value) => {
     } ago`;
   }
 
-  const days = Math.floor(hours / 24);
+  const days =
+    Math.floor(hours / 24);
 
   if (days < 30) {
     return `${days} day${
@@ -137,7 +227,8 @@ const formatRelativeTime = (value) => {
     } ago`;
   }
 
-  const months = Math.floor(days / 30);
+  const months =
+    Math.floor(days / 30);
 
   if (months < 12) {
     return `${months} month${
@@ -145,7 +236,8 @@ const formatRelativeTime = (value) => {
     } ago`;
   }
 
-  const years = Math.floor(months / 12);
+  const years =
+    Math.floor(months / 12);
 
   return `${years} year${
     years === 1 ? "" : "s"
@@ -158,32 +250,48 @@ const formatRelativeTime = (value) => {
 |--------------------------------------------------------------------------
 */
 
-const formatFullDate = (value) => {
+const formatFullDate = (
+  value
+) => {
   if (!value) {
     return "-";
   }
 
   const date = new Date(value);
 
-  if (Number.isNaN(date.getTime())) {
+  if (
+    Number.isNaN(
+      date.getTime()
+    )
+  ) {
     return "-";
   }
 
-  return date.toLocaleString("en-PK", {
-    dateStyle: "medium",
-    timeStyle: "short",
-  });
+  return date.toLocaleString(
+    "en-PK",
+    {
+      dateStyle: "medium",
+      timeStyle: "short",
+    }
+  );
 };
 
 /*
 |--------------------------------------------------------------------------
-| Activity Row
+| Activity Item
 |--------------------------------------------------------------------------
 */
 
-function ActivityItem({ activity }) {
+function ActivityItem({
+  activity,
+}) {
+  const safeActivity =
+    activity || {};
+
   const config =
-    ACTIVITY_CONFIG[activity.type] ||
+    ACTIVITY_CONFIG[
+      safeActivity.type
+    ] ||
     ACTIVITY_CONFIG.default;
 
   const Icon = config.icon;
@@ -200,24 +308,26 @@ function ActivityItem({ activity }) {
 
       <div className="min-w-0 flex-1">
         <h4 className="text-sm font-bold text-slate-800 dark:text-white">
-          {activity.title}
+          {safeActivity.title ||
+            "System activity"}
         </h4>
 
         <p className="mt-0.5 break-words text-sm text-slate-500 dark:text-slate-400">
-          {activity.description}
+          {safeActivity.description ||
+            "No description available"}
         </p>
 
         <div
           className="mt-1 flex items-center text-xs text-slate-400 dark:text-slate-500"
           title={formatFullDate(
-            activity.createdAt
+            safeActivity.createdAt
           )}
         >
           <Clock className="mr-1 h-3.5 w-3.5" />
 
           <span>
             {formatRelativeTime(
-              activity.createdAt
+              safeActivity.createdAt
             )}
           </span>
         </div>
@@ -233,10 +343,13 @@ function ActivityItem({ activity }) {
 */
 
 const ActivityFeed = () => {
-  const [activities, setActivities] =
-    useState([]);
+  const [
+    activities,
+    setActivities,
+  ] = useState([]);
 
-  const [total, setTotal] = useState(0);
+  const [total, setTotal] =
+    useState(0);
 
   const [loading, setLoading] =
     useState(true);
@@ -264,7 +377,7 @@ const ActivityFeed = () => {
 
   /*
   |--------------------------------------------------------------------------
-  | تازہ 6 Activities
+  | تازہ 6 Activities Load کرنا
   |--------------------------------------------------------------------------
   */
 
@@ -278,47 +391,42 @@ const ActivityFeed = () => {
           setLoading(true);
           setError("");
 
-          const response = await fetch(
-            "/api/dashboard/activity-feed?limit=6",
-            {
-              signal:
-                controller.signal,
-            }
-          );
-
           const result =
-            await response.json();
-
-          if (
-            !response.ok ||
-            !result.success
-          ) {
-            throw new Error(
-              result.message ||
-                "Activity feed could not be loaded."
+            await apiRequest(
+              "/dashboard/activity-feed?limit=6",
+              {
+                signal:
+                  controller.signal,
+              }
             );
-          }
 
           setActivities(
-            Array.isArray(result.data)
+            Array.isArray(
+              result.data
+            )
               ? result.data
               : []
           );
 
           setTotal(
-            Number(result.total || 0)
+            Number(
+              result.total || 0
+            )
           );
-        } catch (error) {
+        } catch (
+          requestError
+        ) {
           if (
-            error.name !== "AbortError"
+            requestError.name !==
+            "AbortError"
           ) {
             console.error(
               "Activity feed load error:",
-              error
+              requestError
             );
 
             setError(
-              error.message ||
+              requestError.message ||
                 "Activity feed could not be loaded."
             );
 
@@ -327,7 +435,8 @@ const ActivityFeed = () => {
           }
         } finally {
           if (
-            !controller.signal.aborted
+            !controller.signal
+              .aborted
           ) {
             setLoading(false);
           }
@@ -347,57 +456,60 @@ const ActivityFeed = () => {
   |--------------------------------------------------------------------------
   */
 
-  const openAllActivities = async () => {
-    setShowAll(true);
-    setModalError("");
-
-    if (allActivities.length > 0) {
-      return;
-    }
-
-    try {
-      setModalLoading(true);
-
-      const response = await fetch(
-        "/api/dashboard/activity-feed?limit=200"
-      );
-
-      const result =
-        await response.json();
+  const openAllActivities =
+    async () => {
+      setShowAll(true);
+      setModalError("");
 
       if (
-        !response.ok ||
-        !result.success
+        allActivities.length > 0
       ) {
-        throw new Error(
-          result.message ||
-            "All activities could not be loaded."
-        );
+        return;
       }
 
-      setAllActivities(
-        Array.isArray(result.data)
-          ? result.data
-          : []
-      );
+      try {
+        setModalLoading(true);
 
-      setTotal(
-        Number(result.total || 0)
-      );
-    } catch (error) {
-      console.error(
-        "All activities load error:",
-        error
-      );
+        const result =
+          await apiRequest(
+            "/dashboard/activity-feed?limit=200"
+          );
 
-      setModalError(
-        error.message ||
-          "All activities could not be loaded."
-      );
-    } finally {
-      setModalLoading(false);
-    }
-  };
+        setAllActivities(
+          Array.isArray(
+            result.data
+          )
+            ? result.data
+            : []
+        );
+
+        setTotal(
+          Number(
+            result.total || 0
+          )
+        );
+      } catch (
+        requestError
+      ) {
+        console.error(
+          "All activities load error:",
+          requestError
+        );
+
+        setModalError(
+          requestError.message ||
+            "All activities could not be loaded."
+        );
+      } finally {
+        setModalLoading(false);
+      }
+    };
+
+  /*
+  |--------------------------------------------------------------------------
+  | Modal Close
+  |--------------------------------------------------------------------------
+  */
 
   const closeModal = () => {
     setShowAll(false);
@@ -416,13 +528,16 @@ const ActivityFeed = () => {
               </h3>
 
               <p className="text-sm text-slate-500 dark:text-slate-400">
-                Recent system activities
+                Recent system
+                activities
               </p>
             </div>
 
             <button
               type="button"
-              onClick={openAllActivities}
+              onClick={
+                openAllActivities
+              }
               className="flex-shrink-0 text-sm font-medium text-blue-600 transition hover:text-blue-700"
             >
               View All
@@ -435,27 +550,37 @@ const ActivityFeed = () => {
 
         {/* Error */}
         {error && (
-          <div className="m-5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">
+          <div className="m-5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-300">
             {error}
           </div>
         )}
 
-        {/* List */}
+        {/* Activity List */}
         <div className="space-y-6 p-6">
           {loading ? (
             <div className="py-8 text-center text-sm text-slate-500">
-              Loading activities...
+              Loading
+              activities...
             </div>
-          ) : activities.length === 0 ? (
+          ) : activities.length ===
+            0 ? (
             <div className="py-8 text-center text-sm text-slate-500">
               No activities found.
             </div>
           ) : (
             activities.map(
-              (activity) => (
+              (
+                activity,
+                index
+              ) => (
                 <ActivityItem
-                  key={activity.id}
-                  activity={activity}
+                  key={
+                    activity.id ||
+                    `${activity.type}-${index}`
+                  }
+                  activity={
+                    activity
+                  }
                 />
               )
             )
@@ -503,24 +628,30 @@ const ActivityFeed = () => {
             <div className="max-h-[75vh] overflow-y-auto p-6">
               {modalLoading ? (
                 <div className="py-16 text-center text-sm text-slate-500">
-                  Loading all activities...
+                  Loading all
+                  activities...
                 </div>
               ) : modalError ? (
-                <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">
+                <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-300">
                   {modalError}
                 </div>
               ) : allActivities.length ===
                 0 ? (
                 <div className="py-16 text-center text-sm text-slate-500">
-                  No activities found.
+                  No activities
+                  found.
                 </div>
               ) : (
                 <div className="space-y-6">
                   {allActivities.map(
-                    (activity) => (
+                    (
+                      activity,
+                      index
+                    ) => (
                       <ActivityItem
                         key={
-                          activity.id
+                          activity.id ||
+                          `${activity.type}-${index}`
                         }
                         activity={
                           activity
