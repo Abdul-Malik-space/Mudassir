@@ -582,7 +582,7 @@ const Invoices = () => {
             }
 
             body {
-              font-size: 14px;
+              font-size: 16px;
             }
 
             .invoice-page {
@@ -616,17 +616,17 @@ const Invoices = () => {
             }
 
             .top p {
-              margin: 3px 0;
-              font-size: 13px;
-              font-weight: 500;
+              margin: 4px 0;
+              font-size: 15px;
+              font-weight: 600;
             }
 
             .title {
               text-align: center;
-              font-size: 20px;
+              font-size: 24px;
               font-weight: 800;
               text-decoration: underline;
-              margin: 12px 0;
+              margin: 14px 0;
               letter-spacing: 0.5px;
             }
 
@@ -639,20 +639,20 @@ const Invoices = () => {
 
             .box {
               border: 1.5px solid #111827;
-              padding: 10px 12px;
-              min-height: 88px;
-              font-size: 14px;
-              line-height: 1.5;
+              padding: 12px 14px;
+              min-height: 96px;
+              font-size: 16px;
+              line-height: 1.55;
             }
 
             .field-row {
               display: flex;
-              gap: 6px;
-              margin-bottom: 2px;
+              gap: 8px;
+              margin-bottom: 3px;
             }
 
             .field-row b {
-              min-width: 130px;
+              min-width: 145px;
             }
 
             table {
@@ -664,8 +664,8 @@ const Invoices = () => {
             th,
             td {
               border: 1.2px solid #111827;
-              padding: 8px;
-              font-size: 14px;
+              padding: 10px 9px;
+              font-size: 16px;
               vertical-align: top;
             }
 
@@ -688,21 +688,21 @@ const Invoices = () => {
               align-items: center;
               gap: 8px;
               font-weight: 700;
-              font-size: 14px;
+              font-size: 16px;
             }
 
             .size-line {
-              margin-top: 3px;
-              font-size: 12px;
+              margin-top: 4px;
+              font-size: 14px;
               color: #374151;
             }
 
             .text-badge {
               display: inline-block;
-              padding: 2px 7px;
+              padding: 3px 8px;
               border: 1px solid #111827;
               border-radius: 10px;
-              font-size: 11px;
+              font-size: 12px;
               font-weight: 800;
               white-space: nowrap;
             }
@@ -716,9 +716,9 @@ const Invoices = () => {
             }
 
             .remarks {
-              font-size: 14px;
-              min-height: 80px;
-              padding-top: 4px;
+              font-size: 16px;
+              min-height: 90px;
+              padding-top: 5px;
             }
 
             .remarks b {
@@ -728,14 +728,14 @@ const Invoices = () => {
 
             .totals {
               width: 100%;
-              font-size: 14px;
+              font-size: 16px;
             }
 
             .totals div {
               display: flex;
               justify-content: space-between;
               border-bottom: 1px solid #d1d5db;
-              padding: 7px 0;
+              padding: 8px 0;
               gap: 20px;
             }
 
@@ -748,7 +748,7 @@ const Invoices = () => {
             }
 
             .grand {
-              font-size: 16px;
+              font-size: 18px;
               font-weight: 900;
               border-top: 2px solid #111827;
               border-bottom: 2px solid #111827 !important;
@@ -759,7 +759,7 @@ const Invoices = () => {
               padding-top: 38px;
               display: flex;
               justify-content: space-between;
-              font-size: 14px;
+              font-size: 16px;
               font-weight: 700;
             }
 

@@ -8,6 +8,18 @@ const salesOrderItemSchema = new mongoose.Schema(
       default: null,
     },
 
+    warehouse: {
+      type: String,
+      trim: true,
+      default: "Main Godown",
+    },
+
+    availableStock: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+
     description: {
       type: String,
       required: [true, "Item description is required"],
@@ -38,6 +50,18 @@ const salesOrderItemSchema = new mongoose.Schema(
       min: 0,
     },
 
+    deliveredQty: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+
+    pendingQty: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+
     unit: {
       type: String,
       default: "Rolls",
@@ -61,8 +85,7 @@ const salesOrderItemSchema = new mongoose.Schema(
       trim: true,
       default: "",
     },
-  },
-  { _id: false }
+  }
 );
 
 const salesOrderSchema = new mongoose.Schema(
@@ -225,5 +248,48 @@ const salesOrderSchema = new mongoose.Schema(
   },
   { timestamps: true }
 );
+
+salesOrderSchema.pre("save", function () {
+  this.items = (this.items || []).map((item) => {
+    const quantity = Number(item.quantity || 0);
+    const deliveredQty = Number(item.deliveredQty || 0);
+    const unitPrice = Number(item.unitPrice || 0);
+
+    item.cartons = Number(item.cartons || 0);
+    item.quantity = quantity;
+    item.deliveredQty = deliveredQty;
+    item.pendingQty = Math.max(quantity - deliveredQty, 0);
+    item.unitPrice = unitPrice;
+    item.amount = quantity * unitPrice;
+    item.availableStock = Number(item.availableStock || 0);
+
+    return item;
+  });
+});
+
+salesOrderSchema.pre("findOneAndUpdate", function () {
+  const update = this.getUpdate() || {};
+
+  if (Array.isArray(update.items)) {
+    update.items = update.items.map((item) => {
+      const quantity = Number(item.quantity || 0);
+      const deliveredQty = Number(item.deliveredQty || 0);
+      const unitPrice = Number(item.unitPrice || 0);
+
+      return {
+        ...item,
+        cartons: Number(item.cartons || 0),
+        quantity,
+        deliveredQty,
+        pendingQty: Math.max(quantity - deliveredQty, 0),
+        unitPrice,
+        amount: quantity * unitPrice,
+        availableStock: Number(item.availableStock || 0),
+      };
+    });
+  }
+
+  this.setUpdate(update);
+});
 
 module.exports = mongoose.model("SalesOrder", salesOrderSchema);

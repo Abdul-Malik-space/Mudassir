@@ -4,9 +4,75 @@ const router = express.Router();
 const GRN = require("../models/GRN");
 const PurchaseOrder = require("../models/PurchaseOrder");
 const Counter = require("../models/Counter");
+const StockLedger = require("../models/StockLedger");
+const { postStockMovement } = require("../utils/stockService");
 
-const allowedStatuses = ["Draft", "Received", "Posted", "Cancelled"];
-const allowedInspectionStatuses = ["Pending", "Passed", "Failed", "Partial"];
+const allowedStatuses = [
+  "Draft",
+  "Received",
+  "Partially Received",
+  "Completed",
+  "Posted",
+  "Cancelled",
+];
+
+const stockPostingStatuses = [
+  "Received",
+  "Partially Received",
+  "Completed",
+  "Posted",
+];
+
+const allowedInspectionStatuses = [
+  "Pending",
+  "Passed",
+  "Partially Accepted",
+  "Rejected",
+];
+
+const normalizeStatus = (status) => {
+  return allowedStatuses.includes(status) ? status : "Received";
+};
+
+const normalizeInspectionStatus = (status) => {
+  if (status === "Partial") return "Partially Accepted";
+  if (status === "Failed") return "Rejected";
+  return allowedInspectionStatuses.includes(status) ? status : "Pending";
+};
+
+const shouldPostStock = (status) => {
+  return stockPostingStatuses.includes(status);
+};
+
+const getId = (value) => {
+  if (!value) return "";
+  if (typeof value === "object" && value._id) return String(value._id);
+  return String(value);
+};
+
+const makeItemKey = (item) => {
+  const purchaseOrderItemId = getId(item.purchaseOrderItemId || item._id);
+
+  if (purchaseOrderItemId) {
+    return `po-row:${purchaseOrderItemId}`;
+  }
+
+  const itemId = getId(item.item);
+
+  if (itemId) {
+    return [
+      `item:${itemId}`,
+      String(item.size || "").trim().toLowerCase(),
+      String(item.unit || "").trim().toLowerCase(),
+    ].join("|");
+  }
+
+  return [
+    String(item.description || "").trim().toLowerCase(),
+    String(item.size || "").trim().toLowerCase(),
+    String(item.unit || "").trim().toLowerCase(),
+  ].join("|");
+};
 
 const getNextGRNNo = async () => {
   let grnNo = "";
@@ -15,7 +81,10 @@ const getNextGRNNo = async () => {
     const counter = await Counter.findOneAndUpdate(
       { name: "grnNo" },
       { $inc: { seq: 1 } },
-      { new: true, upsert: true }
+      {
+        returnDocument: "after",
+        upsert: true,
+      }
     );
 
     grnNo = `GRN-${String(counter.seq).padStart(4, "0")}`;
@@ -30,15 +99,8 @@ const getNextGRNNo = async () => {
 const peekNextGRNNo = async () => {
   const counter = await Counter.findOne({ name: "grnNo" });
   const nextSeq = counter ? counter.seq + 1 : 1;
-  return `GRN-${String(nextSeq).padStart(4, "0")}`;
-};
 
-const makeItemKey = (item) => {
-  return [
-    String(item.description || "").trim().toLowerCase(),
-    String(item.size || "").trim().toLowerCase(),
-    String(item.unit || "").trim().toLowerCase(),
-  ].join("|");
+  return `GRN-${String(nextSeq).padStart(4, "0")}`;
 };
 
 const getPOItemsMap = (purchaseOrderItems = []) => {
@@ -46,17 +108,16 @@ const getPOItemsMap = (purchaseOrderItems = []) => {
 
   purchaseOrderItems.forEach((item) => {
     const key = makeItemKey(item);
-    const previous = map.get(key) || {
+
+    map.set(key, {
+      purchaseOrderItemId: item._id || null,
       item: item.item || null,
       description: item.description || "",
       size: item.size || "",
-      orderedQty: 0,
+      orderedQty: Number(item.quantity || 0),
       unit: item.unit || "Pcs",
-      unitPrice: item.unitPrice || 0,
-    };
-
-    previous.orderedQty += Number(item.quantity || 0);
-    map.set(key, previous);
+      unitPrice: Number(item.unitPrice || 0),
+    });
   });
 
   return map;
@@ -65,7 +126,7 @@ const getPOItemsMap = (purchaseOrderItems = []) => {
 const getReceivedQtyMap = async (purchaseOrderId, excludeGRNId = null) => {
   const query = {
     purchaseOrder: purchaseOrderId,
-    status: { $ne: "Cancelled" },
+    status: { $in: stockPostingStatuses },
   };
 
   if (excludeGRNId) {
@@ -80,6 +141,7 @@ const getReceivedQtyMap = async (purchaseOrderId, excludeGRNId = null) => {
     grn.items.forEach((item) => {
       const key = makeItemKey(item);
       const previous = map.get(key) || 0;
+
       map.set(key, previous + Number(item.acceptedQty || 0));
     });
   });
@@ -138,17 +200,26 @@ const cleanGRNItems = async ({
     const amount = acceptedQty * unitPrice;
 
     cleanItems.push({
+      purchaseOrderItemId:
+        item.purchaseOrderItemId || poItem.purchaseOrderItemId || null,
+
       item: item.item || poItem.item || null,
+
       description: String(item.description || poItem.description || "").trim(),
       size: String(item.size || poItem.size || "").trim(),
+
       orderedQty: Number(poItem.orderedQty || 0),
+      previousReceivedQty: Number(alreadyReceivedQty || 0),
+
       receivedQty,
       rejectedQty,
       acceptedQty,
       pendingQty: finalPendingQty,
+
       unit: String(item.unit || poItem.unit || "Pcs").trim(),
       unitPrice,
       amount,
+
       remarks: String(item.remarks || "").trim(),
     });
   }
@@ -197,6 +268,60 @@ const calculateTotals = (items = []) => {
   };
 };
 
+const ensureItemsCanPostStock = (items = [], status) => {
+  if (!shouldPostStock(status)) return;
+
+  for (const item of items) {
+    if (Number(item.acceptedQty || 0) > 0 && !item.item) {
+      throw new Error(
+        `Item "${item.description}" ka Item Master ID missing hai. Pehle Purchase Order ko Item Master dropdown se create karein.`
+      );
+    }
+  }
+};
+
+const removeGRNStockLedger = async (grnId) => {
+  await StockLedger.deleteMany({
+    sourceModule: "GRN",
+    referenceModel: "GRN",
+    referenceId: grnId,
+  });
+};
+
+const syncGRNStockLedger = async (grn) => {
+  await removeGRNStockLedger(grn._id);
+
+  if (!shouldPostStock(grn.status)) return;
+  if (grn.status === "Cancelled") return;
+  if (grn.inspectionStatus === "Rejected") return;
+
+  for (const item of grn.items || []) {
+    const acceptedQty = Number(item.acceptedQty || 0);
+
+    if (acceptedQty <= 0) continue;
+
+    if (!item.item) {
+      throw new Error(
+        `Item "${item.description}" ka Item Master ID missing hai. Stock ledger post nahi ho sakta.`
+      );
+    }
+
+    await postStockMovement({
+      item: item.item,
+      warehouse: grn.warehouse || "Main Godown",
+      date: grn.receivedDate,
+      movementType: "GRN In",
+      sourceModule: "GRN",
+      referenceModel: "GRN",
+      referenceId: grn._id,
+      referenceNo: grn.grnNo,
+      qtyIn: acceptedQty,
+      rate: Number(item.unitPrice || 0),
+      remarks: `GRN ${grn.grnNo} against PO ${grn.purchaseOrderNo}`,
+    });
+  }
+};
+
 const updatePurchaseOrderReceivingStatus = async (purchaseOrderId) => {
   const purchaseOrder = await PurchaseOrder.findById(purchaseOrderId);
 
@@ -240,7 +365,10 @@ const updatePurchaseOrderReceivingStatus = async (purchaseOrderId) => {
       items: updatedItems,
       status,
     },
-    { runValidators: true }
+    {
+      returnDocument: "after",
+      runValidators: true,
+    }
   );
 };
 
@@ -253,6 +381,8 @@ router.get("/next-no", async (req, res) => {
       grnNo,
     });
   } catch (error) {
+    console.error("GRN Next No Error:", error);
+
     res.status(500).json({
       success: false,
       message: "GRN number generate nahi hua",
@@ -304,13 +434,16 @@ router.get("/all", async (req, res) => {
     const grns = await GRN.find(query)
       .populate(
         "purchaseOrder",
-        "purchaseOrderNo orderDate expectedDate status grandTotal balance"
+        "purchaseOrderNo orderDate expectedDate status grandTotal balance items"
       )
       .populate("vendor", "vendorName phoneNumber email address city ntn strn")
+      .populate("items.item", "code name unit category brand purchasePrice")
       .sort({ createdAt: -1 });
 
     res.status(200).json(grns);
   } catch (error) {
+    console.error("GRNs Load Error:", error);
+
     res.status(500).json({
       success: false,
       message: "GRNs load nahi huay",
@@ -326,7 +459,8 @@ router.get("/:id", async (req, res) => {
         "purchaseOrder",
         "purchaseOrderNo orderDate expectedDate status grandTotal balance items"
       )
-      .populate("vendor", "vendorName phoneNumber email address city ntn strn");
+      .populate("vendor", "vendorName phoneNumber email address city ntn strn")
+      .populate("items.item", "code name unit category brand purchasePrice");
 
     if (!grn) {
       return res.status(404).json({
@@ -340,6 +474,8 @@ router.get("/:id", async (req, res) => {
       data: grn,
     });
   } catch (error) {
+    console.error("GRN Single Load Error:", error);
+
     res.status(500).json({
       success: false,
       message: "GRN load nahi hua",
@@ -403,10 +539,11 @@ router.post("/add", async (req, res) => {
       });
     }
 
-    const sourceItems = items && items.length > 0 ? items : selectedPO.items;
+    const finalStatus = normalizeStatus(status);
+    const finalInspectionStatus = normalizeInspectionStatus(inspectionStatus);
 
     const cleanItems = await cleanGRNItems({
-      items: sourceItems,
+      items: items || [],
       purchaseOrder: selectedPO,
     });
 
@@ -416,6 +553,8 @@ router.post("/add", async (req, res) => {
         message: "Please at least one valid received item add karein",
       });
     }
+
+    ensureItemsCanPostStock(cleanItems, finalStatus);
 
     const totals = calculateTotals(cleanItems);
 
@@ -440,15 +579,12 @@ router.post("/add", async (req, res) => {
       challanNo: challanNo || "",
       invoiceNo: invoiceNo || "",
       vehicleNo: vehicleNo || "",
-      warehouse: warehouse || "Main Warehouse",
+      warehouse: warehouse || "Main Godown",
       receivedBy: receivedBy || "",
       checkedBy: checkedBy || "",
 
-      inspectionStatus: allowedInspectionStatuses.includes(inspectionStatus)
-        ? inspectionStatus
-        : "Pending",
-
-      status: allowedStatuses.includes(status) ? status : "Received",
+      inspectionStatus: finalInspectionStatus,
+      status: finalStatus,
 
       items: cleanItems,
 
@@ -464,16 +600,16 @@ router.post("/add", async (req, res) => {
 
     const savedGRN = await grn.save();
 
-    if (savedGRN.status !== "Cancelled") {
-      await updatePurchaseOrderReceivingStatus(selectedPO._id);
-    }
+    await syncGRNStockLedger(savedGRN);
+    await updatePurchaseOrderReceivingStatus(selectedPO._id);
 
     const populatedGRN = await GRN.findById(savedGRN._id)
       .populate(
         "purchaseOrder",
-        "purchaseOrderNo orderDate expectedDate status grandTotal balance"
+        "purchaseOrderNo orderDate expectedDate status grandTotal balance items"
       )
-      .populate("vendor", "vendorName phoneNumber email address city ntn strn");
+      .populate("vendor", "vendorName phoneNumber email address city ntn strn")
+      .populate("items.item", "code name unit category brand purchasePrice");
 
     res.status(201).json({
       success: true,
@@ -481,6 +617,8 @@ router.post("/add", async (req, res) => {
       data: populatedGRN,
     });
   } catch (error) {
+    console.error("GRN Add Error:", error);
+
     if (error.code === 11000) {
       return res.status(400).json({
         success: false,
@@ -532,6 +670,11 @@ router.put("/update/:id", async (req, res) => {
       });
     }
 
+    const finalStatus = normalizeStatus(req.body.status || existingGRN.status);
+    const finalInspectionStatus = normalizeInspectionStatus(
+      req.body.inspectionStatus || existingGRN.inspectionStatus
+    );
+
     const cleanItems = await cleanGRNItems({
       items: req.body.items || existingGRN.items,
       purchaseOrder: selectedPO,
@@ -544,6 +687,8 @@ router.put("/update/:id", async (req, res) => {
         message: "Please at least one valid received item add karein",
       });
     }
+
+    ensureItemsCanPostStock(cleanItems, finalStatus);
 
     const totals = calculateTotals(cleanItems);
 
@@ -568,19 +713,12 @@ router.put("/update/:id", async (req, res) => {
         challanNo: req.body.challanNo || "",
         invoiceNo: req.body.invoiceNo || "",
         vehicleNo: req.body.vehicleNo || "",
-        warehouse: req.body.warehouse || "Main Warehouse",
+        warehouse: req.body.warehouse || "Main Godown",
         receivedBy: req.body.receivedBy || "",
         checkedBy: req.body.checkedBy || "",
 
-        inspectionStatus: allowedInspectionStatuses.includes(
-          req.body.inspectionStatus
-        )
-          ? req.body.inspectionStatus
-          : existingGRN.inspectionStatus,
-
-        status: allowedStatuses.includes(req.body.status)
-          ? req.body.status
-          : existingGRN.status,
+        inspectionStatus: finalInspectionStatus,
+        status: finalStatus,
 
         items: cleanItems,
 
@@ -594,16 +732,18 @@ router.put("/update/:id", async (req, res) => {
         remarks: req.body.remarks || "",
       },
       {
-        new: true,
+        returnDocument: "after",
         runValidators: true,
       }
     )
       .populate(
         "purchaseOrder",
-        "purchaseOrderNo orderDate expectedDate status grandTotal balance"
+        "purchaseOrderNo orderDate expectedDate status grandTotal balance items"
       )
-      .populate("vendor", "vendorName phoneNumber email address city ntn strn");
+      .populate("vendor", "vendorName phoneNumber email address city ntn strn")
+      .populate("items.item", "code name unit category brand purchasePrice");
 
+    await syncGRNStockLedger(updatedGRN);
     await updatePurchaseOrderReceivingStatus(selectedPO._id);
 
     res.status(200).json({
@@ -612,6 +752,8 @@ router.put("/update/:id", async (req, res) => {
       data: updatedGRN,
     });
   } catch (error) {
+    console.error("GRN Update Error:", error);
+
     if (error.code === 11000) {
       return res.status(400).json({
         success: false,
@@ -631,31 +773,35 @@ router.patch("/status/:id", async (req, res) => {
   try {
     const { status } = req.body;
 
-    if (!allowedStatuses.includes(status)) {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid status",
-      });
-    }
+    const finalStatus = normalizeStatus(status);
 
-    const grn = await GRN.findByIdAndUpdate(
-      req.params.id,
-      { status },
-      { new: true, runValidators: true }
-    )
-      .populate(
-        "purchaseOrder",
-        "purchaseOrderNo orderDate expectedDate status grandTotal balance"
-      )
-      .populate("vendor", "vendorName phoneNumber email address city ntn strn");
+    const existingGRN = await GRN.findById(req.params.id);
 
-    if (!grn) {
+    if (!existingGRN) {
       return res.status(404).json({
         success: false,
         message: "GRN not found",
       });
     }
 
+    ensureItemsCanPostStock(existingGRN.items || [], finalStatus);
+
+    const grn = await GRN.findByIdAndUpdate(
+      req.params.id,
+      { status: finalStatus },
+      {
+        returnDocument: "after",
+        runValidators: true,
+      }
+    )
+      .populate(
+        "purchaseOrder",
+        "purchaseOrderNo orderDate expectedDate status grandTotal balance items"
+      )
+      .populate("vendor", "vendorName phoneNumber email address city ntn strn")
+      .populate("items.item", "code name unit category brand purchasePrice");
+
+    await syncGRNStockLedger(grn);
     await updatePurchaseOrderReceivingStatus(grn.purchaseOrder._id || grn.purchaseOrder);
 
     res.status(200).json({
@@ -664,6 +810,8 @@ router.patch("/status/:id", async (req, res) => {
       data: grn,
     });
   } catch (error) {
+    console.error("GRN Status Error:", error);
+
     res.status(400).json({
       success: false,
       message: "Status update nahi hua",
@@ -692,6 +840,7 @@ router.delete("/delete/:id", async (req, res) => {
 
     const purchaseOrderId = grn.purchaseOrder;
 
+    await removeGRNStockLedger(grn._id);
     await GRN.findByIdAndDelete(req.params.id);
     await updatePurchaseOrderReceivingStatus(purchaseOrderId);
 
@@ -700,6 +849,8 @@ router.delete("/delete/:id", async (req, res) => {
       message: "GRN deleted successfully",
     });
   } catch (error) {
+    console.error("GRN Delete Error:", error);
+
     res.status(500).json({
       success: false,
       message: "GRN delete nahi hua",

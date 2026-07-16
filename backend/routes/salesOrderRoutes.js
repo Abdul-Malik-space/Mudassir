@@ -17,6 +17,7 @@ const allowedStatuses = [
 ];
 
 const allowedTaxTypes = ["without-tax", "with-tax"];
+const allowedTextTypes = ["", "with-text", "without-text"];
 
 const getPaymentStatus = (grandTotal, advance) => {
   const total = Number(grandTotal || 0);
@@ -25,6 +26,12 @@ const getPaymentStatus = (grandTotal, advance) => {
   if (paid <= 0) return "Unpaid";
   if (paid >= total) return "Paid";
   return "Partially Paid";
+};
+
+const getItemId = (value) => {
+  if (!value) return null;
+  if (typeof value === "object" && value._id) return value._id;
+  return value;
 };
 
 const cleanSalesOrderItems = (items = []) => {
@@ -40,20 +47,37 @@ const cleanSalesOrderItems = (items = []) => {
       const quantity = Number(item.quantity || 0);
       const unitPrice = Number(item.unitPrice || 0);
       const cartons = Number(item.cartons || 0);
+      const deliveredQty = Number(item.deliveredQty || 0);
+      const pendingQty = Math.max(quantity - deliveredQty, 0);
       const amount = quantity * unitPrice;
 
-      return {
-        item: item.item || null,
+      const cleanItem = {
+        item: getItemId(item.item) || null,
+
+        warehouse: String(item.warehouse || "Main Godown").trim(),
+        availableStock: Number(item.availableStock || 0),
+
         description: String(item.description || "").trim(),
         size: String(item.size || "").trim(),
-        textType: item.textType || "",
+        textType: allowedTextTypes.includes(item.textType) ? item.textType : "",
+
         cartons,
         quantity,
+        deliveredQty,
+        pendingQty,
+
         unit: String(item.unit || "Rolls").trim(),
         unitPrice,
         amount,
+
         remarks: String(item.remarks || "").trim(),
       };
+
+      if (item._id) {
+        cleanItem._id = item._id;
+      }
+
+      return cleanItem;
     });
 };
 
@@ -104,6 +128,16 @@ const calculateOrderTotals = (
   };
 };
 
+const validateDeliveredQuantities = (items = []) => {
+  for (const item of items) {
+    if (Number(item.deliveredQty || 0) > Number(item.quantity || 0)) {
+      throw new Error(
+        `Delivered qty item "${item.description}" mein order qty se zyada nahi ho sakti`
+      );
+    }
+  }
+};
+
 const getNextSalesOrderNo = async () => {
   let salesOrderNo = "";
 
@@ -111,7 +145,10 @@ const getNextSalesOrderNo = async () => {
     const counter = await Counter.findOneAndUpdate(
       { name: "salesOrderNo" },
       { $inc: { seq: 1 } },
-      { new: true, upsert: true }
+      {
+        returnDocument: "after",
+        upsert: true,
+      }
     );
 
     salesOrderNo = `SO-${String(counter.seq).padStart(4, "0")}`;
@@ -126,6 +163,7 @@ const getNextSalesOrderNo = async () => {
 const peekNextSalesOrderNo = async () => {
   const counter = await Counter.findOne({ name: "salesOrderNo" });
   const nextSeq = counter ? counter.seq + 1 : 1;
+
   return `SO-${String(nextSeq).padStart(4, "0")}`;
 };
 
@@ -140,7 +178,12 @@ const buildCustomerSnapshot = (customer) => {
   };
 };
 
-// Next sales order no preview
+const populateSalesOrder = (query) => {
+  return query
+    .populate("customer", "customerName phoneNumber email address city")
+    .populate("items.item", "code name unit category brand purchasePrice salePrice");
+};
+
 router.get("/next-no", async (req, res) => {
   try {
     const salesOrderNo = await peekNextSalesOrderNo();
@@ -150,6 +193,8 @@ router.get("/next-no", async (req, res) => {
       salesOrderNo,
     });
   } catch (error) {
+    console.error("Sales Order Next No Error:", error);
+
     res.status(500).json({
       success: false,
       message: "Sales order number generate nahi hua",
@@ -158,7 +203,6 @@ router.get("/next-no", async (req, res) => {
   }
 });
 
-// Get all sales orders
 router.get("/all", async (req, res) => {
   try {
     const { search = "", status = "", customer = "" } = req.query;
@@ -181,15 +225,18 @@ router.get("/all", async (req, res) => {
         { poNo: { $regex: search, $options: "i" } },
         { referenceNo: { $regex: search, $options: "i" } },
         { "items.description": { $regex: search, $options: "i" } },
+        { "items.warehouse": { $regex: search, $options: "i" } },
       ];
     }
 
-    const orders = await SalesOrder.find(query)
-      .populate("customer", "customerName phoneNumber email address city")
-      .sort({ createdAt: -1 });
+    const orders = await populateSalesOrder(
+      SalesOrder.find(query).sort({ createdAt: -1 })
+    );
 
     res.status(200).json(orders);
   } catch (error) {
+    console.error("Sales Orders Load Error:", error);
+
     res.status(500).json({
       success: false,
       message: "Sales orders load nahi huay",
@@ -198,12 +245,10 @@ router.get("/all", async (req, res) => {
   }
 });
 
-// Get single sales order
 router.get("/:id", async (req, res) => {
   try {
-    const order = await SalesOrder.findById(req.params.id).populate(
-      "customer",
-      "customerName phoneNumber email address city"
+    const order = await populateSalesOrder(
+      SalesOrder.findById(req.params.id)
     );
 
     if (!order) {
@@ -218,6 +263,8 @@ router.get("/:id", async (req, res) => {
       data: order,
     });
   } catch (error) {
+    console.error("Sales Order Single Load Error:", error);
+
     res.status(500).json({
       success: false,
       message: "Sales order load nahi hua",
@@ -226,7 +273,6 @@ router.get("/:id", async (req, res) => {
   }
 });
 
-// Add sales order
 router.post("/add", async (req, res) => {
   try {
     const {
@@ -275,6 +321,8 @@ router.post("/add", async (req, res) => {
       });
     }
 
+    validateDeliveredQuantities(totals.cleanItems);
+
     if (totals.advance > totals.grandTotal) {
       return res.status(400).json({
         success: false,
@@ -317,9 +365,8 @@ router.post("/add", async (req, res) => {
 
     const savedOrder = await order.save();
 
-    const populatedOrder = await SalesOrder.findById(savedOrder._id).populate(
-      "customer",
-      "customerName phoneNumber email address city"
+    const populatedOrder = await populateSalesOrder(
+      SalesOrder.findById(savedOrder._id)
     );
 
     res.status(201).json({
@@ -328,6 +375,8 @@ router.post("/add", async (req, res) => {
       data: populatedOrder,
     });
   } catch (error) {
+    console.error("Sales Order Add Error:", error);
+
     if (error.code === 11000) {
       return res.status(400).json({
         success: false,
@@ -343,7 +392,6 @@ router.post("/add", async (req, res) => {
   }
 });
 
-// Update sales order
 router.put("/update/:id", async (req, res) => {
   try {
     const existingOrder = await SalesOrder.findById(req.params.id);
@@ -359,6 +407,13 @@ router.put("/update/:id", async (req, res) => {
       return res.status(400).json({
         success: false,
         message: "Cancelled sales order update nahi ho sakta",
+      });
+    }
+
+    if (["Delivered", "Invoiced"].includes(existingOrder.status)) {
+      return res.status(400).json({
+        success: false,
+        message: "Delivered/Invoiced sales order update nahi ho sakta",
       });
     }
 
@@ -386,6 +441,8 @@ router.put("/update/:id", async (req, res) => {
       });
     }
 
+    validateDeliveredQuantities(totals.cleanItems);
+
     if (totals.advance > totals.grandTotal) {
       return res.status(400).json({
         success: false,
@@ -395,45 +452,47 @@ router.put("/update/:id", async (req, res) => {
 
     const customerSnapshot = buildCustomerSnapshot(selectedCustomer);
 
-    const updatedOrder = await SalesOrder.findByIdAndUpdate(
-      req.params.id,
-      {
-        salesOrderNo: req.body.salesOrderNo
-          ? String(req.body.salesOrderNo).trim().toUpperCase()
-          : existingOrder.salesOrderNo,
+    const updatedOrder = await populateSalesOrder(
+      SalesOrder.findByIdAndUpdate(
+        req.params.id,
+        {
+          salesOrderNo: req.body.salesOrderNo
+            ? String(req.body.salesOrderNo).trim().toUpperCase()
+            : existingOrder.salesOrderNo,
 
-        ...customerSnapshot,
+          ...customerSnapshot,
 
-        orderDate: req.body.orderDate || existingOrder.orderDate,
-        deliveryDate: req.body.deliveryDate || "",
-        poNo: req.body.poNo || "",
-        referenceNo: req.body.referenceNo || "",
+          orderDate: req.body.orderDate || existingOrder.orderDate,
+          deliveryDate: req.body.deliveryDate || "",
+          poNo: req.body.poNo || "",
+          referenceNo: req.body.referenceNo || "",
 
-        taxType: totals.taxType,
-        taxRate: totals.taxRate,
+          taxType: totals.taxType,
+          taxRate: totals.taxRate,
 
-        items: totals.cleanItems,
+          items: totals.cleanItems,
 
-        totalCartons: totals.totalCartons,
-        totalQuantity: totals.totalQuantity,
-        subtotal: totals.subtotal,
-        salesTax: totals.salesTax,
-        grandTotal: totals.grandTotal,
-        advance: totals.advance,
-        balance: totals.balance,
-        paymentStatus: totals.paymentStatus,
+          totalCartons: totals.totalCartons,
+          totalQuantity: totals.totalQuantity,
+          subtotal: totals.subtotal,
+          salesTax: totals.salesTax,
+          grandTotal: totals.grandTotal,
+          advance: totals.advance,
+          balance: totals.balance,
+          paymentStatus: totals.paymentStatus,
 
-        status: allowedStatuses.includes(req.body.status)
-          ? req.body.status
-          : existingOrder.status,
+          status: allowedStatuses.includes(req.body.status)
+            ? req.body.status
+            : existingOrder.status,
 
-        remarks: req.body.remarks || "",
-      },
-      {
-        new: true,
-        runValidators: true,
-      }
-    ).populate("customer", "customerName phoneNumber email address city");
+          remarks: req.body.remarks || "",
+        },
+        {
+          returnDocument: "after",
+          runValidators: true,
+        }
+      )
+    );
 
     res.status(200).json({
       success: true,
@@ -441,6 +500,8 @@ router.put("/update/:id", async (req, res) => {
       data: updatedOrder,
     });
   } catch (error) {
+    console.error("Sales Order Update Error:", error);
+
     if (error.code === 11000) {
       return res.status(400).json({
         success: false,
@@ -456,7 +517,6 @@ router.put("/update/:id", async (req, res) => {
   }
 });
 
-// Update only status
 router.patch("/status/:id", async (req, res) => {
   try {
     const { status } = req.body;
@@ -468,11 +528,16 @@ router.patch("/status/:id", async (req, res) => {
       });
     }
 
-    const order = await SalesOrder.findByIdAndUpdate(
-      req.params.id,
-      { status },
-      { new: true, runValidators: true }
-    ).populate("customer", "customerName phoneNumber email address city");
+    const order = await populateSalesOrder(
+      SalesOrder.findByIdAndUpdate(
+        req.params.id,
+        { status },
+        {
+          returnDocument: "after",
+          runValidators: true,
+        }
+      )
+    );
 
     if (!order) {
       return res.status(404).json({
@@ -487,6 +552,8 @@ router.patch("/status/:id", async (req, res) => {
       data: order,
     });
   } catch (error) {
+    console.error("Sales Order Status Error:", error);
+
     res.status(400).json({
       success: false,
       message: "Status update nahi hua",
@@ -495,10 +562,9 @@ router.patch("/status/:id", async (req, res) => {
   }
 });
 
-// Delete sales order
 router.delete("/delete/:id", async (req, res) => {
   try {
-    const order = await SalesOrder.findByIdAndDelete(req.params.id);
+    const order = await SalesOrder.findById(req.params.id);
 
     if (!order) {
       return res.status(404).json({
@@ -507,11 +573,23 @@ router.delete("/delete/:id", async (req, res) => {
       });
     }
 
+    if (["Partially Delivered", "Delivered", "Invoiced"].includes(order.status)) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Delivered ya partially delivered sales order delete nahi ho sakta",
+      });
+    }
+
+    await SalesOrder.findByIdAndDelete(req.params.id);
+
     res.status(200).json({
       success: true,
       message: "Sales order deleted successfully",
     });
   } catch (error) {
+    console.error("Sales Order Delete Error:", error);
+
     res.status(500).json({
       success: false,
       message: "Sales order delete nahi hua",

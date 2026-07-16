@@ -11,9 +11,10 @@ import {
   ArrowLeft,
   ClipboardCheck,
   PackageCheck,
-  Truck,
   Warehouse,
   ShieldCheck,
+  Search,
+  RefreshCcw,
 } from "lucide-react";
 import { API_BASE_URL } from "../config/api";
 
@@ -30,6 +31,36 @@ const RequiredLabel = ({ children }) => (
 const NormalLabel = ({ children }) => (
   <label className="text-xs font-bold text-slate-600">{children}</label>
 );
+
+const normalizeArray = (data, keys = []) => {
+  if (Array.isArray(data)) return data;
+
+  for (const key of keys) {
+    if (Array.isArray(data?.[key])) return data[key];
+  }
+
+  if (Array.isArray(data?.data)) return data.data;
+
+  return [];
+};
+
+const apiRequest = async (url, options = {}) => {
+  const response = await fetch(url, {
+    headers: {
+      "Content-Type": "application/json",
+      ...(options.headers || {}),
+    },
+    ...options,
+  });
+
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    throw new Error(data.message || data.error || "Request failed");
+  }
+
+  return data;
+};
 
 const getVendorName = (order) => {
   return (
@@ -53,79 +84,85 @@ const getOrderNo = (order) => {
   return order?.purchaseOrderNo || order?.orderNo || "N/A";
 };
 
-const createGrnNo = () => {
-  const year = new Date().getFullYear();
-  const random = Math.floor(1000 + Math.random() * 9000);
-  return `GRN-${year}-${random}`;
-};
+const getDefaultForm = (grnNo = "") => ({
+  grnNo,
+  purchaseOrder: "",
+  purchaseOrderNo: "",
+  vendor: "",
+  vendorName: "",
+  vendorPhone: "",
+  receivedDate: todayDate(),
+  challanNo: "",
+  invoiceNo: "",
+  vehicleNo: "",
+  warehouse: "Main Godown",
+  receivedBy: "",
+  checkedBy: "",
+  inspectionStatus: "Pending",
+  status: "Draft",
+  remarks: "",
+  items: [],
+});
 
 const GRN = () => {
   const [purchaseOrders, setPurchaseOrders] = useState([]);
   const [grns, setGrns] = useState([]);
+
   const [loading, setLoading] = useState(false);
+  const [poLoading, setPoLoading] = useState(false);
   const [saving, setSaving] = useState(false);
 
   const [showForm, setShowForm] = useState(false);
   const [editId, setEditId] = useState(null);
 
-  const [form, setForm] = useState({
-    grnNo: "",
-    purchaseOrder: "",
-    purchaseOrderNo: "",
-    vendorName: "",
-    vendorPhone: "",
-    receivedDate: todayDate(),
-    challanNo: "",
-    invoiceNo: "",
-    vehicleNo: "",
-    warehouse: "Main Warehouse",
-    receivedBy: "",
-    checkedBy: "",
-    inspectionStatus: "Pending",
-    status: "Draft",
-    remarks: "",
-    items: [],
-  });
+  const [searchTerm, setSearchTerm] = useState("");
+  const [statusFilter, setStatusFilter] = useState("All");
+
+  const [form, setForm] = useState(getDefaultForm());
 
   const fetchPurchaseOrders = async () => {
-    setLoading(true);
-
     try {
-      const res = await fetch(`${API_BASE_URL}/purchase-orders/all`);
-      const data = await res.json();
+      setPoLoading(true);
 
-      if (Array.isArray(data)) {
-        setPurchaseOrders(data);
-      } else if (data.purchaseOrders && Array.isArray(data.purchaseOrders)) {
-        setPurchaseOrders(data.purchaseOrders);
-      } else {
-        setPurchaseOrders([]);
-      }
+      const data = await apiRequest(`${API_BASE_URL}/purchase-orders/all`);
+      const list = normalizeArray(data, ["purchaseOrders", "orders"]);
+
+      setPurchaseOrders(
+        list.filter((order) => !["Cancelled", "Received"].includes(order.status))
+      );
     } catch (error) {
       console.error("Purchase orders loading error:", error);
+      alert(error.message || "Purchase orders load nahi huay");
       setPurchaseOrders([]);
+    } finally {
+      setPoLoading(false);
+    }
+  };
+
+  const fetchGrns = async () => {
+    try {
+      setLoading(true);
+
+      const data = await apiRequest(`${API_BASE_URL}/grns/all`);
+      setGrns(normalizeArray(data, ["grns"]));
+    } catch (error) {
+      console.error("GRN loading error:", error);
+      alert(error.message || "GRN load nahi huay");
+      setGrns([]);
     } finally {
       setLoading(false);
     }
   };
 
-  useEffect(() => {
-    fetchPurchaseOrders();
-
-    const savedGrns = localStorage.getItem("grns");
-    if (savedGrns) {
-      setGrns(JSON.parse(savedGrns));
-    }
-  }, []);
-
-  const saveGrnsToLocalStorage = (updatedGrns) => {
-    setGrns(updatedGrns);
-    localStorage.setItem("grns", JSON.stringify(updatedGrns));
+  const fetchNextNo = async () => {
+    const data = await apiRequest(`${API_BASE_URL}/grns/next-no`);
+    return data.grnNo || "";
   };
 
-  const selectedPurchaseOrder = useMemo(() => {
-    return purchaseOrders.find((order) => order._id === form.purchaseOrder);
-  }, [purchaseOrders, form.purchaseOrder]);
+  useEffect(() => {
+    fetchPurchaseOrders();
+    fetchGrns();
+  }, []);
 
   const totals = useMemo(() => {
     const totalOrderedQty = form.items.reduce(
@@ -162,36 +199,63 @@ const GRN = () => {
     };
   }, [form.items]);
 
-  const openNewForm = async () => {
-    await fetchPurchaseOrders();
+  const stats = useMemo(() => {
+    return {
+      totalGrns: grns.length,
+      receivedQty: grns.reduce(
+        (s, g) => s + Number(g.totalReceivedQty || g.totals?.totalReceivedQty || 0),
+        0
+      ),
+      rejectedQty: grns.reduce(
+        (s, g) => s + Number(g.totalRejectedQty || g.totals?.totalRejectedQty || 0),
+        0
+      ),
+      pendingQty: grns.reduce(
+        (s, g) => s + Number(g.totalPendingQty || g.totals?.totalPendingQty || 0),
+        0
+      ),
+    };
+  }, [grns]);
 
-    setEditId(null);
+  const filteredGrns = useMemo(() => {
+    const keyword = searchTerm.trim().toLowerCase();
 
-    setForm({
-      grnNo: createGrnNo(),
-      purchaseOrder: "",
-      purchaseOrderNo: "",
-      vendorName: "",
-      vendorPhone: "",
-      receivedDate: todayDate(),
-      challanNo: "",
-      invoiceNo: "",
-      vehicleNo: "",
-      warehouse: "Main Warehouse",
-      receivedBy: "",
-      checkedBy: "",
-      inspectionStatus: "Pending",
-      status: "Draft",
-      remarks: "",
-      items: [],
+    return grns.filter((grn) => {
+      const matchesSearch =
+        !keyword ||
+        grn.grnNo?.toLowerCase().includes(keyword) ||
+        grn.purchaseOrderNo?.toLowerCase().includes(keyword) ||
+        grn.vendorName?.toLowerCase().includes(keyword) ||
+        grn.challanNo?.toLowerCase().includes(keyword) ||
+        grn.invoiceNo?.toLowerCase().includes(keyword);
+
+      const matchesStatus = statusFilter === "All" || grn.status === statusFilter;
+
+      return matchesSearch && matchesStatus;
     });
+  }, [grns, searchTerm, statusFilter]);
 
-    setShowForm(true);
+  const openNewForm = async () => {
+    try {
+      setSaving(true);
+
+      await fetchPurchaseOrders();
+      const nextNo = await fetchNextNo();
+
+      setEditId(null);
+      setForm(getDefaultForm(nextNo));
+      setShowForm(true);
+    } catch (error) {
+      alert(error.message || "GRN No load nahi hua");
+    } finally {
+      setSaving(false);
+    }
   };
 
   const closeForm = () => {
     setShowForm(false);
     setEditId(null);
+    setForm(getDefaultForm());
   };
 
   const handlePurchaseOrderSelect = (purchaseOrderId) => {
@@ -202,6 +266,7 @@ const GRN = () => {
         ...form,
         purchaseOrder: "",
         purchaseOrderNo: "",
+        vendor: "",
         vendorName: "",
         vendorPhone: "",
         items: [],
@@ -209,21 +274,27 @@ const GRN = () => {
       return;
     }
 
-    const mappedItems = (order.items || []).map((item, index) => {
-      const orderedQty = Number(item.quantity || item.qty || 0);
+    const mappedItems = (order.items || []).map((row, index) => {
+      const orderedQty = Number(row.quantity || row.qty || 0);
+      const alreadyReceivedQty = Number(row.receivedQty || 0);
+      const pendingQty = Math.max(orderedQty - alreadyReceivedQty, 0);
 
       return {
-        itemId: item._id || index,
-        description: item.description || item.itemName || "",
-        size: item.size || "",
+        item: row.item?._id || row.item || null,
+        purchaseOrderItemId: row._id || null,
+        description: row.description || row.itemName || "",
+        size: row.size || "",
         orderedQty,
+        previousReceivedQty: alreadyReceivedQty,
         receivedQty: "",
         rejectedQty: "",
         acceptedQty: 0,
-        pendingQty: orderedQty,
-        unit: item.unit || "Pcs",
-        unitPrice: Number(item.unitPrice || 0),
+        pendingQty,
+        unit: row.unit || "Pcs",
+        unitPrice: Number(row.unitPrice || 0),
+        amount: 0,
         remarks: "",
+        rowIndex: index,
       };
     });
 
@@ -231,6 +302,7 @@ const GRN = () => {
       ...form,
       purchaseOrder: purchaseOrderId,
       purchaseOrderNo: getOrderNo(order),
+      vendor: order.vendor?._id || order.vendor || "",
       vendorName: getVendorName(order),
       vendorPhone: getVendorPhone(order),
       items: mappedItems,
@@ -246,14 +318,17 @@ const GRN = () => {
     };
 
     const orderedQty = Number(updatedItems[index].orderedQty || 0);
+    const previousReceivedQty = Number(updatedItems[index].previousReceivedQty || 0);
     const receivedQty = Number(updatedItems[index].receivedQty || 0);
     const rejectedQty = Number(updatedItems[index].rejectedQty || 0);
+    const unitPrice = Number(updatedItems[index].unitPrice || 0);
 
     const acceptedQty = Math.max(receivedQty - rejectedQty, 0);
-    const pendingQty = Math.max(orderedQty - receivedQty, 0);
+    const pendingQty = Math.max(orderedQty - previousReceivedQty - receivedQty, 0);
 
     updatedItems[index].acceptedQty = acceptedQty;
     updatedItems[index].pendingQty = pendingQty;
+    updatedItems[index].amount = acceptedQty * unitPrice;
 
     setForm({
       ...form,
@@ -261,25 +336,25 @@ const GRN = () => {
     });
   };
 
-  const handleSubmit = () => {
+  const validateForm = () => {
     if (!form.grnNo.trim()) {
       alert("GRN No required hai");
-      return;
+      return false;
     }
 
     if (!form.purchaseOrder) {
       alert("Purchase Order select karein");
-      return;
+      return false;
     }
 
     if (!form.receivedDate) {
       alert("Received Date required hai");
-      return;
+      return false;
     }
 
     if (!form.warehouse.trim()) {
       alert("Warehouse required hai");
-      return;
+      return false;
     }
 
     const validItems = form.items.filter(
@@ -288,7 +363,7 @@ const GRN = () => {
 
     if (validItems.length === 0) {
       alert("Kam az kam aik item receive karein");
-      return;
+      return false;
     }
 
     const invalidRejectedQty = form.items.some(
@@ -297,73 +372,161 @@ const GRN = () => {
 
     if (invalidRejectedQty) {
       alert("Rejected Qty received qty se zyada nahi ho sakti");
-      return;
+      return false;
     }
 
-    setSaving(true);
+    const overReceived = form.items.some((item) => {
+      const remaining =
+        Number(item.orderedQty || 0) - Number(item.previousReceivedQty || 0);
+      return Number(item.receivedQty || 0) > remaining;
+    });
 
-    setTimeout(() => {
-      const payload = {
-        ...form,
-        items: form.items,
-        totals,
-        updatedAt: new Date().toISOString(),
-      };
+    if (overReceived) {
+      alert("Received qty pending qty se zyada nahi ho sakti");
+      return false;
+    }
 
-      if (editId) {
-        const updatedGrns = grns.map((grn) =>
-          grn.id === editId ? { ...payload, id: editId } : grn
-        );
-
-        saveGrnsToLocalStorage(updatedGrns);
-      } else {
-        const newGrn = {
-          ...payload,
-          id: Date.now().toString(),
-          createdAt: new Date().toISOString(),
-        };
-
-        saveGrnsToLocalStorage([newGrn, ...grns]);
-      }
-
-      setSaving(false);
-      closeForm();
-    }, 500);
+    return true;
   };
 
-  const handleEdit = (grn) => {
-    setEditId(grn.id);
+  const buildPayload = () => {
+    const validItems = form.items
+      .filter((item) => Number(item.receivedQty || 0) > 0)
+      .map((item) => ({
+        item: item.item || null,
+        purchaseOrderItemId: item.purchaseOrderItemId || null,
+        description: String(item.description || "").trim(),
+        size: String(item.size || "").trim(),
+        orderedQty: Number(item.orderedQty || 0),
+        previousReceivedQty: Number(item.previousReceivedQty || 0),
+        receivedQty: Number(item.receivedQty || 0),
+        rejectedQty: Number(item.rejectedQty || 0),
+        acceptedQty: Number(item.acceptedQty || 0),
+        pendingQty: Number(item.pendingQty || 0),
+        unit: String(item.unit || "Pcs").trim(),
+        unitPrice: Number(item.unitPrice || 0),
+        amount: Number(item.amount || 0),
+        remarks: String(item.remarks || "").trim(),
+      }));
+
+    return {
+      grnNo: form.grnNo,
+      purchaseOrder: form.purchaseOrder,
+      purchaseOrderNo: form.purchaseOrderNo,
+      vendor: form.vendor || null,
+      vendorName: form.vendorName,
+      vendorPhone: form.vendorPhone,
+      receivedDate: form.receivedDate,
+      challanNo: form.challanNo,
+      invoiceNo: form.invoiceNo,
+      vehicleNo: form.vehicleNo,
+      warehouse: form.warehouse,
+      receivedBy: form.receivedBy,
+      checkedBy: form.checkedBy,
+      inspectionStatus: form.inspectionStatus,
+      status: form.status,
+      remarks: form.remarks,
+      items: validItems,
+      totalOrderedQty: totals.totalOrderedQty,
+      totalReceivedQty: totals.totalReceivedQty,
+      totalAcceptedQty: totals.totalAcceptedQty,
+      totalRejectedQty: totals.totalRejectedQty,
+      totalPendingQty: totals.totalPendingQty,
+    };
+  };
+
+  const handleSubmit = async () => {
+    if (!validateForm()) return;
+
+    try {
+      setSaving(true);
+
+      const payload = buildPayload();
+
+      const url = editId
+        ? `${API_BASE_URL}/grns/update/${editId}`
+        : `${API_BASE_URL}/grns/add`;
+
+      const method = editId ? "PUT" : "POST";
+
+      await apiRequest(url, {
+        method,
+        body: JSON.stringify(payload),
+      });
+
+      await fetchGrns();
+      await fetchPurchaseOrders();
+      closeForm();
+    } catch (error) {
+      console.error("GRN Save Error:", error);
+      alert(error.message || "GRN save nahi hua");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleEdit = async (grn) => {
+    await fetchPurchaseOrders();
+
+    setEditId(grn._id);
+
     setForm({
       grnNo: grn.grnNo || "",
-      purchaseOrder: grn.purchaseOrder || "",
+      purchaseOrder: grn.purchaseOrder?._id || grn.purchaseOrder || "",
       purchaseOrderNo: grn.purchaseOrderNo || "",
+      vendor: grn.vendor?._id || grn.vendor || "",
       vendorName: grn.vendorName || "",
       vendorPhone: grn.vendorPhone || "",
       receivedDate: grn.receivedDate || todayDate(),
       challanNo: grn.challanNo || "",
       invoiceNo: grn.invoiceNo || "",
       vehicleNo: grn.vehicleNo || "",
-      warehouse: grn.warehouse || "Main Warehouse",
+      warehouse: grn.warehouse || "Main Godown",
       receivedBy: grn.receivedBy || "",
       checkedBy: grn.checkedBy || "",
       inspectionStatus: grn.inspectionStatus || "Pending",
       status: grn.status || "Draft",
       remarks: grn.remarks || "",
-      items: grn.items?.length ? grn.items : [],
+      items: grn.items?.length
+        ? grn.items.map((row) => ({
+            item: row.item?._id || row.item || null,
+            purchaseOrderItemId: row.purchaseOrderItemId || null,
+            description: row.description || "",
+            size: row.size || "",
+            orderedQty: row.orderedQty || 0,
+            previousReceivedQty: row.previousReceivedQty || 0,
+            receivedQty: row.receivedQty || "",
+            rejectedQty: row.rejectedQty || "",
+            acceptedQty: row.acceptedQty || 0,
+            pendingQty: row.pendingQty || 0,
+            unit: row.unit || "Pcs",
+            unitPrice: row.unitPrice || 0,
+            amount: row.amount || 0,
+            remarks: row.remarks || "",
+          }))
+        : [],
     });
 
     setShowForm(true);
   };
 
-  const handleDelete = (id) => {
+  const handleDelete = async (id) => {
     if (!window.confirm("Are you sure you want to delete this GRN?")) return;
 
-    const updatedGrns = grns.filter((grn) => grn.id !== id);
-    saveGrnsToLocalStorage(updatedGrns);
+    try {
+      await apiRequest(`${API_BASE_URL}/grns/delete/${id}`, {
+        method: "DELETE",
+      });
+
+      await fetchGrns();
+      await fetchPurchaseOrders();
+    } catch (error) {
+      alert(error.message || "GRN delete nahi hua");
+    }
   };
 
   const printGrn = (grn) => {
-    const rows = grn.items
+    const rows = (grn.items || [])
       .map(
         (item, index) => `
           <tr>
@@ -389,26 +552,176 @@ const GRN = () => {
         <head>
           <title>${grn.grnNo}</title>
           <style>
-            body { font-family: Arial, sans-serif; padding: 30px; color: #111827; }
-            .top { display: flex; justify-content: space-between; border-bottom: 2px solid #111827; padding-bottom: 12px; }
-            h1 { margin: 0; font-size: 30px; }
-            h2 { text-align: center; margin: 24px 0 18px; text-decoration: underline; }
-            .small { font-size: 12px; color: #374151; line-height: 1.7; }
-            .box { border: 1px solid #111827; padding: 10px; margin: 12px 0; font-size: 13px; line-height: 1.7; }
-            table { width: 100%; border-collapse: collapse; margin-top: 12px; }
-            th, td { border: 1px solid #111827; padding: 7px; font-size: 12px; text-align: left; }
-            th { background: #f3f4f6; }
-            .summary { width: 360px; margin-left: auto; margin-top: 14px; }
-            .summary div { display: flex; justify-content: space-between; border-bottom: 1px solid #d1d5db; padding: 6px 0; }
-            .sign { margin-top: 70px; display: flex; justify-content: space-between; }
+            @page {
+              size: A4 landscape;
+              margin: 8mm;
+            }
+
+            * {
+              box-sizing: border-box;
+            }
+
+            html,
+            body {
+              margin: 0;
+              padding: 0;
+              background: #ffffff;
+              color: #111827;
+              font-family: Arial, Helvetica, sans-serif;
+              font-size: 15px;
+              font-weight: 700;
+              line-height: 1.45;
+              -webkit-print-color-adjust: exact;
+              print-color-adjust: exact;
+            }
+
+            body {
+              padding: 6mm;
+            }
+
+            b,
+            strong {
+              font-weight: 900;
+            }
+
+            .top {
+              display: flex;
+              justify-content: space-between;
+              align-items: flex-start;
+              gap: 30px;
+              border-bottom: 2.5px solid #111827;
+              padding-bottom: 12px;
+            }
+
+            h1 {
+              margin: 0;
+              font-size: 34px;
+              line-height: 1.1;
+              font-weight: 900;
+            }
+
+            h2 {
+              text-align: center;
+              margin: 18px 0 15px;
+              font-size: 24px;
+              line-height: 1.2;
+              font-weight: 900;
+              text-decoration: underline;
+            }
+
+            .small {
+              font-size: 14px;
+              color: #111827;
+              line-height: 1.65;
+              font-weight: 800;
+            }
+
+            .box {
+              border: 1.5px solid #111827;
+              padding: 11px 13px;
+              margin: 12px 0;
+              font-size: 15px;
+              line-height: 1.65;
+              font-weight: 700;
+              break-inside: avoid;
+              page-break-inside: avoid;
+            }
+
+            table {
+              width: 100%;
+              border-collapse: collapse;
+              table-layout: auto;
+              margin-top: 12px;
+              break-inside: avoid;
+              page-break-inside: avoid;
+            }
+
+            th,
+            td {
+              border: 1.3px solid #111827;
+              padding: 8px;
+              font-size: 14px;
+              line-height: 1.35;
+              text-align: left;
+              vertical-align: middle;
+              font-weight: 700;
+            }
+
+            th {
+              background: #f3f4f6;
+              font-size: 14px;
+              font-weight: 900;
+              white-space: nowrap;
+            }
+
+            .summary {
+              width: 390px;
+              margin-left: auto;
+              margin-top: 14px;
+              font-size: 15px;
+              font-weight: 800;
+              break-inside: avoid;
+              page-break-inside: avoid;
+            }
+
+            .summary div {
+              display: flex;
+              justify-content: space-between;
+              align-items: center;
+              gap: 24px;
+              border-bottom: 1.2px solid #9ca3af;
+              padding: 7px 0;
+            }
+
+            .summary div:last-child {
+              border-top: 2px solid #111827;
+              border-bottom: 2px solid #111827;
+              font-size: 16px;
+              font-weight: 900;
+            }
+
+            body > p {
+              margin-top: 18px;
+              font-size: 15px;
+              font-weight: 800;
+            }
+
+            .sign {
+              margin-top: 42px;
+              display: flex;
+              justify-content: space-between;
+              gap: 30px;
+              font-size: 15px;
+              font-weight: 800;
+              break-inside: avoid;
+              page-break-inside: avoid;
+            }
+
+            @media print {
+              html,
+              body {
+                width: 100%;
+              }
+
+              .top,
+              .box,
+              table,
+              .summary,
+              .sign {
+                break-inside: avoid;
+                page-break-inside: avoid;
+              }
+            }
           </style>
         </head>
+
         <body>
           <div class="top">
             <div>
               <h1>Urwa Packages</h1>
               <div class="small">Goods Receiving Note</div>
             </div>
+
             <div class="small">
               <b>GRN No:</b> ${grn.grnNo || ""}<br/>
               <b>GRN Date:</b> ${grn.receivedDate || ""}<br/>
@@ -450,11 +763,11 @@ const GRN = () => {
           </table>
 
           <div class="summary">
-            <div><span>Total Ordered Qty</span><b>${grn.totals?.totalOrderedQty || 0}</b></div>
-            <div><span>Total Received Qty</span><b>${grn.totals?.totalReceivedQty || 0}</b></div>
-            <div><span>Total Accepted Qty</span><b>${grn.totals?.totalAcceptedQty || 0}</b></div>
-            <div><span>Total Rejected Qty</span><b>${grn.totals?.totalRejectedQty || 0}</b></div>
-            <div><span>Total Pending Qty</span><b>${grn.totals?.totalPendingQty || 0}</b></div>
+            <div><span>Total Ordered Qty</span><b>${grn.totalOrderedQty || grn.totals?.totalOrderedQty || 0}</b></div>
+            <div><span>Total Received Qty</span><b>${grn.totalReceivedQty || grn.totals?.totalReceivedQty || 0}</b></div>
+            <div><span>Total Accepted Qty</span><b>${grn.totalAcceptedQty || grn.totals?.totalAcceptedQty || 0}</b></div>
+            <div><span>Total Rejected Qty</span><b>${grn.totalRejectedQty || grn.totals?.totalRejectedQty || 0}</b></div>
+            <div><span>Total Pending Qty</span><b>${grn.totalPendingQty || grn.totals?.totalPendingQty || 0}</b></div>
           </div>
 
           <p><b>Remarks:</b> ${grn.remarks || ""}</p>
@@ -492,7 +805,7 @@ const GRN = () => {
               </h1>
 
               <p className="text-sm text-slate-500 mt-1">
-                Purchase order select karein, received quantity enter karein aur inspection status update karein.
+                Purchase order select karein, received/rejected qty enter karein.
               </p>
             </div>
 
@@ -513,7 +826,7 @@ const GRN = () => {
                   value={form.grnNo}
                   onChange={(e) => setForm({ ...form, grnNo: e.target.value })}
                   className="w-full border rounded-lg px-3 py-2 mt-1"
-                  placeholder="GRN-2026-0001"
+                  placeholder="GRN-0001"
                 />
               </div>
 
@@ -523,9 +836,12 @@ const GRN = () => {
                   value={form.purchaseOrder}
                   onChange={(e) => handlePurchaseOrderSelect(e.target.value)}
                   className="w-full border rounded-lg px-3 py-2 mt-1"
-                  disabled={editId}
+                  disabled={!!editId}
                 >
-                  <option value="">Select Purchase Order</option>
+                  <option value="">
+                    {poLoading ? "Loading purchase orders..." : "Select Purchase Order"}
+                  </option>
+
                   {purchaseOrders.map((order) => (
                     <option key={order._id} value={order._id}>
                       {getOrderNo(order)} - {getVendorName(order)}
@@ -553,7 +869,7 @@ const GRN = () => {
                   onChange={(e) => setForm({ ...form, warehouse: e.target.value })}
                   className="w-full border rounded-lg px-3 py-2 mt-1"
                 >
-                  <option>Main Warehouse</option>
+                  <option>Main Godown</option>
                   <option>Raw Material Store</option>
                   <option>Finished Goods Store</option>
                   <option>UrwaGodam</option>
@@ -566,7 +882,6 @@ const GRN = () => {
                   value={form.vendorName}
                   readOnly
                   className="w-full border rounded-lg px-3 py-2 mt-1 bg-slate-50"
-                  placeholder="Auto from purchase order"
                 />
               </div>
 
@@ -576,7 +891,6 @@ const GRN = () => {
                   value={form.vendorPhone}
                   readOnly
                   className="w-full border rounded-lg px-3 py-2 mt-1 bg-slate-50"
-                  placeholder="Auto from purchase order"
                 />
               </div>
 
@@ -670,7 +984,7 @@ const GRN = () => {
                     Received Items
                   </h3>
                   <p className="text-xs text-slate-500">
-                    Ordered qty purchase order se auto aayegi. Received aur rejected qty yahan enter hogi.
+                    Item ID purchase order se aa raha hai. GRN save hone ke baad backend same item ko update karega.
                   </p>
                 </div>
 
@@ -686,12 +1000,13 @@ const GRN = () => {
                       <th className="p-2 text-left">Item Description</th>
                       <th className="p-2 text-left">Size</th>
                       <th className="p-2 text-right">Ordered</th>
+                      <th className="p-2 text-right">Previous Rec.</th>
+                      <th className="p-2 text-right">Pending</th>
                       <th className="p-2 text-right">
                         Received <span className="text-red-600">*</span>
                       </th>
                       <th className="p-2 text-right">Rejected</th>
                       <th className="p-2 text-right">Accepted</th>
-                      <th className="p-2 text-right">Pending</th>
                       <th className="p-2 text-left">Unit</th>
                       <th className="p-2 text-left">Remarks</th>
                     </tr>
@@ -700,17 +1015,18 @@ const GRN = () => {
                   <tbody>
                     {form.items.length === 0 ? (
                       <tr>
-                        <td colSpan="9" className="p-8 text-center text-slate-500">
+                        <td colSpan="10" className="p-8 text-center text-slate-500">
                           Purchase Order select karein. Items yahan auto load honge.
                         </td>
                       </tr>
                     ) : (
                       form.items.map((item, index) => (
                         <tr key={index} className="border-b hover:bg-slate-50">
-                          <td className="p-2 min-w-[220px]">
+                          <td className="p-2 min-w-[230px]">
                             <div className="font-semibold text-slate-800">
                               {item.description || "N/A"}
                             </div>
+
                             <div className="text-xs text-slate-500">
                               Rate: {money(item.unitPrice)}
                             </div>
@@ -720,6 +1036,18 @@ const GRN = () => {
 
                           <td className="p-2 text-right font-bold">
                             {item.orderedQty}
+                          </td>
+
+                          <td className="p-2 text-right font-bold text-slate-500">
+                            {item.previousReceivedQty || 0}
+                          </td>
+
+                          <td className="p-2 text-right font-bold text-orange-600">
+                            {Math.max(
+                              Number(item.orderedQty || 0) -
+                                Number(item.previousReceivedQty || 0),
+                              0
+                            )}
                           </td>
 
                           <td className="p-2 min-w-[110px]">
@@ -748,10 +1076,6 @@ const GRN = () => {
 
                           <td className="p-2 text-right font-bold text-emerald-600">
                             {item.acceptedQty}
-                          </td>
-
-                          <td className="p-2 text-right font-bold text-orange-600">
-                            {item.pendingQty}
                           </td>
 
                           <td className="p-2">{item.unit}</td>
@@ -850,15 +1174,16 @@ const GRN = () => {
           </h1>
 
           <p className="text-sm text-slate-500 mt-1">
-            Purchase order ke against received goods, rejected quantity, pending quantity aur warehouse receiving manage karein.
+            Purchase order ke against goods receiving aur warehouse entry manage karein.
           </p>
         </div>
 
         <button
           onClick={openNewForm}
-          className="inline-flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-xl font-semibold shadow-sm"
+          disabled={saving}
+          className="inline-flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-xl font-semibold shadow-sm disabled:opacity-60"
         >
-          <Plus size={18} />
+          {saving ? <Loader2 className="animate-spin" size={18} /> : <Plus size={18} />}
           New GRN
         </button>
       </div>
@@ -868,9 +1193,10 @@ const GRN = () => {
           <div className="w-11 h-11 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center">
             <FileText size={22} />
           </div>
+
           <div>
             <p className="text-xs text-slate-500">Total GRNs</p>
-            <h3 className="text-2xl font-bold">{grns.length}</h3>
+            <h3 className="text-2xl font-bold">{stats.totalGrns}</h3>
           </div>
         </div>
 
@@ -878,14 +1204,10 @@ const GRN = () => {
           <div className="w-11 h-11 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center">
             <PackageCheck size={22} />
           </div>
+
           <div>
             <p className="text-xs text-slate-500">Received Qty</p>
-            <h3 className="text-2xl font-bold">
-              {grns.reduce(
-                (s, g) => s + Number(g.totals?.totalReceivedQty || 0),
-                0
-              )}
-            </h3>
+            <h3 className="text-2xl font-bold">{stats.receivedQty}</h3>
           </div>
         </div>
 
@@ -893,14 +1215,10 @@ const GRN = () => {
           <div className="w-11 h-11 rounded-xl bg-red-50 text-red-600 flex items-center justify-center">
             <ShieldCheck size={22} />
           </div>
+
           <div>
             <p className="text-xs text-slate-500">Rejected Qty</p>
-            <h3 className="text-2xl font-bold">
-              {grns.reduce(
-                (s, g) => s + Number(g.totals?.totalRejectedQty || 0),
-                0
-              )}
-            </h3>
+            <h3 className="text-2xl font-bold">{stats.rejectedQty}</h3>
           </div>
         </div>
 
@@ -908,33 +1226,60 @@ const GRN = () => {
           <div className="w-11 h-11 rounded-xl bg-orange-50 text-orange-600 flex items-center justify-center">
             <Warehouse size={22} />
           </div>
+
           <div>
             <p className="text-xs text-slate-500">Pending Qty</p>
-            <h3 className="text-2xl font-bold">
-              {grns.reduce(
-                (s, g) => s + Number(g.totals?.totalPendingQty || 0),
-                0
-              )}
-            </h3>
+            <h3 className="text-2xl font-bold">{stats.pendingQty}</h3>
           </div>
         </div>
       </div>
 
       <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
-        <div className="p-4 border-b border-slate-100 flex items-center justify-between">
+        <div className="p-4 border-b border-slate-100 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
           <div>
             <h3 className="font-bold text-slate-900">GRN List</h3>
-            <p className="text-xs text-slate-500">
-              All received goods records
-            </p>
+            <p className="text-xs text-slate-500">All GRNs from MongoDB</p>
           </div>
 
-          <button
-            onClick={fetchPurchaseOrders}
-            className="text-xs px-3 py-2 rounded-lg border hover:bg-slate-50"
-          >
-            Refresh PO Data
-          </button>
+          <div className="flex flex-col sm:flex-row gap-2">
+            <div className="relative">
+              <Search
+                size={16}
+                className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
+              />
+
+              <input
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="pl-9 pr-3 py-2 border rounded-lg text-sm w-full sm:w-72"
+                placeholder="Search GRN, PO, vendor..."
+              />
+            </div>
+
+            <select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value)}
+              className="px-3 py-2 border rounded-lg text-sm"
+            >
+              <option>All</option>
+              <option>Draft</option>
+              <option>Received</option>
+              <option>Partially Received</option>
+              <option>Completed</option>
+              <option>Cancelled</option>
+            </select>
+
+            <button
+              onClick={() => {
+                fetchPurchaseOrders();
+                fetchGrns();
+              }}
+              className="inline-flex items-center justify-center gap-2 text-sm px-3 py-2 rounded-lg border hover:bg-slate-50"
+            >
+              <RefreshCcw size={15} />
+              Refresh
+            </button>
+          </div>
         </div>
 
         <div className="overflow-x-auto">
@@ -947,6 +1292,7 @@ const GRN = () => {
                 <th className="p-3 text-left">Date</th>
                 <th className="p-3 text-left">Warehouse</th>
                 <th className="p-3 text-right">Received</th>
+                <th className="p-3 text-right">Accepted</th>
                 <th className="p-3 text-right">Rejected</th>
                 <th className="p-3 text-center">Inspection</th>
                 <th className="p-3 text-center">Status</th>
@@ -957,19 +1303,19 @@ const GRN = () => {
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan="10" className="p-10 text-center">
+                  <td colSpan="11" className="p-10 text-center">
                     <Loader2 className="animate-spin mx-auto text-blue-600" />
                   </td>
                 </tr>
-              ) : grns.length === 0 ? (
+              ) : filteredGrns.length === 0 ? (
                 <tr>
-                  <td colSpan="10" className="p-10 text-center text-slate-500">
-                    No GRN found. New GRN create karein.
+                  <td colSpan="11" className="p-10 text-center text-slate-500">
+                    No GRN found.
                   </td>
                 </tr>
               ) : (
-                grns.map((grn) => (
-                  <tr key={grn.id} className="border-t hover:bg-slate-50">
+                filteredGrns.map((grn) => (
+                  <tr key={grn._id} className="border-t hover:bg-slate-50">
                     <td className="p-3 font-bold text-blue-700">{grn.grnNo}</td>
 
                     <td className="p-3">{grn.purchaseOrderNo}</td>
@@ -991,11 +1337,15 @@ const GRN = () => {
                     </td>
 
                     <td className="p-3 text-right font-bold text-blue-700">
-                      {grn.totals?.totalReceivedQty || 0}
+                      {grn.totalReceivedQty || grn.totals?.totalReceivedQty || 0}
+                    </td>
+
+                    <td className="p-3 text-right font-bold text-emerald-600">
+                      {grn.totalAcceptedQty || grn.totals?.totalAcceptedQty || 0}
                     </td>
 
                     <td className="p-3 text-right font-bold text-red-600">
-                      {grn.totals?.totalRejectedQty || 0}
+                      {grn.totalRejectedQty || grn.totals?.totalRejectedQty || 0}
                     </td>
 
                     <td className="p-3 text-center">
@@ -1039,7 +1389,7 @@ const GRN = () => {
                         </button>
 
                         <button
-                          onClick={() => handleDelete(grn.id)}
+                          onClick={() => handleDelete(grn._id)}
                           className="p-2 rounded-lg bg-red-50 text-red-700 hover:bg-red-100"
                           title="Delete"
                         >

@@ -11,18 +11,31 @@ import {
   ArrowLeft,
   AlertCircle,
   Truck,
+  Search,
+  RefreshCcw,
+  AlertTriangle,
 } from "lucide-react";
 import { API_BASE_URL } from "../config/api";
 
 const emptyItem = {
+  item: "",
+  salesOrderItemId: "",
+  warehouse: "Main Godown",
   description: "",
   size: "",
+  textType: "",
+  orderedQty: 0,
+  alreadyDeliveredQty: 0,
+  pendingQty: 0,
   cartons: "",
   quantity: "",
   unit: "Rolls",
+  remarks: "",
 };
 
 const todayDate = () => new Date().toISOString().slice(0, 10);
+
+const numberValue = (value) => Number(value || 0);
 
 const RequiredLabel = ({ children }) => (
   <label className="text-xs font-bold text-slate-600 flex items-center gap-1">
@@ -35,48 +48,103 @@ const NormalLabel = ({ children }) => (
   <label className="text-xs font-bold text-slate-600">{children}</label>
 );
 
+const normalizeArray = (data, keys = []) => {
+  if (Array.isArray(data)) return data;
+
+  for (const key of keys) {
+    if (Array.isArray(data?.[key])) return data[key];
+  }
+
+  if (Array.isArray(data?.data)) return data.data;
+
+  return [];
+};
+
+const apiRequest = async (url, options = {}) => {
+  const response = await fetch(url, {
+    headers: {
+      "Content-Type": "application/json",
+      ...(options.headers || {}),
+    },
+    ...options,
+  });
+
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    throw new Error(data.message || data.error || "Request failed");
+  }
+
+  return data;
+};
+
+const getItemId = (value) => {
+  if (!value) return "";
+  if (typeof value === "object" && value._id) return value._id;
+  return value;
+};
+
+const getDefaultForm = (challanNo = "") => ({
+  challanNo,
+  salesOrder: "",
+  salesOrderNo: "",
+  challanDate: todayDate(),
+  poNo: "",
+  vehicleNo: "",
+  driverName: "",
+  deliveredBy: "",
+  receivedBy: "",
+  status: "Draft",
+  remarks: "",
+  items: [],
+});
+
 const DeliveryChallans = () => {
   const [salesOrders, setSalesOrders] = useState([]);
   const [challans, setChallans] = useState([]);
+
   const [loading, setLoading] = useState(false);
+  const [salesOrderLoading, setSalesOrderLoading] = useState(false);
   const [saving, setSaving] = useState(false);
 
   const [showForm, setShowForm] = useState(false);
   const [editId, setEditId] = useState(null);
 
-  const [form, setForm] = useState({
-    challanNo: "",
-    salesOrder: "",
-    challanDate: todayDate(),
-    poNo: "",
-    vehicleNo: "",
-    driverName: "",
-    deliveredBy: "",
-    receivedBy: "",
-    status: "Draft",
-    remarks: "",
-    items: [{ ...emptyItem }],
-  });
+  const [searchTerm, setSearchTerm] = useState("");
+  const [statusFilter, setStatusFilter] = useState("All");
+
+  const [form, setForm] = useState(getDefaultForm());
 
   const fetchSalesOrders = async () => {
     try {
-      const res = await fetch(`${API_BASE_URL}/sales-orders/all`);
-      const data = await res.json();
-      setSalesOrders(Array.isArray(data) ? data : []);
+      setSalesOrderLoading(true);
+
+      const data = await apiRequest(`${API_BASE_URL}/sales-orders/all`);
+      const list = normalizeArray(data, ["salesOrders", "orders"]);
+
+      setSalesOrders(
+        list.filter(
+          (order) =>
+            !["Cancelled", "Delivered", "Invoiced"].includes(order.status)
+        )
+      );
     } catch (error) {
       console.error("Sales order loading error:", error);
       setSalesOrders([]);
+    } finally {
+      setSalesOrderLoading(false);
     }
   };
 
   const fetchChallans = async () => {
-    setLoading(true);
     try {
-      const res = await fetch(`${API_BASE_URL}/delivery-challans/all`);
-      const data = await res.json();
-      setChallans(Array.isArray(data) ? data : []);
+      setLoading(true);
+
+      const data = await apiRequest(`${API_BASE_URL}/delivery-challans/all`);
+      setChallans(normalizeArray(data, ["challans", "deliveryChallans"]));
     } catch (error) {
       console.error("Delivery challan loading error:", error);
+      alert(error.message || "Delivery challans load nahi huay");
       setChallans([]);
     } finally {
       setLoading(false);
@@ -84,13 +152,8 @@ const DeliveryChallans = () => {
   };
 
   const fetchNextNo = async () => {
-    try {
-      const res = await fetch(`${API_BASE_URL}/delivery-challans/next-no`);
-      const data = await res.json();
-      setForm((prev) => ({ ...prev, challanNo: data.challanNo || "" }));
-    } catch (error) {
-      setForm((prev) => ({ ...prev, challanNo: "" }));
-    }
+    const data = await apiRequest(`${API_BASE_URL}/delivery-challans/next-no`);
+    return data.challanNo || data.deliveryChallanNo || "";
   };
 
   useEffect(() => {
@@ -104,41 +167,79 @@ const DeliveryChallans = () => {
 
   const totals = useMemo(() => {
     const totalCartons = form.items.reduce(
-      (sum, item) => sum + Number(item.cartons || 0),
+      (sum, item) => sum + numberValue(item.cartons),
       0
     );
 
     const totalQuantity = form.items.reduce(
-      (sum, item) => sum + Number(item.quantity || 0),
+      (sum, item) => sum + numberValue(item.quantity),
       0
     );
 
-    return { totalCartons, totalQuantity };
+    return {
+      totalCartons,
+      totalQuantity,
+    };
   }, [form.items]);
 
-  const openNewForm = async () => {
-    setEditId(null);
-    setForm({
-      challanNo: "",
-      salesOrder: "",
-      challanDate: todayDate(),
-      poNo: "",
-      vehicleNo: "",
-      driverName: "",
-      deliveredBy: "",
-      receivedBy: "",
-      status: "Draft",
-      remarks: "",
-      items: [{ ...emptyItem }],
-    });
+  const stats = useMemo(() => {
+    return {
+      totalChallans: challans.length,
+      totalCartons: challans.reduce(
+        (s, c) => s + numberValue(c.totalCartons),
+        0
+      ),
+      totalQuantity: challans.reduce(
+        (s, c) => s + numberValue(c.totalQuantity),
+        0
+      ),
+      dispatched: challans.filter((c) => c.status === "Dispatched").length,
+    };
+  }, [challans]);
 
-    await fetchNextNo();
-    setShowForm(true);
+  const filteredChallans = useMemo(() => {
+    const keyword = searchTerm.trim().toLowerCase();
+
+    return challans.filter((challan) => {
+      const matchesSearch =
+        !keyword ||
+        challan.challanNo?.toLowerCase().includes(keyword) ||
+        challan.salesOrderNo?.toLowerCase().includes(keyword) ||
+        challan.customerName?.toLowerCase().includes(keyword) ||
+        challan.customerPhone?.toLowerCase().includes(keyword) ||
+        challan.poNo?.toLowerCase().includes(keyword) ||
+        challan.items?.some((item) =>
+          item.description?.toLowerCase().includes(keyword)
+        );
+
+      const matchesStatus =
+        statusFilter === "All" || challan.status === statusFilter;
+
+      return matchesSearch && matchesStatus;
+    });
+  }, [challans, searchTerm, statusFilter]);
+
+  const openNewForm = async () => {
+    try {
+      setSaving(true);
+
+      await fetchSalesOrders();
+      const nextNo = await fetchNextNo();
+
+      setEditId(null);
+      setForm(getDefaultForm(nextNo));
+      setShowForm(true);
+    } catch (error) {
+      alert(error.message || "Challan No load nahi hua");
+    } finally {
+      setSaving(false);
+    }
   };
 
   const closeForm = () => {
     setShowForm(false);
     setEditId(null);
+    setForm(getDefaultForm());
   };
 
   const handleSalesOrderChange = (salesOrderId) => {
@@ -148,112 +249,222 @@ const DeliveryChallans = () => {
       setForm({
         ...form,
         salesOrder: "",
+        salesOrderNo: "",
         poNo: "",
-        items: [{ ...emptyItem }],
+        items: [],
       });
       return;
     }
 
+    const mappedItems = (order.items || [])
+      .map((row) => {
+        const orderedQty = numberValue(row.quantity);
+        const alreadyDeliveredQty = numberValue(row.deliveredQty);
+        const pendingQty =
+          row.pendingQty !== undefined
+            ? numberValue(row.pendingQty)
+            : Math.max(orderedQty - alreadyDeliveredQty, 0);
+
+        return {
+          item: getItemId(row.item),
+          salesOrderItemId: row._id || "",
+          warehouse: row.warehouse || "Main Godown",
+
+          description: row.description || "",
+          size: row.size || "",
+          textType: row.textType || "",
+
+          orderedQty,
+          alreadyDeliveredQty,
+          pendingQty,
+
+          cartons: row.cartons || "",
+          quantity: pendingQty > 0 ? pendingQty : "",
+          unit: row.unit || "Rolls",
+
+          remarks: row.remarks || "",
+        };
+      })
+      .filter((row) => numberValue(row.pendingQty) > 0);
+
     setForm({
       ...form,
       salesOrder: order._id,
+      salesOrderNo: order.salesOrderNo || "",
       poNo: order.poNo || "",
-      items:
-        order.items && order.items.length > 0
-          ? order.items.map((item) => ({
-              description: item.description || "",
-              size: item.size || "",
-              cartons: item.cartons || "",
-              quantity: item.quantity || "",
-              unit: item.unit || "Rolls",
-            }))
-          : [{ ...emptyItem }],
+      items: mappedItems.length > 0 ? mappedItems : [],
     });
   };
 
   const updateItem = (index, field, value) => {
     const updatedItems = [...form.items];
-    updatedItems[index] = { ...updatedItems[index], [field]: value };
-    setForm({ ...form, items: updatedItems });
+
+    updatedItems[index] = {
+      ...updatedItems[index],
+      [field]: value,
+    };
+
+    setForm({
+      ...form,
+      items: updatedItems,
+    });
   };
 
   const addItemRow = () => {
-    setForm({ ...form, items: [...form.items, { ...emptyItem }] });
+    setForm({
+      ...form,
+      items: [...form.items, { ...emptyItem }],
+    });
   };
 
   const removeItemRow = (index) => {
     if (form.items.length === 1) return;
-    setForm({ ...form, items: form.items.filter((_, i) => i !== index) });
+
+    setForm({
+      ...form,
+      items: form.items.filter((_, i) => i !== index),
+    });
   };
 
-  const handleSubmit = async () => {
+  const validateForm = () => {
     if (!form.challanNo.trim()) {
       alert("Delivery Challan No required hai");
-      return;
+      return false;
     }
 
     if (!form.salesOrder) {
       alert("Sales Order select karein");
-      return;
+      return false;
     }
 
     if (!form.challanDate) {
       alert("Challan Date required hai");
-      return;
+      return false;
     }
 
     const validItems = form.items.filter(
-      (item) => item.description.trim() && Number(item.quantity || 0) > 0
+      (item) =>
+        item.description?.trim() &&
+        numberValue(item.quantity) > 0 &&
+        item.item &&
+        item.salesOrderItemId
     );
 
     if (validItems.length === 0) {
       alert("Please at least one valid delivery item add karein");
-      return;
+      return false;
     }
 
-    const payload = {
-      ...form,
+    const overDelivered = validItems.some(
+      (item) => numberValue(item.quantity) > numberValue(item.pendingQty)
+    );
+
+    if (overDelivered) {
+      alert("Delivery quantity pending quantity se zyada nahi ho sakti");
+      return false;
+    }
+
+    const missingWarehouse = validItems.some((item) => !item.warehouse?.trim());
+
+    if (missingWarehouse) {
+      alert("Warehouse missing hai");
+      return false;
+    }
+
+    return true;
+  };
+
+  const buildPayload = () => {
+    const validItems = form.items
+      .filter(
+        (item) =>
+          item.description?.trim() &&
+          numberValue(item.quantity) > 0 &&
+          item.item &&
+          item.salesOrderItemId
+      )
+      .map((item) => ({
+        item: item.item,
+        salesOrderItemId: item.salesOrderItemId,
+        warehouse: item.warehouse || "Main Godown",
+
+        description: String(item.description || "").trim(),
+        size: String(item.size || "").trim(),
+        textType: item.textType || "",
+
+        orderedQty: numberValue(item.orderedQty),
+        alreadyDeliveredQty: numberValue(item.alreadyDeliveredQty),
+        pendingQty: numberValue(item.pendingQty),
+
+        cartons: numberValue(item.cartons),
+        quantity: numberValue(item.quantity),
+        unit: String(item.unit || "Rolls").trim(),
+
+        remarks: String(item.remarks || "").trim(),
+      }));
+
+    return {
+      challanNo: form.challanNo,
+      salesOrder: form.salesOrder,
+      salesOrderNo: form.salesOrderNo,
+
+      challanDate: form.challanDate,
+      poNo: form.poNo,
+
+      vehicleNo: form.vehicleNo,
+      driverName: form.driverName,
+      deliveredBy: form.deliveredBy,
+      receivedBy: form.receivedBy,
+
+      status: form.status,
+      remarks: form.remarks,
+
+      totalCartons: totals.totalCartons,
+      totalQuantity: totals.totalQuantity,
+
       items: validItems,
     };
+  };
 
-    setSaving(true);
+  const handleSubmit = async () => {
+    if (!validateForm()) return;
 
     try {
+      setSaving(true);
+
+      const payload = buildPayload();
+
       const url = editId
         ? `${API_BASE_URL}/delivery-challans/update/${editId}`
         : `${API_BASE_URL}/delivery-challans/add`;
 
       const method = editId ? "PUT" : "POST";
 
-      const res = await fetch(url, {
+      await apiRequest(url, {
         method,
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
-
-      const data = await res.json();
-
-      if (!res.ok) {
-        alert(data.message || "Server error");
-        return;
-      }
 
       await fetchChallans();
       await fetchSalesOrders();
       closeForm();
     } catch (error) {
-      alert("Delivery challan save nahi hua. Backend check karein.");
+      console.error("Delivery Challan Save Error:", error);
+      alert(error.message || "Delivery challan save nahi hua");
     } finally {
       setSaving(false);
     }
   };
 
-  const handleEdit = (challan) => {
+  const handleEdit = async (challan) => {
+    await fetchSalesOrders();
+
     setEditId(challan._id);
 
     setForm({
       challanNo: challan.challanNo || "",
       salesOrder: challan.salesOrder?._id || challan.salesOrder || "",
+      salesOrderNo: challan.salesOrderNo || "",
       challanDate: challan.challanDate || todayDate(),
       poNo: challan.poNo || "",
       vehicleNo: challan.vehicleNo || "",
@@ -262,38 +473,65 @@ const DeliveryChallans = () => {
       receivedBy: challan.receivedBy || "",
       status: challan.status || "Draft",
       remarks: challan.remarks || "",
-      items: challan.items?.length ? challan.items : [{ ...emptyItem }],
+      items: challan.items?.length
+        ? challan.items.map((row) => ({
+            item: getItemId(row.item),
+            salesOrderItemId: row.salesOrderItemId || "",
+            warehouse: row.warehouse || "Main Godown",
+
+            description: row.description || "",
+            size: row.size || "",
+            textType: row.textType || "",
+
+            orderedQty: row.orderedQty || 0,
+            alreadyDeliveredQty: row.alreadyDeliveredQty || 0,
+            pendingQty: row.pendingQty || row.quantity || 0,
+
+            cartons: row.cartons || "",
+            quantity: row.quantity || "",
+            unit: row.unit || "Rolls",
+
+            remarks: row.remarks || "",
+          }))
+        : [],
     });
 
     setShowForm(true);
   };
 
   const handleDelete = async (id) => {
-    if (!window.confirm("Are you sure you want to delete this delivery challan?")) return;
+    if (!window.confirm("Are you sure you want to delete this delivery challan?")) {
+      return;
+    }
 
     try {
-      const res = await fetch(`${API_BASE_URL}/delivery-challans/delete/${id}`, {
+      await apiRequest(`${API_BASE_URL}/delivery-challans/delete/${id}`, {
         method: "DELETE",
       });
 
-      if (res.ok) {
-        fetchChallans();
-      } else {
-        alert("Delete failed");
-      }
+      await fetchChallans();
+      await fetchSalesOrders();
     } catch (error) {
-      alert("Delete error");
+      alert(error.message || "Delivery challan delete nahi hua");
     }
   };
 
   const printChallan = (challan) => {
-    const rows = challan.items
+    const rows = (challan.items || [])
       .map(
         (item, index) => `
         <tr>
           <td>${index + 1}</td>
-          <td>${item.description || ""}</td>
+          <td>
+            ${item.description || ""}
+            ${
+              item.textType === "with-text"
+                ? "<br/><small>With Text</small>"
+                : ""
+            }
+          </td>
           <td>${item.size || ""}</td>
+          <td>${item.warehouse || ""}</td>
           <td>${item.cartons || ""}</td>
           <td>${item.quantity || ""}</td>
           <td>${item.unit || ""}</td>
@@ -309,87 +547,177 @@ const DeliveryChallans = () => {
         <head>
           <title>${challan.challanNo}</title>
           <style>
-            body {
-              font-family: Arial, sans-serif;
-              padding: 34px;
-              color: #111827;
+            @page {
+              size: A4 landscape;
+              margin: 8mm;
             }
+
+            * {
+              box-sizing: border-box;
+            }
+
+            html,
+            body {
+              margin: 0;
+              padding: 0;
+              background: #ffffff;
+              color: #111827;
+              font-family: Arial, Helvetica, sans-serif;
+              font-size: 15px;
+              font-weight: 700;
+              line-height: 1.45;
+              -webkit-print-color-adjust: exact;
+              print-color-adjust: exact;
+            }
+
+            body {
+              padding: 6mm;
+            }
+
+            b,
+            strong {
+              font-weight: 900;
+            }
+
             .company {
               text-align: right;
-              border-bottom: 2px solid #111827;
+              border-bottom: 2.5px solid #111827;
               padding-bottom: 10px;
             }
+
             .company h1 {
               font-size: 38px;
+              line-height: 1.1;
               margin: 0;
               letter-spacing: 1px;
+              font-weight: 900;
             }
+
             .company p {
-              margin: 3px 0;
-              font-size: 12px;
+              margin: 4px 0;
+              font-size: 14px;
+              font-weight: 800;
             }
+
             .title {
               text-align: center;
-              font-size: 20px;
-              font-weight: 700;
-              margin: 20px 0 18px;
+              font-size: 24px;
+              line-height: 1.2;
+              font-weight: 900;
+              margin: 18px 0 15px;
               text-decoration: underline;
             }
+
             .meta {
               display: grid;
               grid-template-columns: 1fr 1fr;
               gap: 12px;
               margin-bottom: 14px;
-              font-size: 13px;
+              font-size: 15px;
+              font-weight: 700;
+              break-inside: avoid;
+              page-break-inside: avoid;
             }
+
             .box {
-              border: 1px solid #111827;
-              padding: 10px;
-              min-height: 72px;
+              border: 1.5px solid #111827;
+              padding: 11px 13px;
+              min-height: 82px;
+              line-height: 1.65;
+              font-weight: 700;
             }
+
             table {
               width: 100%;
               border-collapse: collapse;
+              table-layout: auto;
               margin-top: 12px;
+              break-inside: avoid;
+              page-break-inside: avoid;
             }
-            th, td {
-              border: 1px solid #111827;
+
+            th,
+            td {
+              border: 1.3px solid #111827;
               padding: 8px;
-              font-size: 12px;
+              font-size: 14px;
+              line-height: 1.35;
               text-align: left;
+              vertical-align: middle;
+              font-weight: 700;
             }
+
             th {
               background: #f3f4f6;
               text-align: center;
+              font-size: 14px;
+              font-weight: 900;
+              white-space: nowrap;
             }
+
+            td small {
+              font-size: 12px;
+              font-weight: 900;
+            }
+
             td.center {
               text-align: center;
             }
+
             .total-row td {
-              font-weight: 700;
+              font-size: 15px;
+              font-weight: 900;
+              border-top: 2px solid #111827;
+              border-bottom: 2px solid #111827;
             }
-            .footer {
-              margin-top: 70px;
-              display: grid;
-              grid-template-columns: 1fr 1fr;
-              gap: 30px;
-              font-size: 13px;
-            }
-            .line {
-              margin-top: 28px;
-              border-top: 1px solid #111827;
-              padding-top: 6px;
-              width: 240px;
-            }
+
             .remarks {
               margin-top: 18px;
-              font-size: 13px;
+              font-size: 15px;
+              font-weight: 700;
+              min-height: 32px;
+            }
+
+            .footer {
+              margin-top: 45px;
+              display: grid;
+              grid-template-columns: 1fr 1fr;
+              gap: 50px;
+              font-size: 15px;
+              font-weight: 800;
+              break-inside: avoid;
+              page-break-inside: avoid;
+            }
+
+            .line {
+              margin-top: 30px;
+              border-top: 1.5px solid #111827;
+              padding-top: 7px;
+              width: 260px;
+              font-weight: 800;
+            }
+
+            @media print {
+              html,
+              body {
+                width: 100%;
+              }
+
+              .company,
+              .meta,
+              .box,
+              table,
+              .remarks,
+              .footer {
+                break-inside: avoid;
+                page-break-inside: avoid;
+              }
             }
           </style>
         </head>
         <body>
           <div class="company">
-            <h1>Urwa Packages</h1>
+            <h1>Muddasir Packages</h1>
             <p>Delivery Challan</p>
             <p>Office: Lahore, Pakistan</p>
           </div>
@@ -418,7 +746,8 @@ const DeliveryChallans = () => {
               <tr>
                 <th style="width:50px;">Sr</th>
                 <th>Particulars</th>
-                <th style="width:150px;">Size</th>
+                <th style="width:130px;">Size</th>
+                <th style="width:130px;">Warehouse</th>
                 <th style="width:100px;">Cartons</th>
                 <th style="width:120px;">Qty</th>
                 <th style="width:100px;">Unit</th>
@@ -427,7 +756,7 @@ const DeliveryChallans = () => {
             <tbody>
               ${rows}
               <tr class="total-row">
-                <td colspan="3" class="center">TOTAL</td>
+                <td colspan="4" class="center">TOTAL</td>
                 <td class="center">${challan.totalCartons || 0}</td>
                 <td class="center">${challan.totalQuantity || 0}</td>
                 <td></td>
@@ -466,6 +795,7 @@ const DeliveryChallans = () => {
           <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 border-b border-slate-200 pb-4">
             <div>
               <button
+                type="button"
                 onClick={closeForm}
                 className="inline-flex items-center gap-2 text-sm text-slate-600 hover:text-slate-900 mb-3"
               >
@@ -478,11 +808,12 @@ const DeliveryChallans = () => {
               </h1>
 
               <p className="text-sm text-slate-500 mt-1">
-                Sales Order select karein, items automatically fill ho jayenge.
+                Sales Order select karein. Dispatch hone par backend Muddasir Godown stock minus karega.
               </p>
             </div>
 
             <button
+              type="button"
               onClick={closeForm}
               className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-xl border border-slate-200 hover:bg-slate-50"
             >
@@ -497,9 +828,11 @@ const DeliveryChallans = () => {
                 <RequiredLabel>Challan No</RequiredLabel>
                 <input
                   value={form.challanNo}
-                  onChange={(e) => setForm({ ...form, challanNo: e.target.value })}
+                  onChange={(e) =>
+                    setForm({ ...form, challanNo: e.target.value })
+                  }
                   className="w-full border rounded-lg px-3 py-2 mt-1"
-                  placeholder="DC-2026-0001"
+                  placeholder="DC-0001"
                 />
               </div>
 
@@ -509,8 +842,14 @@ const DeliveryChallans = () => {
                   value={form.salesOrder}
                   onChange={(e) => handleSalesOrderChange(e.target.value)}
                   className="w-full border rounded-lg px-3 py-2 mt-1"
+                  disabled={!!editId}
                 >
-                  <option value="">Select Sales Order</option>
+                  <option value="">
+                    {salesOrderLoading
+                      ? "Loading sales orders..."
+                      : "Select Sales Order"}
+                  </option>
+
                   {salesOrders.map((order) => (
                     <option key={order._id} value={order._id}>
                       {order.salesOrderNo} - {order.customerName}
@@ -524,7 +863,9 @@ const DeliveryChallans = () => {
                 <input
                   type="date"
                   value={form.challanDate}
-                  onChange={(e) => setForm({ ...form, challanDate: e.target.value })}
+                  onChange={(e) =>
+                    setForm({ ...form, challanDate: e.target.value })
+                  }
                   className="w-full border rounded-lg px-3 py-2 mt-1"
                 />
               </div>
@@ -557,7 +898,9 @@ const DeliveryChallans = () => {
                 <NormalLabel>Vehicle No</NormalLabel>
                 <input
                   value={form.vehicleNo}
-                  onChange={(e) => setForm({ ...form, vehicleNo: e.target.value })}
+                  onChange={(e) =>
+                    setForm({ ...form, vehicleNo: e.target.value })
+                  }
                   className="w-full border rounded-lg px-3 py-2 mt-1"
                   placeholder="LES-1234"
                 />
@@ -567,7 +910,9 @@ const DeliveryChallans = () => {
                 <NormalLabel>Driver Name</NormalLabel>
                 <input
                   value={form.driverName}
-                  onChange={(e) => setForm({ ...form, driverName: e.target.value })}
+                  onChange={(e) =>
+                    setForm({ ...form, driverName: e.target.value })
+                  }
                   className="w-full border rounded-lg px-3 py-2 mt-1"
                   placeholder="Driver name"
                 />
@@ -577,7 +922,9 @@ const DeliveryChallans = () => {
                 <NormalLabel>Delivered By</NormalLabel>
                 <input
                   value={form.deliveredBy}
-                  onChange={(e) => setForm({ ...form, deliveredBy: e.target.value })}
+                  onChange={(e) =>
+                    setForm({ ...form, deliveredBy: e.target.value })
+                  }
                   className="w-full border rounded-lg px-3 py-2 mt-1"
                   placeholder="Staff name"
                 />
@@ -597,11 +944,12 @@ const DeliveryChallans = () => {
                 <div>
                   <h3 className="font-bold">Delivery Items</h3>
                   <p className="text-xs text-slate-500">
-                    Particulars aur quantity required hain.
+                    Quantity pending qty se zyada nahi ho sakti.
                   </p>
                 </div>
 
                 <button
+                  type="button"
                   onClick={addItemRow}
                   className="text-sm bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg"
                 >
@@ -610,16 +958,21 @@ const DeliveryChallans = () => {
               </div>
 
               <div className="overflow-x-auto">
-                <table className="w-full text-sm">
+                <table className="w-full text-sm" style={{ minWidth: "1150px" }}>
                   <thead>
                     <tr className="bg-white border-b text-slate-600">
                       <th className="p-2 text-left">
                         Particulars <span className="text-red-600">*</span>
                       </th>
                       <th className="p-2 text-left">Size</th>
+                      <th className="p-2 text-left">Text</th>
+                      <th className="p-2 text-left">Warehouse</th>
+                      <th className="p-2 text-right">Ordered</th>
+                      <th className="p-2 text-right">Delivered</th>
+                      <th className="p-2 text-right">Pending</th>
                       <th className="p-2 text-left">Cartons</th>
                       <th className="p-2 text-left">
-                        Qty <span className="text-red-600">*</span>
+                        Delivery Qty <span className="text-red-600">*</span>
                       </th>
                       <th className="p-2 text-left">Unit</th>
                       <th className="p-2"></th>
@@ -627,70 +980,142 @@ const DeliveryChallans = () => {
                   </thead>
 
                   <tbody>
-                    {form.items.map((item, index) => (
-                      <tr key={index} className="border-b">
-                        <td className="p-2 min-w-[260px]">
-                          <input
-                            value={item.description}
-                            onChange={(e) => updateItem(index, "description", e.target.value)}
-                            className="w-full border rounded px-2 py-1.5"
-                            placeholder="Packing Tape Printed"
-                          />
-                        </td>
-
-                        <td className="p-2 min-w-[150px]">
-                          <input
-                            value={item.size}
-                            onChange={(e) => updateItem(index, "size", e.target.value)}
-                            className="w-full border rounded px-2 py-1.5"
-                            placeholder='2" x 72 Yards'
-                          />
-                        </td>
-
-                        <td className="p-2 min-w-[100px]">
-                          <input
-                            type="number"
-                            value={item.cartons}
-                            onChange={(e) => updateItem(index, "cartons", e.target.value)}
-                            className="w-full border rounded px-2 py-1.5"
-                            placeholder="5"
-                          />
-                        </td>
-
-                        <td className="p-2 min-w-[100px]">
-                          <input
-                            type="number"
-                            value={item.quantity}
-                            onChange={(e) => updateItem(index, "quantity", e.target.value)}
-                            className="w-full border rounded px-2 py-1.5"
-                            placeholder="450"
-                          />
-                        </td>
-
-                        <td className="p-2 min-w-[100px]">
-                          <input
-                            value={item.unit}
-                            onChange={(e) => updateItem(index, "unit", e.target.value)}
-                            className="w-full border rounded px-2 py-1.5"
-                            placeholder="Rolls"
-                          />
-                        </td>
-
-                        <td className="p-2 text-center">
-                          <button
-                            onClick={() => removeItemRow(index)}
-                            className="p-2 bg-red-50 text-red-600 rounded-lg"
-                          >
-                            <Trash2 size={15} />
-                          </button>
+                    {form.items.length === 0 ? (
+                      <tr>
+                        <td
+                          colSpan="11"
+                          className="p-8 text-center text-slate-500"
+                        >
+                          Sales Order select karein. Pending items yahan auto load honge.
                         </td>
                       </tr>
-                    ))}
+                    ) : (
+                      form.items.map((item, index) => {
+                        const overQty =
+                          numberValue(item.quantity) > numberValue(item.pendingQty);
+
+                        return (
+                          <tr key={index} className="border-b">
+                            <td className="p-2 min-w-[230px]">
+                              <input
+                                value={item.description}
+                                onChange={(e) =>
+                                  updateItem(index, "description", e.target.value)
+                                }
+                                className="w-full border rounded px-2 py-1.5"
+                                placeholder="Packing Tape Printed"
+                              />
+                            </td>
+
+                            <td className="p-2 min-w-[130px]">
+                              <input
+                                value={item.size}
+                                onChange={(e) =>
+                                  updateItem(index, "size", e.target.value)
+                                }
+                                className="w-full border rounded px-2 py-1.5"
+                                placeholder='2" x 72 Yards'
+                              />
+                            </td>
+
+                            <td className="p-2 min-w-[120px]">
+                              <select
+                                value={item.textType}
+                                onChange={(e) =>
+                                  updateItem(index, "textType", e.target.value)
+                                }
+                                className="w-full border rounded px-2 py-1.5"
+                              >
+                                <option value="">No Text</option>
+                                <option value="with-text">With Text</option>
+                                <option value="without-text">Without Text</option>
+                              </select>
+                            </td>
+
+                            <td className="p-2 min-w-[130px]">
+                              <input
+                                value={item.warehouse}
+                                readOnly
+                                className="w-full border rounded px-2 py-1.5 bg-slate-50"
+                              />
+                            </td>
+
+                            <td className="p-2 text-right font-bold">
+                              {numberValue(item.orderedQty)}
+                            </td>
+
+                            <td className="p-2 text-right font-bold text-blue-700">
+                              {numberValue(item.alreadyDeliveredQty)}
+                            </td>
+
+                            <td className="p-2 text-right font-bold text-orange-600">
+                              {numberValue(item.pendingQty)}
+                            </td>
+
+                            <td className="p-2 min-w-[90px]">
+                              <input
+                                type="number"
+                                value={item.cartons}
+                                onChange={(e) =>
+                                  updateItem(index, "cartons", e.target.value)
+                                }
+                                className="w-full border rounded px-2 py-1.5"
+                                placeholder="5"
+                              />
+                            </td>
+
+                            <td className="p-2 min-w-[120px]">
+                              <div className="relative">
+                                <input
+                                  type="number"
+                                  value={item.quantity}
+                                  onChange={(e) =>
+                                    updateItem(index, "quantity", e.target.value)
+                                  }
+                                  className={`w-full border rounded px-2 py-1.5 ${
+                                    overQty ? "border-red-500 bg-red-50" : ""
+                                  }`}
+                                  placeholder="450"
+                                />
+
+                                {overQty && (
+                                  <AlertTriangle
+                                    size={15}
+                                    className="absolute right-2 top-2 text-red-600"
+                                  />
+                                )}
+                              </div>
+                            </td>
+
+                            <td className="p-2 min-w-[90px]">
+                              <input
+                                value={item.unit}
+                                onChange={(e) =>
+                                  updateItem(index, "unit", e.target.value)
+                                }
+                                className="w-full border rounded px-2 py-1.5"
+                                placeholder="Rolls"
+                              />
+                            </td>
+
+                            <td className="p-2 text-center">
+                              <button
+                                type="button"
+                                onClick={() => removeItemRow(index)}
+                                className="p-2 bg-red-50 text-red-600 rounded-lg"
+                              >
+                                <Trash2 size={15} />
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })
+                    )}
                   </tbody>
 
                   <tfoot>
                     <tr className="bg-slate-50 font-bold">
-                      <td className="p-3" colSpan="2">
+                      <td className="p-3" colSpan="7">
                         TOTAL
                       </td>
                       <td className="p-3">{totals.totalCartons}</td>
@@ -718,7 +1143,9 @@ const DeliveryChallans = () => {
                   <NormalLabel>Received By</NormalLabel>
                   <input
                     value={form.receivedBy}
-                    onChange={(e) => setForm({ ...form, receivedBy: e.target.value })}
+                    onChange={(e) =>
+                      setForm({ ...form, receivedBy: e.target.value })
+                    }
                     className="w-full border rounded-lg px-3 py-2 mt-1"
                     placeholder="Receiver name"
                   />
@@ -736,24 +1163,37 @@ const DeliveryChallans = () => {
                   </div>
 
                   <div className="flex justify-between">
-                    <span>Unit</span>
-                    <b>{form.items[0]?.unit || "Rolls"}</b>
+                    <span>Stock Effect</span>
+                    <b>
+                      {["Dispatched", "Received"].includes(form.status)
+                        ? "Godown Minus"
+                        : "No Stock Posting"}
+                    </b>
                   </div>
                 </div>
               </div>
             </div>
 
             <div className="border-t pt-5 flex justify-end gap-3">
-              <button onClick={closeForm} className="px-5 py-2.5 rounded-xl border">
+              <button
+                type="button"
+                onClick={closeForm}
+                className="px-5 py-2.5 rounded-xl border"
+              >
                 Cancel
               </button>
 
               <button
+                type="button"
                 onClick={handleSubmit}
                 disabled={saving}
                 className="px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-semibold flex items-center gap-2 disabled:opacity-60"
               >
-                {saving ? <Loader2 className="animate-spin" size={18} /> : <Save size={18} />}
+                {saving ? (
+                  <Loader2 className="animate-spin" size={18} />
+                ) : (
+                  <Save size={18} />
+                )}
                 {saving ? "Saving..." : "Save Delivery Challan"}
               </button>
             </div>
@@ -773,15 +1213,17 @@ const DeliveryChallans = () => {
           </h1>
 
           <p className="text-sm text-slate-500 mt-1">
-            Sales Order se delivery challan create karein aur dispatch record maintain karein.
+            Sales Order se dispatch create karein. Dispatched status par Muddasir Godown stock minus hoga.
           </p>
         </div>
 
         <button
+          type="button"
           onClick={openNewForm}
-          className="inline-flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-xl font-semibold shadow-sm"
+          disabled={saving}
+          className="inline-flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-xl font-semibold shadow-sm disabled:opacity-60"
         >
-          <Plus size={18} />
+          {saving ? <Loader2 className="animate-spin" size={18} /> : <Plus size={18} />}
           New Delivery Challan
         </button>
       </div>
@@ -789,32 +1231,75 @@ const DeliveryChallans = () => {
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <div className="bg-white rounded-xl border p-4">
           <p className="text-xs text-slate-500">Total Challans</p>
-          <h3 className="text-2xl font-bold">{challans.length}</h3>
+          <h3 className="text-2xl font-bold">{stats.totalChallans}</h3>
         </div>
 
         <div className="bg-white rounded-xl border p-4">
           <p className="text-xs text-slate-500">Total Cartons</p>
-          <h3 className="text-2xl font-bold">
-            {challans.reduce((s, c) => s + Number(c.totalCartons || 0), 0)}
-          </h3>
+          <h3 className="text-2xl font-bold">{stats.totalCartons}</h3>
         </div>
 
         <div className="bg-white rounded-xl border p-4">
           <p className="text-xs text-slate-500">Total Quantity</p>
-          <h3 className="text-2xl font-bold">
-            {challans.reduce((s, c) => s + Number(c.totalQuantity || 0), 0)}
-          </h3>
+          <h3 className="text-2xl font-bold">{stats.totalQuantity}</h3>
         </div>
 
         <div className="bg-white rounded-xl border p-4">
           <p className="text-xs text-slate-500">Dispatched</p>
-          <h3 className="text-2xl font-bold">
-            {challans.filter((c) => c.status === "Dispatched").length}
-          </h3>
+          <h3 className="text-2xl font-bold">{stats.dispatched}</h3>
         </div>
       </div>
 
       <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
+        <div className="p-4 border-b border-slate-100 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
+          <div>
+            <h3 className="font-bold text-slate-900">Delivery Challan List</h3>
+            <p className="text-xs text-slate-500">
+              All delivery challans from MongoDB
+            </p>
+          </div>
+
+          <div className="flex flex-col sm:flex-row gap-2">
+            <div className="relative">
+              <Search
+                size={16}
+                className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
+              />
+
+              <input
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="pl-9 pr-3 py-2 border rounded-lg text-sm w-full sm:w-72"
+                placeholder="Search challan, order, customer..."
+              />
+            </div>
+
+            <select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value)}
+              className="px-3 py-2 border rounded-lg text-sm"
+            >
+              <option>All</option>
+              <option>Draft</option>
+              <option>Dispatched</option>
+              <option>Received</option>
+              <option>Cancelled</option>
+            </select>
+
+            <button
+              type="button"
+              onClick={() => {
+                fetchChallans();
+                fetchSalesOrders();
+              }}
+              className="inline-flex items-center justify-center gap-2 text-sm px-3 py-2 rounded-lg border hover:bg-slate-50"
+            >
+              <RefreshCcw size={15} />
+              Refresh
+            </button>
+          </div>
+        </div>
+
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="bg-slate-50 text-slate-600">
@@ -837,29 +1322,37 @@ const DeliveryChallans = () => {
                     <Loader2 className="animate-spin mx-auto text-blue-600" />
                   </td>
                 </tr>
-              ) : challans.length === 0 ? (
+              ) : filteredChallans.length === 0 ? (
                 <tr>
                   <td colSpan="8" className="p-10 text-center text-slate-500">
                     No delivery challan found
                   </td>
                 </tr>
               ) : (
-                challans.map((challan) => (
+                filteredChallans.map((challan) => (
                   <tr key={challan._id} className="border-t hover:bg-slate-50">
-                    <td className="p-3 font-bold text-blue-700">{challan.challanNo}</td>
+                    <td className="p-3 font-bold text-blue-700">
+                      {challan.challanNo}
+                    </td>
 
                     <td className="p-3">{challan.salesOrderNo}</td>
 
                     <td className="p-3">
                       <div className="font-semibold">{challan.customerName}</div>
-                      <div className="text-xs text-slate-500">{challan.customerPhone}</div>
+                      <div className="text-xs text-slate-500">
+                        {challan.customerPhone}
+                      </div>
                     </td>
 
                     <td className="p-3">{challan.challanDate}</td>
 
-                    <td className="p-3 text-right font-bold">{challan.totalCartons}</td>
+                    <td className="p-3 text-right font-bold">
+                      {challan.totalCartons}
+                    </td>
 
-                    <td className="p-3 text-right font-bold">{challan.totalQuantity}</td>
+                    <td className="p-3 text-right font-bold">
+                      {challan.totalQuantity}
+                    </td>
 
                     <td className="p-3 text-center">
                       <span className="px-3 py-1 rounded-full text-xs font-semibold bg-blue-50 text-blue-700 inline-flex items-center gap-1">
@@ -871,6 +1364,7 @@ const DeliveryChallans = () => {
                     <td className="p-3">
                       <div className="flex justify-center gap-2">
                         <button
+                          type="button"
                           onClick={() => printChallan(challan)}
                           className="p-2 rounded-lg bg-slate-100 hover:bg-slate-200"
                           title="Print"
@@ -879,6 +1373,7 @@ const DeliveryChallans = () => {
                         </button>
 
                         <button
+                          type="button"
                           onClick={() => handleEdit(challan)}
                           className="p-2 rounded-lg bg-blue-50 text-blue-700 hover:bg-blue-100"
                           title="Edit"
@@ -887,6 +1382,7 @@ const DeliveryChallans = () => {
                         </button>
 
                         <button
+                          type="button"
                           onClick={() => handleDelete(challan._id)}
                           className="p-2 rounded-lg bg-red-50 text-red-700 hover:bg-red-100"
                           title="Delete"

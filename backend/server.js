@@ -78,7 +78,29 @@ const jobsRoutes = require("./routes/jobsRoutes");
 const salesOrderRoutes = require("./routes/salesOrderRoutes");
 const deliveryChallanRoutes = require("./routes/deliveryChallanRoutes");
 const invoiceRoutes = require("./routes/invoiceRoutes");
+const stockLedgerRoutes = require("./routes/stockLedgerRoutes");
 
+
+const dashboardRoutes = require("./routes/dashboardRoutes");
+const revenueChartRoutes = require( "./routes/revenueChartRoutes");
+const salesChartRoutes = require("./routes/salesChartRoutes");
+const tableSectionRoutes = require("./routes/tableSectionRoutes");
+const activityFeedRoutes = require(
+  "./routes/activityFeedRoutes"
+);
+
+
+app.use(
+  "/api/dashboard/sales-chart",
+  salesChartRoutes
+);
+app.use(
+  "/api/dashboard/activity-feed",
+  activityFeedRoutes
+);
+app.use("/api/dashboard/table-section", tableSectionRoutes);
+app.use("/api/dashboard/revenue-chart", revenueChartRoutes);
+app.use("/api/dashboard", dashboardRoutes);
 app.use("/api/customers", customerRoutes);
 app.use("/api/vendors", vendorRoutes);
 app.use("/api/traders", traderRoutes);
@@ -110,6 +132,8 @@ app.use("/api/jobs", jobsRoutes);
 app.use("/api/sales-orders", salesOrderRoutes);
 app.use("/api/delivery-challans", deliveryChallanRoutes);
 app.use("/api/invoices", invoiceRoutes);
+
+app.use("/api/stock-ledger", stockLedgerRoutes);
 
 app.get("/", (req, res) => {
   res.send("Backend running...");

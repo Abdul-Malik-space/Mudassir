@@ -9,16 +9,20 @@ import {
   X,
   Save,
   ArrowLeft,
+  Search,
+  RotateCcw,
 } from "lucide-react";
 import { API_BASE_URL } from "../config/api";
 
 const emptyItem = {
+  item: "",
   description: "",
   size: "",
   cartons: "",
   quantity: "",
   unit: "Rolls",
   unitPrice: "",
+  remarks: "",
 };
 
 const todayDate = () => new Date().toISOString().slice(0, 10);
@@ -35,63 +39,110 @@ const NormalLabel = ({ children }) => (
   <label className="text-xs font-bold text-slate-600">{children}</label>
 );
 
+const normalizeArray = (data, keys = []) => {
+  if (Array.isArray(data)) return data;
+
+  for (const key of keys) {
+    if (Array.isArray(data?.[key])) return data[key];
+  }
+
+  if (Array.isArray(data?.data)) return data.data;
+
+  return [];
+};
+
+const apiRequest = async (url, options = {}) => {
+  const response = await fetch(url, {
+    headers: {
+      "Content-Type": "application/json",
+      ...(options.headers || {}),
+    },
+    ...options,
+  });
+
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    throw new Error(data.message || data.error || "Request failed");
+  }
+
+  return data;
+};
+
+const getDefaultForm = (purchaseOrderNo = "") => ({
+  purchaseOrderNo,
+  vendor: "",
+  orderDate: todayDate(),
+  expectedDate: "",
+  referenceNo: "",
+  taxType: "without-tax",
+  advance: "",
+  status: "Draft",
+  remarks: "",
+  items: [{ ...emptyItem }],
+});
+
 const PurchaseOrders = () => {
   const [vendors, setVendors] = useState([]);
+  const [itemsMaster, setItemsMaster] = useState([]);
   const [orders, setOrders] = useState([]);
+
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [vendorLoading, setVendorLoading] = useState(false);
+  const [itemLoading, setItemLoading] = useState(false);
 
   const [showForm, setShowForm] = useState(false);
   const [editId, setEditId] = useState(null);
 
-  const [form, setForm] = useState({
-    purchaseOrderNo: "",
-    vendor: "",
-    orderDate: todayDate(),
-    expectedDate: "",
-    referenceNo: "",
-    taxType: "without-tax",
-    advance: "",
-    status: "Draft",
-    remarks: "",
-    items: [{ ...emptyItem }],
-  });
+  const [searchTerm, setSearchTerm] = useState("");
+  const [statusFilter, setStatusFilter] = useState("All");
 
-  // Vendor dropdown ke liye vendors load honge
+  const [form, setForm] = useState(getDefaultForm());
+
   const fetchVendors = async () => {
     try {
-      const res = await fetch(`${API_BASE_URL}/vendors/all`);
-      const data = await res.json();
+      setVendorLoading(true);
 
-      if (Array.isArray(data)) {
-        setVendors(data);
-      } else if (data.vendors && Array.isArray(data.vendors)) {
-        setVendors(data.vendors);
-      } else {
-        setVendors([]);
-      }
+      const data = await apiRequest(`${API_BASE_URL}/vendors/all`);
+      setVendors(normalizeArray(data, ["vendors"]));
     } catch (error) {
       console.error("Vendor loading error:", error);
+      alert(error.message || "Vendors load nahi huay");
       setVendors([]);
+    } finally {
+      setVendorLoading(false);
+    }
+  };
+
+  const fetchItems = async () => {
+    try {
+      setItemLoading(true);
+
+      const data = await apiRequest(`${API_BASE_URL}/items/all`);
+      const list = normalizeArray(data, ["items"]).filter(
+        (item) => item.status !== "Inactive"
+      );
+
+      setItemsMaster(list);
+    } catch (error) {
+      console.error("Items loading error:", error);
+      alert(error.message || "Items load nahi huay");
+      setItemsMaster([]);
+    } finally {
+      setItemLoading(false);
     }
   };
 
   const fetchOrders = async () => {
-    setLoading(true);
-
     try {
-      const res = await fetch(`${API_BASE_URL}/purchase-orders/all`);
-      const data = await res.json();
+      setLoading(true);
 
-      if (Array.isArray(data)) {
-        setOrders(data);
-      } else if (data.purchaseOrders && Array.isArray(data.purchaseOrders)) {
-        setOrders(data.purchaseOrders);
-      } else {
-        setOrders([]);
-      }
+      const data = await apiRequest(`${API_BASE_URL}/purchase-orders/all`);
+      setOrders(normalizeArray(data, ["purchaseOrders", "orders"]));
     } catch (error) {
       console.error("Purchase order loading error:", error);
+      alert(error.message || "Purchase orders load nahi huay");
       setOrders([]);
     } finally {
       setLoading(false);
@@ -99,24 +150,13 @@ const PurchaseOrders = () => {
   };
 
   const fetchNextNo = async () => {
-    try {
-      const res = await fetch(`${API_BASE_URL}/purchase-orders/next-no`);
-      const data = await res.json();
-
-      setForm((prev) => ({
-        ...prev,
-        purchaseOrderNo: data.purchaseOrderNo || "",
-      }));
-    } catch (error) {
-      setForm((prev) => ({
-        ...prev,
-        purchaseOrderNo: "",
-      }));
-    }
+    const data = await apiRequest(`${API_BASE_URL}/purchase-orders/next-no`);
+    return data.purchaseOrderNo || "";
   };
 
   useEffect(() => {
     fetchVendors();
+    fetchItems();
     fetchOrders();
   }, []);
 
@@ -129,41 +169,110 @@ const PurchaseOrders = () => {
     const grandTotal = subtotal + salesTax;
     const balance = grandTotal - Number(form.advance || 0);
 
-    return { subtotal, salesTax, grandTotal, balance };
+    return {
+      subtotal,
+      salesTax,
+      grandTotal,
+      balance,
+    };
   }, [form.items, form.taxType, form.advance]);
 
-  const openNewForm = async () => {
-    setEditId(null);
+  const stats = useMemo(() => {
+    return {
+      totalOrders: orders.length,
+      totalValue: orders.reduce((s, o) => s + Number(o.grandTotal || 0), 0),
+      taxValue: orders.reduce((s, o) => s + Number(o.salesTax || 0), 0),
+      balance: orders.reduce((s, o) => s + Number(o.balance || 0), 0),
+    };
+  }, [orders]);
 
-    setForm({
-      purchaseOrderNo: "",
-      vendor: "",
-      orderDate: todayDate(),
-      expectedDate: "",
-      referenceNo: "",
-      taxType: "without-tax",
-      advance: "",
-      status: "Draft",
-      remarks: "",
-      items: [{ ...emptyItem }],
+  const filteredOrders = useMemo(() => {
+    const keyword = searchTerm.trim().toLowerCase();
+
+    return orders.filter((order) => {
+      const matchesSearch =
+        !keyword ||
+        order.purchaseOrderNo?.toLowerCase().includes(keyword) ||
+        order.vendorName?.toLowerCase().includes(keyword) ||
+        order.vendorPhone?.toLowerCase().includes(keyword) ||
+        order.referenceNo?.toLowerCase().includes(keyword) ||
+        order.items?.some((item) =>
+          item.description?.toLowerCase().includes(keyword)
+        );
+
+      const matchesStatus =
+        statusFilter === "All" || order.status === statusFilter;
+
+      return matchesSearch && matchesStatus;
     });
+  }, [orders, searchTerm, statusFilter]);
 
-    await fetchVendors();
-    await fetchNextNo();
+  const openNewForm = async () => {
+    try {
+      setSaving(true);
 
-    setShowForm(true);
+      await Promise.all([fetchVendors(), fetchItems()]);
+
+      const nextNo = await fetchNextNo();
+
+      setEditId(null);
+      setForm(getDefaultForm(nextNo));
+      setShowForm(true);
+    } catch (error) {
+      alert(error.message || "Purchase Order No load nahi hua");
+    } finally {
+      setSaving(false);
+    }
   };
 
   const closeForm = () => {
     setShowForm(false);
     setEditId(null);
+    setForm(getDefaultForm());
   };
 
   const updateItem = (index, field, value) => {
     const updatedItems = [...form.items];
+
     updatedItems[index] = {
       ...updatedItems[index],
       [field]: value,
+    };
+
+    setForm({
+      ...form,
+      items: updatedItems,
+    });
+  };
+
+  const handleItemSelect = (index, itemId) => {
+    const selectedItem = itemsMaster.find((item) => item._id === itemId);
+    const updatedItems = [...form.items];
+
+    if (!selectedItem) {
+      updatedItems[index] = {
+        ...updatedItems[index],
+        item: "",
+        description: "",
+        unit: "Rolls",
+        unitPrice: "",
+      };
+
+      setForm({
+        ...form,
+        items: updatedItems,
+      });
+
+      return;
+    }
+
+    updatedItems[index] = {
+      ...updatedItems[index],
+      item: selectedItem._id,
+      description: selectedItem.name || "",
+      unit: selectedItem.unit || "Pcs",
+      unitPrice: selectedItem.purchasePrice || 0,
+      remarks: selectedItem.notes || "",
     };
 
     setForm({
@@ -188,79 +297,105 @@ const PurchaseOrders = () => {
     });
   };
 
-  const handleSubmit = async () => {
+  const validateForm = () => {
     if (!form.purchaseOrderNo.trim()) {
       alert("Purchase Order No required hai");
-      return;
+      return false;
     }
 
     if (!form.vendor) {
       alert("Vendor select karein");
-      return;
+      return false;
     }
 
     if (!form.orderDate) {
       alert("Order Date required hai");
-      return;
+      return false;
+    }
+
+    if (Number(form.advance || 0) > totals.grandTotal) {
+      alert("Advance grand total se zyada nahi ho sakta");
+      return false;
     }
 
     const validItems = form.items.filter(
       (item) =>
-        item.description.trim() &&
+        item.description?.trim() &&
         Number(item.quantity || 0) > 0 &&
         Number(item.unitPrice || 0) >= 0
     );
 
     if (validItems.length === 0) {
       alert("Please at least one valid item add karein");
-      return;
+      return false;
     }
 
-    const payload = {
-      ...form,
-      items: validItems,
-      advance: Number(form.advance || 0),
-      subtotal: totals.subtotal,
-      salesTax: totals.salesTax,
-      grandTotal: totals.grandTotal,
-      balance: totals.balance,
-    };
+    return true;
+  };
 
-    setSaving(true);
+  const buildPayload = () => {
+    const validItems = form.items
+      .filter(
+        (item) =>
+          item.description?.trim() &&
+          Number(item.quantity || 0) > 0 &&
+          Number(item.unitPrice || 0) >= 0
+      )
+      .map((item) => ({
+        item: item.item || null,
+        description: String(item.description || "").trim(),
+        size: String(item.size || "").trim(),
+        cartons: Number(item.cartons || 0),
+        quantity: Number(item.quantity || 0),
+        unit: String(item.unit || "Pcs").trim(),
+        unitPrice: Number(item.unitPrice || 0),
+        remarks: String(item.remarks || "").trim(),
+      }));
+
+    return {
+      purchaseOrderNo: form.purchaseOrderNo,
+      vendor: form.vendor,
+      orderDate: form.orderDate,
+      expectedDate: form.expectedDate,
+      referenceNo: form.referenceNo,
+      taxType: form.taxType,
+      advance: Number(form.advance || 0),
+      status: form.status,
+      remarks: form.remarks,
+      items: validItems,
+    };
+  };
+
+  const handleSubmit = async () => {
+    if (!validateForm()) return;
 
     try {
+      setSaving(true);
+
+      const payload = buildPayload();
+
       const url = editId
         ? `${API_BASE_URL}/purchase-orders/update/${editId}`
         : `${API_BASE_URL}/purchase-orders/add`;
 
       const method = editId ? "PUT" : "POST";
 
-      const res = await fetch(url, {
+      await apiRequest(url, {
         method,
-        headers: {
-          "Content-Type": "application/json",
-        },
         body: JSON.stringify(payload),
       });
-
-      const data = await res.json();
-
-      if (!res.ok) {
-        alert(data.message || "Server error");
-        return;
-      }
 
       await fetchOrders();
       closeForm();
     } catch (error) {
-      alert("Purchase order save nahi hua. Backend check karein.");
+      alert(error.message || "Purchase order save nahi hua");
     } finally {
       setSaving(false);
     }
   };
 
   const handleEdit = async (order) => {
-    await fetchVendors();
+    await Promise.all([fetchVendors(), fetchItems()]);
 
     setEditId(order._id);
 
@@ -274,27 +409,36 @@ const PurchaseOrders = () => {
       advance: order.advance || "",
       status: order.status || "Draft",
       remarks: order.remarks || "",
-      items: order.items?.length ? order.items : [{ ...emptyItem }],
+      items: order.items?.length
+        ? order.items.map((row) => ({
+            item: row.item?._id || row.item || "",
+            description: row.description || "",
+            size: row.size || "",
+            cartons: row.cartons || "",
+            quantity: row.quantity || "",
+            unit: row.unit || "Pcs",
+            unitPrice: row.unitPrice || "",
+            remarks: row.remarks || "",
+          }))
+        : [{ ...emptyItem }],
     });
 
     setShowForm(true);
   };
 
   const handleDelete = async (id) => {
-    if (!window.confirm("Are you sure you want to delete this purchase order?")) return;
+    if (!window.confirm("Are you sure you want to delete this purchase order?")) {
+      return;
+    }
 
     try {
-      const res = await fetch(`${API_BASE_URL}/purchase-orders/delete/${id}`, {
+      await apiRequest(`${API_BASE_URL}/purchase-orders/delete/${id}`, {
         method: "DELETE",
       });
 
-      if (res.ok) {
-        fetchOrders();
-      } else {
-        alert("Delete failed");
-      }
+      await fetchOrders();
     } catch (error) {
-      alert("Delete error");
+      alert(error.message || "Purchase order delete nahi hua");
     }
   };
 
@@ -351,8 +495,8 @@ const PurchaseOrders = () => {
             .top { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid #111827; padding-bottom: 12px; }
             h1 { margin: 0; font-size: 30px; }
             h2 { text-align: center; margin: 24px 0 18px; text-decoration: underline; }
-            .small { font-size: 12px; color: #374151; }
-            .box { border: 1px solid #111827; padding: 10px; margin: 12px 0; }
+            .small { font-size: 12px; color: #374151; line-height: 1.7; }
+            .box { border: 1px solid #111827; padding: 10px; margin: 12px 0; line-height: 1.7; font-size: 13px; }
             table { width: 100%; border-collapse: collapse; margin-top: 12px; }
             th, td { border: 1px solid #111827; padding: 7px; font-size: 12px; text-align: left; }
             th { background: #f3f4f6; }
@@ -361,17 +505,20 @@ const PurchaseOrders = () => {
             .sign { margin-top: 70px; display: flex; justify-content: space-between; }
           </style>
         </head>
+
         <body>
           <div class="top">
             <div>
               <h1>Urwa Packages</h1>
               <div class="small">Purchase Order</div>
             </div>
+
             <div class="small">
               <b>Purchase Order No:</b> ${order.purchaseOrderNo || ""}<br/>
               <b>Date:</b> ${order.orderDate || ""}<br/>
               <b>Expected Date:</b> ${order.expectedDate || ""}<br/>
-              <b>Tax:</b> ${taxLabel}
+              <b>Tax:</b> ${taxLabel}<br/>
+              <b>Status:</b> ${order.status || ""}
             </div>
           </div>
 
@@ -401,7 +548,9 @@ const PurchaseOrders = () => {
 
           <div class="totals">
             <div><span>Subtotal</span><b>${money(order.subtotal)}</b></div>
-            <div><span>Sales Tax ${order.taxRate || 0}%</span><b>${money(order.salesTax)}</b></div>
+            <div><span>Sales Tax ${order.taxRate || 0}%</span><b>${money(
+      order.salesTax
+    )}</b></div>
             <div><span>Grand Total</span><b>${money(order.grandTotal)}</b></div>
             <div><span>Advance</span><b>${money(order.advance)}</b></div>
             <div><span>Balance</span><b>${money(order.balance)}</b></div>
@@ -440,9 +589,9 @@ const PurchaseOrders = () => {
                 {editId ? "Edit Purchase Order" : "New Purchase Order"}
               </h1>
 
-              <p className="text-sm text-slate-500 mt-1">
-                Vendor select karein, items add karein, tax with/without select karein.
-              </p>
+              {/* <p className="text-sm text-slate-500 mt-1">
+                Vendor select karein aur Item Master se purchase items choose karein.
+              </p> */}
             </div>
 
             <button
@@ -464,7 +613,7 @@ const PurchaseOrders = () => {
                     setForm({ ...form, purchaseOrderNo: e.target.value })
                   }
                   className="w-full border rounded-lg px-3 py-2 mt-1"
-                  placeholder="PO-2026-0001"
+                  placeholder="PO-0001"
                 />
               </div>
 
@@ -475,7 +624,9 @@ const PurchaseOrders = () => {
                   onChange={(e) => setForm({ ...form, vendor: e.target.value })}
                   className="w-full border rounded-lg px-3 py-2 mt-1"
                 >
-                  <option value="">Select Vendor</option>
+                  <option value="">
+                    {vendorLoading ? "Loading vendors..." : "Select Vendor"}
+                  </option>
 
                   {vendors.map((vendor) => (
                     <option key={vendor._id} value={vendor._id}>
@@ -490,7 +641,9 @@ const PurchaseOrders = () => {
                 <input
                   type="date"
                   value={form.orderDate}
-                  onChange={(e) => setForm({ ...form, orderDate: e.target.value })}
+                  onChange={(e) =>
+                    setForm({ ...form, orderDate: e.target.value })
+                  }
                   className="w-full border rounded-lg px-3 py-2 mt-1"
                 />
               </div>
@@ -523,7 +676,9 @@ const PurchaseOrders = () => {
                 <RequiredLabel>Tax Type</RequiredLabel>
                 <select
                   value={form.taxType}
-                  onChange={(e) => setForm({ ...form, taxType: e.target.value })}
+                  onChange={(e) =>
+                    setForm({ ...form, taxType: e.target.value })
+                  }
                   className="w-full border rounded-lg px-3 py-2 mt-1"
                 >
                   <option value="without-tax">Without Tax</option>
@@ -536,7 +691,9 @@ const PurchaseOrders = () => {
                 <input
                   type="number"
                   value={form.advance}
-                  onChange={(e) => setForm({ ...form, advance: e.target.value })}
+                  onChange={(e) =>
+                    setForm({ ...form, advance: e.target.value })
+                  }
                   className="w-full border rounded-lg px-3 py-2 mt-1"
                   placeholder="0"
                 />
@@ -550,8 +707,7 @@ const PurchaseOrders = () => {
                   className="w-full border rounded-lg px-3 py-2 mt-1"
                 >
                   <option>Draft</option>
-                  <option>Sent</option>
-                  <option>Approved</option>
+                  <option>Ordered</option>
                   <option>Partially Received</option>
                   <option>Received</option>
                   <option>Cancelled</option>
@@ -563,9 +719,9 @@ const PurchaseOrders = () => {
               <div className="bg-slate-50 px-4 py-3 flex justify-between items-center">
                 <div>
                   <h3 className="font-bold">Purchase Items</h3>
-                  <p className="text-xs text-slate-500">
-                    Description, quantity aur unit price required hain.
-                  </p>
+                  {/* <p className="text-xs text-slate-500">
+                    Item Master se item select karein. Quantity aur price required hain.
+                  </p> */}
                 </div>
 
                 <button
@@ -581,8 +737,9 @@ const PurchaseOrders = () => {
                   <thead>
                     <tr className="bg-white border-b text-slate-600">
                       <th className="p-2 text-left">
-                        Description <span className="text-red-600">*</span>
+                        Item <span className="text-red-600">*</span>
                       </th>
+                      <th className="p-2 text-left">Description</th>
                       <th className="p-2 text-left">Size</th>
                       <th className="p-2 text-left">Cartons</th>
                       <th className="p-2 text-left">
@@ -600,6 +757,26 @@ const PurchaseOrders = () => {
                   <tbody>
                     {form.items.map((item, index) => (
                       <tr key={index} className="border-b">
+                        <td className="p-2 min-w-[240px]">
+                          <select
+                            value={item.item || ""}
+                            onChange={(e) =>
+                              handleItemSelect(index, e.target.value)
+                            }
+                            className="w-full border rounded px-2 py-1.5"
+                          >
+                            <option value="">
+                              {itemLoading ? "Loading items..." : "Select Item"}
+                            </option>
+
+                            {itemsMaster.map((masterItem) => (
+                              <option key={masterItem._id} value={masterItem._id}>
+                                {masterItem.code} - {masterItem.name}
+                              </option>
+                            ))}
+                          </select>
+                        </td>
+
                         <td className="p-2 min-w-[220px]">
                           <input
                             value={item.description}
@@ -653,7 +830,7 @@ const PurchaseOrders = () => {
                               updateItem(index, "unit", e.target.value)
                             }
                             className="w-full border rounded px-2 py-1.5"
-                            placeholder="Rolls"
+                            placeholder="Pcs"
                           />
                         </td>
 
@@ -766,15 +943,16 @@ const PurchaseOrders = () => {
           </h1>
 
           <p className="text-sm text-slate-500 mt-1">
-            Vendor purchase booking, tax calculation, advance and balance tracking
+            Vendor purchase booking, item master selection, tax and balance tracking
           </p>
         </div>
 
         <button
           onClick={openNewForm}
-          className="inline-flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-xl font-semibold shadow-sm"
+          disabled={saving}
+          className="inline-flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-xl font-semibold shadow-sm disabled:opacity-60"
         >
-          <Plus size={18} />
+          {saving ? <Loader2 className="animate-spin" size={18} /> : <Plus size={18} />}
           New Purchase Order
         </button>
       </div>
@@ -782,32 +960,71 @@ const PurchaseOrders = () => {
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <div className="bg-white rounded-xl border p-4">
           <p className="text-xs text-slate-500">Total Orders</p>
-          <h3 className="text-2xl font-bold">{orders.length}</h3>
+          <h3 className="text-2xl font-bold">{stats.totalOrders}</h3>
         </div>
 
         <div className="bg-white rounded-xl border p-4">
           <p className="text-xs text-slate-500">Total Value</p>
-          <h3 className="text-2xl font-bold">
-            {money(orders.reduce((s, o) => s + Number(o.grandTotal || 0), 0))}
-          </h3>
+          <h3 className="text-2xl font-bold">{money(stats.totalValue)}</h3>
         </div>
 
         <div className="bg-white rounded-xl border p-4">
           <p className="text-xs text-slate-500">Tax Value</p>
-          <h3 className="text-2xl font-bold">
-            {money(orders.reduce((s, o) => s + Number(o.salesTax || 0), 0))}
-          </h3>
+          <h3 className="text-2xl font-bold">{money(stats.taxValue)}</h3>
         </div>
 
         <div className="bg-white rounded-xl border p-4">
           <p className="text-xs text-slate-500">Balance</p>
-          <h3 className="text-2xl font-bold">
-            {money(orders.reduce((s, o) => s + Number(o.balance || 0), 0))}
-          </h3>
+          <h3 className="text-2xl font-bold">{money(stats.balance)}</h3>
         </div>
       </div>
 
       <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
+        <div className="p-4 border-b border-slate-100 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
+          <div>
+            <h3 className="font-bold text-slate-900">Purchase Order List</h3>
+            {/* <p className="text-xs text-slate-500">
+              All purchase orders from MongoDB
+            </p> */}
+          </div>
+
+          <div className="flex flex-col sm:flex-row gap-2">
+            <div className="relative">
+              <Search
+                size={16}
+                className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
+              />
+              <input
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="pl-9 pr-3 py-2 border rounded-lg text-sm w-full sm:w-72"
+                placeholder="Search order, vendor, item..."
+              />
+            </div>
+
+            <select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value)}
+              className="px-3 py-2 border rounded-lg text-sm"
+            >
+              <option>All</option>
+              <option>Draft</option>
+              <option>Ordered</option>
+              <option>Partially Received</option>
+              <option>Received</option>
+              <option>Cancelled</option>
+            </select>
+
+            <button
+              onClick={fetchOrders}
+              className="inline-flex items-center justify-center gap-2 text-sm px-3 py-2 rounded-lg border hover:bg-slate-50"
+            >
+              <RotateCcw size={15} />
+              Refresh
+            </button>
+          </div>
+        </div>
+
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="bg-slate-50 text-slate-600">
@@ -830,14 +1047,14 @@ const PurchaseOrders = () => {
                     <Loader2 className="animate-spin mx-auto text-blue-600" />
                   </td>
                 </tr>
-              ) : orders.length === 0 ? (
+              ) : filteredOrders.length === 0 ? (
                 <tr>
                   <td colSpan="8" className="p-10 text-center text-slate-500">
                     No purchase order found
                   </td>
                 </tr>
               ) : (
-                orders.map((order) => (
+                filteredOrders.map((order) => (
                   <tr key={order._id} className="border-t hover:bg-slate-50">
                     <td className="p-3 font-bold text-blue-700">
                       {order.purchaseOrderNo}

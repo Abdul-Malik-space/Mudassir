@@ -1,114 +1,540 @@
-import React from 'react'
-import { User, ShoppingCart, CreditCard, Settings, Clock, Package, MessageSquare } from 'lucide-react';
+import React, {
+  useEffect,
+  useState,
+} from "react";
 
-const activities = [
-  {
-    id: 1,
-    type: "user",
+import {
+  User,
+  ShoppingCart,
+  CreditCard,
+  Clock,
+  Package,
+  Truck,
+  ClipboardCheck,
+  X,
+} from "lucide-react";
+
+/*
+|--------------------------------------------------------------------------
+| Activity Type Configuration
+|--------------------------------------------------------------------------
+*/
+
+const ACTIVITY_CONFIG = {
+  customer: {
     icon: User,
-    title: "New user registered",
-    description: "John Smith created an account",
-    time: "2 minutes ago",
-    color: "text-blue-500",
-    bgColor: "bg-blue-100 dark:bg-blue-900/30",
+    color:
+      "text-blue-500",
+    background:
+      "bg-blue-100 dark:bg-blue-900/30",
   },
-  {
-    id: 2,
-    type: "order",
+
+  order: {
     icon: ShoppingCart,
-    title: "New order received",
-    description: "Order #3847 for $2,399",
-    time: "5 minutes ago",
-    color: "text-emerald-500",
-    bgColor: "bg-emerald-100 dark:bg-emerald-900/30",
+    color:
+      "text-emerald-500",
+    background:
+      "bg-emerald-100 dark:bg-emerald-900/30",
   },
-  {
-    id: 3,
-    type: "payment",
+
+  sale: {
     icon: CreditCard,
-    title: "Payment processed",
-    description: "Payment of $1,199 completed",
-    time: "12 minutes ago",
-    color: "text-purple-500",
-    bgColor: "bg-purple-100 dark:bg-purple-900/30",
+    color:
+      "text-purple-500",
+    background:
+      "bg-purple-100 dark:bg-purple-900/30",
   },
-  {
-    id: 4,
-    type: "system",
-    icon: Settings,
-    title: "System update",
-    description: "Database backup completed",
-    time: "1 hour ago",
-    color: "text-orange-500",
-    bgColor: "bg-orange-100 dark:bg-orange-900/30",
+
+  delivery: {
+    icon: Truck,
+    color:
+      "text-pink-500",
+    background:
+      "bg-pink-100 dark:bg-pink-900/30",
   },
-  {
-    id: 5,
-    type: "shipping",
+
+  grn: {
+    icon: ClipboardCheck,
+    color:
+      "text-orange-500",
+    background:
+      "bg-orange-100 dark:bg-orange-900/30",
+  },
+
+  readyProduct: {
     icon: Package,
-    title: "Order shipped",
-    description: "Order #3840 is on its way",
-    time: "2 hours ago",
-    color: "text-pink-500",
-    bgColor: "bg-pink-100 dark:bg-pink-900/30",
+    color:
+      "text-cyan-500",
+    background:
+      "bg-cyan-100 dark:bg-cyan-900/30",
   },
-  {
-    id: 6,
-    type: "message",
-    icon: MessageSquare,
-    title: "New message",
-    description: "You received a new inquiry",
-    time: "5 hours ago",
-    color: "text-cyan-500",
-    bgColor: "bg-cyan-100 dark:bg-cyan-900/30",
+
+  default: {
+    icon: Package,
+    color:
+      "text-slate-500",
+    background:
+      "bg-slate-100 dark:bg-slate-800",
+  },
+};
+
+/*
+|--------------------------------------------------------------------------
+| Relative Time
+|--------------------------------------------------------------------------
+*/
+
+const formatRelativeTime = (value) => {
+  if (!value) {
+    return "Unknown time";
   }
-];
+
+  const activityDate = new Date(value);
+
+  if (
+    Number.isNaN(activityDate.getTime())
+  ) {
+    return "Unknown time";
+  }
+
+  const currentDate = new Date();
+
+  const differenceInSeconds = Math.max(
+    0,
+    Math.floor(
+      (currentDate - activityDate) /
+        1000
+    )
+  );
+
+  if (differenceInSeconds < 60) {
+    return "Just now";
+  }
+
+  const minutes = Math.floor(
+    differenceInSeconds / 60
+  );
+
+  if (minutes < 60) {
+    return `${minutes} minute${
+      minutes === 1 ? "" : "s"
+    } ago`;
+  }
+
+  const hours = Math.floor(minutes / 60);
+
+  if (hours < 24) {
+    return `${hours} hour${
+      hours === 1 ? "" : "s"
+    } ago`;
+  }
+
+  const days = Math.floor(hours / 24);
+
+  if (days < 30) {
+    return `${days} day${
+      days === 1 ? "" : "s"
+    } ago`;
+  }
+
+  const months = Math.floor(days / 30);
+
+  if (months < 12) {
+    return `${months} month${
+      months === 1 ? "" : "s"
+    } ago`;
+  }
+
+  const years = Math.floor(months / 12);
+
+  return `${years} year${
+    years === 1 ? "" : "s"
+  } ago`;
+};
+
+/*
+|--------------------------------------------------------------------------
+| Full Date
+|--------------------------------------------------------------------------
+*/
+
+const formatFullDate = (value) => {
+  if (!value) {
+    return "-";
+  }
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return "-";
+  }
+
+  return date.toLocaleString("en-PK", {
+    dateStyle: "medium",
+    timeStyle: "short",
+  });
+};
+
+/*
+|--------------------------------------------------------------------------
+| Activity Row
+|--------------------------------------------------------------------------
+*/
+
+function ActivityItem({ activity }) {
+  const config =
+    ACTIVITY_CONFIG[activity.type] ||
+    ACTIVITY_CONFIG.default;
+
+  const Icon = config.icon;
+
+  return (
+    <div className="flex items-start space-x-4">
+      <div
+        className={`flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl ${config.background}`}
+      >
+        <Icon
+          className={`h-5 w-5 ${config.color}`}
+        />
+      </div>
+
+      <div className="min-w-0 flex-1">
+        <h4 className="text-sm font-bold text-slate-800 dark:text-white">
+          {activity.title}
+        </h4>
+
+        <p className="mt-0.5 break-words text-sm text-slate-500 dark:text-slate-400">
+          {activity.description}
+        </p>
+
+        <div
+          className="mt-1 flex items-center text-xs text-slate-400 dark:text-slate-500"
+          title={formatFullDate(
+            activity.createdAt
+          )}
+        >
+          <Clock className="mr-1 h-3.5 w-3.5" />
+
+          <span>
+            {formatRelativeTime(
+              activity.createdAt
+            )}
+          </span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/*
+|--------------------------------------------------------------------------
+| Main Activity Feed
+|--------------------------------------------------------------------------
+*/
 
 const ActivityFeed = () => {
+  const [activities, setActivities] =
+    useState([]);
+
+  const [total, setTotal] = useState(0);
+
+  const [loading, setLoading] =
+    useState(true);
+
+  const [error, setError] =
+    useState("");
+
+  const [showAll, setShowAll] =
+    useState(false);
+
+  const [
+    allActivities,
+    setAllActivities,
+  ] = useState([]);
+
+  const [
+    modalLoading,
+    setModalLoading,
+  ] = useState(false);
+
+  const [
+    modalError,
+    setModalError,
+  ] = useState("");
+
+  /*
+  |--------------------------------------------------------------------------
+  | تازہ 6 Activities
+  |--------------------------------------------------------------------------
+  */
+
+  useEffect(() => {
+    const controller =
+      new AbortController();
+
+    const loadActivityFeed =
+      async () => {
+        try {
+          setLoading(true);
+          setError("");
+
+          const response = await fetch(
+            "/api/dashboard/activity-feed?limit=6",
+            {
+              signal:
+                controller.signal,
+            }
+          );
+
+          const result =
+            await response.json();
+
+          if (
+            !response.ok ||
+            !result.success
+          ) {
+            throw new Error(
+              result.message ||
+                "Activity feed could not be loaded."
+            );
+          }
+
+          setActivities(
+            Array.isArray(result.data)
+              ? result.data
+              : []
+          );
+
+          setTotal(
+            Number(result.total || 0)
+          );
+        } catch (error) {
+          if (
+            error.name !== "AbortError"
+          ) {
+            console.error(
+              "Activity feed load error:",
+              error
+            );
+
+            setError(
+              error.message ||
+                "Activity feed could not be loaded."
+            );
+
+            setActivities([]);
+            setTotal(0);
+          }
+        } finally {
+          if (
+            !controller.signal.aborted
+          ) {
+            setLoading(false);
+          }
+        }
+      };
+
+    loadActivityFeed();
+
+    return () => {
+      controller.abort();
+    };
+  }, []);
+
+  /*
+  |--------------------------------------------------------------------------
+  | View All Activities
+  |--------------------------------------------------------------------------
+  */
+
+  const openAllActivities = async () => {
+    setShowAll(true);
+    setModalError("");
+
+    if (allActivities.length > 0) {
+      return;
+    }
+
+    try {
+      setModalLoading(true);
+
+      const response = await fetch(
+        "/api/dashboard/activity-feed?limit=200"
+      );
+
+      const result =
+        await response.json();
+
+      if (
+        !response.ok ||
+        !result.success
+      ) {
+        throw new Error(
+          result.message ||
+            "All activities could not be loaded."
+        );
+      }
+
+      setAllActivities(
+        Array.isArray(result.data)
+          ? result.data
+          : []
+      );
+
+      setTotal(
+        Number(result.total || 0)
+      );
+    } catch (error) {
+      console.error(
+        "All activities load error:",
+        error
+      );
+
+      setModalError(
+        error.message ||
+          "All activities could not be loaded."
+      );
+    } finally {
+      setModalLoading(false);
+    }
+  };
+
+  const closeModal = () => {
+    setShowAll(false);
+    setModalError("");
+  };
+
   return (
-    <div className="bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl rounded-2xl border border-slate-200/50 dark:border-slate-700/50 overflow-hidden shadow-sm">
-      {/* Header */}
-      <div className="p-6 border-b border-slate-200/50 dark:border-slate-700/50">
-        <div className="flex items-center justify-between">
-          <div>
-            <h3 className="text-lg font-bold text-slate-800 dark:text-white">Activity Feed</h3>
-            <p className="text-sm text-slate-500 dark:text-slate-400">Recent System Activities</p>
+    <>
+      <div className="overflow-hidden rounded-2xl border border-slate-200/50 bg-white/80 shadow-sm backdrop-blur-xl dark:border-slate-700/50 dark:bg-slate-900/80">
+        {/* Header */}
+        <div className="border-b border-slate-200/50 p-6 dark:border-slate-700/50">
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <h3 className="text-lg font-bold text-slate-800 dark:text-white">
+                Activity Feed
+              </h3>
+
+              <p className="text-sm text-slate-500 dark:text-slate-400">
+                Recent system activities
+              </p>
+            </div>
+
+            <button
+              type="button"
+              onClick={openAllActivities}
+              className="flex-shrink-0 text-sm font-medium text-blue-600 transition hover:text-blue-700"
+            >
+              View All
+              {total > 0
+                ? ` (${total})`
+                : ""}
+            </button>
           </div>
-          <button className="text-blue-600 hover:text-blue-700 text-sm font-medium">View All</button>
+        </div>
+
+        {/* Error */}
+        {error && (
+          <div className="m-5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">
+            {error}
+          </div>
+        )}
+
+        {/* List */}
+        <div className="space-y-6 p-6">
+          {loading ? (
+            <div className="py-8 text-center text-sm text-slate-500">
+              Loading activities...
+            </div>
+          ) : activities.length === 0 ? (
+            <div className="py-8 text-center text-sm text-slate-500">
+              No activities found.
+            </div>
+          ) : (
+            activities.map(
+              (activity) => (
+                <ActivityItem
+                  key={activity.id}
+                  activity={activity}
+                />
+              )
+            )
+          )}
         </div>
       </div>
 
-      {/* List */}
-      <div className="p-6 space-y-6">
-        {activities.map((activity) => {
-          const Icon = activity.icon;
-          return (
-            <div key={activity.id} className="flex items-start space-x-4">
-              {/* Icon Container */}
-              <div className={`flex-shrink-0 w-10 h-10 rounded-xl flex items-center justify-center ${activity.bgColor}`}>
-                <Icon className={`w-5 h-5 ${activity.color}`} />
+      {/* View All Modal */}
+      {showAll && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          onClick={closeModal}
+        >
+          <div
+            className="max-h-[90vh] w-full max-w-3xl overflow-hidden rounded-2xl bg-white shadow-2xl dark:bg-slate-900"
+            onClick={(event) =>
+              event.stopPropagation()
+            }
+          >
+            {/* Modal Header */}
+            <div className="flex items-center justify-between border-b border-slate-200 px-6 py-4 dark:border-slate-700">
+              <div>
+                <h3 className="text-xl font-bold text-slate-800 dark:text-white">
+                  All Activities
+                </h3>
+
+                <p className="text-sm text-slate-500 dark:text-slate-400">
+                  {total > 200
+                    ? `Showing latest 200 of ${total} activities`
+                    : `${total} activities`}
+                </p>
               </div>
 
-              {/* Content */}
-              <div className="flex-1 min-w-0">
-                <h4 className="text-sm font-bold text-slate-800 dark:text-white">
-                  {activity.title}
-                </h4>
-                <p className="text-sm text-slate-500 dark:text-slate-400 mt-0.5">
-                  {activity.description}
-                </p>
-                
-                {/* Time with Clock Icon */}
-                <div className="flex items-center mt-1 text-xs text-slate-400 dark:text-slate-500">
-                  <Clock className="w-3.5 h-3.5 mr-1" />
-                  <span>{activity.time}</span>
-                </div>
-              </div>
+              <button
+                type="button"
+                onClick={closeModal}
+                className="flex h-9 w-9 items-center justify-center rounded-full text-slate-500 transition hover:bg-slate-100 dark:hover:bg-slate-800"
+                aria-label="Close"
+              >
+                <X className="h-5 w-5" />
+              </button>
             </div>
-          );
-        })}
-      </div>
-    </div>
+
+            {/* Modal Content */}
+            <div className="max-h-[75vh] overflow-y-auto p-6">
+              {modalLoading ? (
+                <div className="py-16 text-center text-sm text-slate-500">
+                  Loading all activities...
+                </div>
+              ) : modalError ? (
+                <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">
+                  {modalError}
+                </div>
+              ) : allActivities.length ===
+                0 ? (
+                <div className="py-16 text-center text-sm text-slate-500">
+                  No activities found.
+                </div>
+              ) : (
+                <div className="space-y-6">
+                  {allActivities.map(
+                    (activity) => (
+                      <ActivityItem
+                        key={
+                          activity.id
+                        }
+                        activity={
+                          activity
+                        }
+                      />
+                    )
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   );
 };
 
