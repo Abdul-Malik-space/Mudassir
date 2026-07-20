@@ -1,42 +1,21 @@
 const mongoose = require("mongoose");
 
-const COMPANY_PROFILES = {
-  topical: {
-    key: "topical",
-    name: "TOPICAL PACKAGING PVT. LTD.",
-    shortName: "Topical Packaging",
-    templateType: "detailed",
-    codePrefix: "TP-DC",
-    address: "21-Km, Ferozepur Road, Lahore, Pakistan",
-    phone: "+92 321 9970676",
-  },
-  alKaram: {
-    key: "alKaram",
-    name: "AL-KARAM TRADERS",
-    shortName: "Al-Karam Traders",
-    templateType: "compact",
-    codePrefix: "AK-DC",
-    address: "Office #17, 3rd Floor, Gohar Centre, Wahdat Road, Lahore",
-    phone: "0423 5912858 | 0333 8295065",
-  },
+const FINISHED_GOODS_GODOWN = "Finished Goods Godown";
+
+const todayDate = () =>
+  new Date().toISOString().slice(0, 10);
+
+const cleanText = (value, fallback = "") => {
+  const text = String(value ?? "").trim();
+  return text || fallback;
 };
-
-const normalizeProfileKey = (value) => {
-  const normalized = String(value || "")
-    .trim()
-    .toLowerCase()
-    .replace(/[\s_-]/g, "");
-
-  if (normalized === "alkaram") return "alKaram";
-  return "topical";
-};
-
-const cleanText = (value, fallback = "") =>
-  String(value ?? fallback).trim();
 
 const cleanNumber = (value) => {
-  const parsed = Number(value || 0);
-  return Number.isFinite(parsed) ? Math.max(parsed, 0) : 0;
+  const number = Number(value);
+
+  return Number.isFinite(number)
+    ? Math.max(number, 0)
+    : 0;
 };
 
 const deliveryChallanItemSchema = new mongoose.Schema(
@@ -44,18 +23,38 @@ const deliveryChallanItemSchema = new mongoose.Schema(
     item: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Item",
-      default: null,
+      required: [true, "Finished good item is required"],
+      index: true,
     },
 
     salesOrderItemId: {
       type: mongoose.Schema.Types.ObjectId,
+      required: [true, "Sales order item reference is required"],
+    },
+
+    warehouseId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Warehouse",
       default: null,
     },
 
     warehouse: {
       type: String,
       trim: true,
-      default: "Main Godown",
+      default: FINISHED_GOODS_GODOWN,
+    },
+
+    itemCode: {
+      type: String,
+      trim: true,
+      uppercase: true,
+      default: "",
+    },
+
+    itemName: {
+      type: String,
+      trim: true,
+      default: "",
     },
 
     description: {
@@ -70,147 +69,114 @@ const deliveryChallanItemSchema = new mongoose.Schema(
       default: "",
     },
 
-    textType: {
-      type: String,
-      enum: ["", "with-text", "without-text"],
-      default: "",
-    },
-
     orderedQty: {
       type: Number,
       default: 0,
-      min: 0,
+      min: [0, "Ordered quantity cannot be negative"],
     },
 
     alreadyDeliveredQty: {
       type: Number,
       default: 0,
-      min: 0,
+      min: [0, "Previously delivered quantity cannot be negative"],
     },
 
     pendingQty: {
       type: Number,
       default: 0,
-      min: 0,
+      min: [0, "Pending quantity cannot be negative"],
+    },
+
+    availableStock: {
+      type: Number,
+      default: 0,
+      min: [0, "Available stock cannot be negative"],
     },
 
     cartons: {
       type: Number,
       default: 0,
-      min: 0,
-    },
-
-    rolls: {
-      type: Number,
-      default: 0,
-      min: 0,
+      min: [0, "Cartons cannot be negative"],
     },
 
     quantity: {
       type: Number,
       required: [true, "Delivery quantity is required"],
-      min: 0,
+      min: [
+        0.000001,
+        "Delivery quantity must be greater than zero",
+      ],
     },
 
     unit: {
       type: String,
       trim: true,
-      default: "Rolls",
+      default: "Pcs",
     },
 
     grossWeight: {
       type: Number,
       default: 0,
-      min: 0,
+      min: [0, "Gross weight cannot be negative"],
     },
 
     netWeight: {
       type: Number,
       default: 0,
-      min: 0,
+      min: [0, "Net weight cannot be negative"],
     },
 
     unitPrice: {
       type: Number,
       default: 0,
-      min: 0,
+      min: [0, "Unit price cannot be negative"],
     },
 
     amount: {
       type: Number,
       default: 0,
-      min: 0,
+      min: [0, "Amount cannot be negative"],
     },
 
     remarks: {
       type: String,
       trim: true,
       default: "",
+      maxlength: [
+        1000,
+        "Item remarks cannot exceed 1000 characters",
+      ],
     },
   },
-  { _id: true }
+  {
+    _id: true,
+    versionKey: false,
+  }
 );
 
 const deliveryChallanSchema = new mongoose.Schema(
   {
-    companyProfile: {
-      type: String,
-      enum: ["topical", "alKaram"],
-      required: true,
-      default: "topical",
-      index: true,
-    },
-
-    companyName: {
-      type: String,
-      trim: true,
-      required: true,
-    },
-
-    companyShortName: {
-      type: String,
-      trim: true,
-      default: "",
-    },
-
-    templateType: {
-      type: String,
-      enum: ["detailed", "compact"],
-      required: true,
-    },
-
-    companyAddress: {
-      type: String,
-      trim: true,
-      default: "",
-    },
-
-    companyPhone: {
-      type: String,
-      trim: true,
-      default: "",
-    },
-
     challanNo: {
       type: String,
-      required: true,
+      required: [true, "Delivery challan number is required"],
       unique: true,
       trim: true,
       uppercase: true,
-      index: true,
     },
 
     salesOrder: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "SalesOrder",
-      required: [true, "Sales Order is required"],
+      required: [true, "Sales order is required"],
       index: true,
     },
 
     salesOrderNo: {
       type: String,
-      required: true,
+      required: [true, "Sales order number is required"],
       trim: true,
+      uppercase: true,
+      index: true,
     },
 
     customer: {
@@ -222,7 +188,7 @@ const deliveryChallanSchema = new mongoose.Schema(
 
     customerName: {
       type: String,
-      required: true,
+      required: [true, "Customer name is required"],
       trim: true,
     },
 
@@ -235,16 +201,11 @@ const deliveryChallanSchema = new mongoose.Schema(
     customerEmail: {
       type: String,
       trim: true,
+      lowercase: true,
       default: "",
     },
 
     customerAddress: {
-      type: String,
-      trim: true,
-      default: "",
-    },
-
-    customerCity: {
       type: String,
       trim: true,
       default: "",
@@ -256,13 +217,13 @@ const deliveryChallanSchema = new mongoose.Schema(
       default: "",
     },
 
-    contactPhone: {
+    attentionTo: {
       type: String,
       trim: true,
       default: "",
     },
 
-    attentionTo: {
+    poNo: {
       type: String,
       trim: true,
       default: "",
@@ -277,6 +238,16 @@ const deliveryChallanSchema = new mongoose.Schema(
     challanDate: {
       type: String,
       required: [true, "Challan date is required"],
+      default: todayDate,
+
+      validate: {
+        validator(value) {
+          return /^\d{4}-\d{2}-\d{2}$/.test(value);
+        },
+
+        message: "Challan date format must be YYYY-MM-DD",
+      },
+
       index: true,
     },
 
@@ -292,15 +263,10 @@ const deliveryChallanSchema = new mongoose.Schema(
       default: "",
     },
 
-    poNo: {
-      type: String,
-      trim: true,
-      default: "",
-    },
-
     vehicleNo: {
       type: String,
       trim: true,
+      uppercase: true,
       default: "",
     },
 
@@ -328,12 +294,6 @@ const deliveryChallanSchema = new mongoose.Schema(
       default: "",
     },
 
-    deliveredBy: {
-      type: String,
-      trim: true,
-      default: "",
-    },
-
     receivedBy: {
       type: String,
       trim: true,
@@ -346,29 +306,33 @@ const deliveryChallanSchema = new mongoose.Schema(
       default: "",
     },
 
+    warehouseId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Warehouse",
+      default: null,
+      index: true,
+    },
+
     warehouse: {
       type: String,
       trim: true,
-      default: "Main Godown",
+      default: FINISHED_GOODS_GODOWN,
+      index: true,
     },
 
     items: {
       type: [deliveryChallanItemSchema],
+
       validate: {
         validator(items) {
           return Array.isArray(items) && items.length > 0;
         },
+
         message: "At least one delivery item is required",
       },
     },
 
     totalCartons: {
-      type: Number,
-      default: 0,
-      min: 0,
-    },
-
-    totalRolls: {
       type: Number,
       default: 0,
       min: 0,
@@ -400,145 +364,336 @@ const deliveryChallanSchema = new mongoose.Schema(
 
     status: {
       type: String,
-      enum: ["Draft", "Dispatched", "Received", "Cancelled"],
+      enum: [
+        "Draft",
+        "Dispatched",
+        "Received",
+        "Cancelled",
+      ],
       default: "Draft",
       index: true,
     },
 
     invoiceStatus: {
       type: String,
-      enum: ["Not Invoiced", "Invoiced"],
+      enum: [
+        "Not Invoiced",
+        "Invoiced",
+      ],
       default: "Not Invoiced",
       index: true,
+    },
+
+    stockPosted: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+
+    stockPostedAt: {
+      type: Date,
+      default: null,
+    },
+
+    reversalPosted: {
+      type: Boolean,
+      default: false,
+    },
+
+    cancelledAt: {
+      type: Date,
+      default: null,
+    },
+
+    cancelReason: {
+      type: String,
+      trim: true,
+      default: "",
+      maxlength: [
+        1000,
+        "Cancel reason cannot exceed 1000 characters",
+      ],
     },
 
     remarks: {
       type: String,
       trim: true,
       default: "",
+      maxlength: [
+        2000,
+        "Remarks cannot exceed 2000 characters",
+      ],
     },
   },
-  { timestamps: true }
+  {
+    timestamps: true,
+    versionKey: false,
+
+    toJSON: {
+      virtuals: true,
+    },
+
+    toObject: {
+      virtuals: true,
+    },
+  }
 );
 
-const normalizeItemsAndTotals = (target) => {
-  const warehouse = cleanText(target.warehouse, "Main Godown") || "Main Godown";
-  target.warehouse = warehouse;
-
-  const items = Array.isArray(target.items) ? target.items : [];
-
-  target.items = items.map((item) => {
-    const quantity = cleanNumber(item.quantity);
-    const unitPrice = cleanNumber(item.unitPrice);
-    const grossWeight = cleanNumber(item.grossWeight);
-    const netWeight = cleanNumber(item.netWeight);
-
-    if (grossWeight > 0 && netWeight > grossWeight) {
-      throw new Error(
-        `Net weight cannot exceed gross weight for item "${cleanText(
-          item.description,
-          "Unnamed item"
-        )}"`
-      );
-    }
-
-    item.warehouse = cleanText(item.warehouse, warehouse) || warehouse;
-    item.description = cleanText(item.description);
-    item.size = cleanText(item.size);
-    item.textType = ["", "with-text", "without-text"].includes(item.textType)
-      ? item.textType
-      : "";
-
-    item.orderedQty = cleanNumber(item.orderedQty);
-    item.alreadyDeliveredQty = cleanNumber(item.alreadyDeliveredQty);
-    item.pendingQty = cleanNumber(item.pendingQty);
-    item.cartons = cleanNumber(item.cartons);
-    item.rolls = cleanNumber(item.rolls);
-    item.quantity = quantity;
-    item.unit = cleanText(item.unit, "Rolls") || "Rolls";
-    item.grossWeight = grossWeight;
-    item.netWeight = netWeight;
-    item.unitPrice = unitPrice;
-    item.amount = quantity * unitPrice;
-    item.remarks = cleanText(item.remarks);
-
-    return item;
-  });
-
-  target.totalCartons = target.items.reduce(
-    (sum, item) => sum + cleanNumber(item.cartons),
-    0
-  );
-  target.totalRolls = target.items.reduce(
-    (sum, item) => sum + cleanNumber(item.rolls),
-    0
-  );
-  target.totalQuantity = target.items.reduce(
-    (sum, item) => sum + cleanNumber(item.quantity),
-    0
-  );
-  target.totalGrossWeight = target.items.reduce(
-    (sum, item) => sum + cleanNumber(item.grossWeight),
-    0
-  );
-  target.totalNetWeight = target.items.reduce(
-    (sum, item) => sum + cleanNumber(item.netWeight),
-    0
-  );
-  target.subtotal = target.items.reduce(
-    (sum, item) => sum + cleanNumber(item.amount),
-    0
-  );
-};
-
-const normalizeDocumentFields = (target) => {
-  const profileKey = normalizeProfileKey(target.companyProfile);
-  const profile = COMPANY_PROFILES[profileKey];
-
-  target.companyProfile = profile.key;
-  target.companyName = profile.name;
-  target.companyShortName = profile.shortName;
-  target.templateType = profile.templateType;
-  target.companyAddress = profile.address;
-  target.companyPhone = profile.phone;
-
-  target.challanNo = cleanText(target.challanNo).toUpperCase();
-  target.salesOrderNo = cleanText(target.salesOrderNo);
-  target.customerName = cleanText(target.customerName);
-
-  target.deliveryAddress = cleanText(
-    target.deliveryAddress || target.customerAddress
-  );
-  target.customerAddress = target.deliveryAddress;
-
-  target.contactPhone = cleanText(target.contactPhone || target.customerPhone);
-  target.customerPhone = target.contactPhone;
-
-  target.attentionTo = cleanText(target.attentionTo);
-  target.referenceNo = cleanText(target.referenceNo);
-  target.challanDate = cleanText(target.challanDate);
-  target.dispatchDate = cleanText(target.dispatchDate || target.challanDate);
-  target.receivedDate = cleanText(target.receivedDate);
-  target.poNo = cleanText(target.poNo);
-  target.vehicleNo = cleanText(target.vehicleNo);
-  target.driverName = cleanText(target.driverName);
-  target.driverPhone = cleanText(target.driverPhone);
-  target.preparedBy = cleanText(target.preparedBy);
-  target.dispatchedBy = cleanText(target.dispatchedBy || target.deliveredBy);
-  target.deliveredBy = target.dispatchedBy;
-  target.receivedBy = cleanText(target.receivedBy);
-  target.receiverDesignation = cleanText(target.receiverDesignation);
-  target.remarks = cleanText(target.remarks);
-
-  normalizeItemsAndTotals(target);
-};
-
-deliveryChallanSchema.pre("validate", function preValidate() {
-  normalizeDocumentFields(this);
+deliveryChallanSchema.index({
+  salesOrder: 1,
+  status: 1,
 });
 
-deliveryChallanSchema.index({ companyProfile: 1, createdAt: -1 });
-deliveryChallanSchema.index({ salesOrder: 1, status: 1 });
-deliveryChallanSchema.index({ customer: 1, challanDate: -1 });
+deliveryChallanSchema.index({
+  customer: 1,
+  challanDate: -1,
+});
 
-module.exports = mongoose.model("DeliveryChallan", deliveryChallanSchema);
+deliveryChallanSchema.index({
+  "items.item": 1,
+  status: 1,
+});
+
+deliveryChallanSchema.pre("validate", function () {
+  this.challanNo = cleanText(
+    this.challanNo
+  ).toUpperCase();
+
+  this.salesOrderNo = cleanText(
+    this.salesOrderNo
+  ).toUpperCase();
+
+  this.customerName = cleanText(
+    this.customerName
+  );
+
+  this.customerPhone = cleanText(
+    this.customerPhone
+  );
+
+  this.customerEmail = cleanText(
+    this.customerEmail
+  ).toLowerCase();
+
+  this.customerAddress = cleanText(
+    this.customerAddress
+  );
+
+  this.deliveryAddress = cleanText(
+    this.deliveryAddress,
+    this.customerAddress
+  );
+
+  this.attentionTo = cleanText(
+    this.attentionTo
+  );
+
+  this.poNo = cleanText(
+    this.poNo
+  );
+
+  this.referenceNo = cleanText(
+    this.referenceNo
+  );
+
+  this.challanDate = cleanText(
+    this.challanDate,
+    todayDate()
+  );
+
+  this.dispatchDate = cleanText(
+    this.dispatchDate
+  );
+
+  this.receivedDate = cleanText(
+    this.receivedDate
+  );
+
+  this.vehicleNo = cleanText(
+    this.vehicleNo
+  ).toUpperCase();
+
+  this.driverName = cleanText(
+    this.driverName
+  );
+
+  this.driverPhone = cleanText(
+    this.driverPhone
+  );
+
+  this.preparedBy = cleanText(
+    this.preparedBy
+  );
+
+  this.dispatchedBy = cleanText(
+    this.dispatchedBy
+  );
+
+  this.receivedBy = cleanText(
+    this.receivedBy
+  );
+
+  this.receiverDesignation = cleanText(
+    this.receiverDesignation
+  );
+
+  this.warehouse =
+    FINISHED_GOODS_GODOWN;
+
+  this.cancelReason = cleanText(
+    this.cancelReason
+  );
+
+  this.remarks = cleanText(
+    this.remarks
+  );
+
+  const items = Array.isArray(
+    this.items
+  )
+    ? this.items
+    : [];
+
+  this.items = items.map(
+    (item) => {
+      item.warehouse =
+        FINISHED_GOODS_GODOWN;
+
+      item.itemCode = cleanText(
+        item.itemCode
+      ).toUpperCase();
+
+      item.itemName = cleanText(
+        item.itemName
+      );
+
+      item.description = cleanText(
+        item.description,
+        item.itemName
+      );
+
+      item.size = cleanText(
+        item.size
+      );
+
+      item.orderedQty = cleanNumber(
+        item.orderedQty
+      );
+
+      item.alreadyDeliveredQty =
+        cleanNumber(
+          item.alreadyDeliveredQty
+        );
+
+      item.pendingQty = cleanNumber(
+        item.pendingQty
+      );
+
+      item.availableStock =
+        cleanNumber(
+          item.availableStock
+        );
+
+      item.cartons = cleanNumber(
+        item.cartons
+      );
+
+      item.quantity = cleanNumber(
+        item.quantity
+      );
+
+      item.unit = cleanText(
+        item.unit,
+        "Pcs"
+      );
+
+      item.grossWeight = cleanNumber(
+        item.grossWeight
+      );
+
+      item.netWeight = cleanNumber(
+        item.netWeight
+      );
+
+      item.unitPrice = cleanNumber(
+        item.unitPrice
+      );
+
+      item.amount =
+        item.quantity *
+        item.unitPrice;
+
+      item.remarks = cleanText(
+        item.remarks
+      );
+
+      if (
+        item.netWeight >
+          item.grossWeight &&
+        item.grossWeight > 0
+      ) {
+        this.invalidate(
+          "items",
+          `Net weight cannot exceed gross weight for ${item.description}`
+        );
+      }
+
+      return item;
+    }
+  );
+
+  this.totalCartons =
+    this.items.reduce(
+      (sum, item) =>
+        sum +
+        cleanNumber(
+          item.cartons
+        ),
+      0
+    );
+
+  this.totalQuantity =
+    this.items.reduce(
+      (sum, item) =>
+        sum +
+        cleanNumber(
+          item.quantity
+        ),
+      0
+    );
+
+  this.totalGrossWeight =
+    this.items.reduce(
+      (sum, item) =>
+        sum +
+        cleanNumber(
+          item.grossWeight
+        ),
+      0
+    );
+
+  this.totalNetWeight =
+    this.items.reduce(
+      (sum, item) =>
+        sum +
+        cleanNumber(
+          item.netWeight
+        ),
+      0
+    );
+
+  this.subtotal =
+    this.items.reduce(
+      (sum, item) =>
+        sum +
+        cleanNumber(
+          item.amount
+        ),
+      0
+    );
+});
+
+module.exports = mongoose.model(
+  "DeliveryChallan",
+  deliveryChallanSchema
+);

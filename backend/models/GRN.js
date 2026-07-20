@@ -1,246 +1,807 @@
 const mongoose = require("mongoose");
 
-const grnItemSchema = new mongoose.Schema(
-  {
-    item: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "Item",
-      default: null,
-    },
+const GRN_STATUSES = [
+  "Draft",
+  "Received",
+  "Partially Received",
+  "Completed",
+  "Posted",
+  "Cancelled",
+];
 
-    description: {
-      type: String,
-      required: [true, "Item description is required"],
-      trim: true,
-    },
+const INSPECTION_STATUSES = [
+  "Pending",
+  "Passed",
+  "Partially Accepted",
+  "Rejected",
+];
 
-    size: {
-      type: String,
-      trim: true,
-      default: "",
-    },
+const PURCHASE_STATUSES = [
+  "Not Purchased",
+  "Purchased",
+];
 
-    orderedQty: {
-      type: Number,
-      default: 0,
-      min: 0,
-    },
+const todayDate = () =>
+  new Date().toISOString().slice(0, 10);
 
-    receivedQty: {
-      type: Number,
-      required: [true, "Received quantity is required"],
-      min: 0,
-    },
+const normalizeText = (
+  value,
+  fallback = ""
+) => {
+  const cleanedValue = String(
+    value || ""
+  ).trim();
 
-    rejectedQty: {
-      type: Number,
-      default: 0,
-      min: 0,
-    },
+  return cleanedValue || fallback;
+};
 
-    acceptedQty: {
-      type: Number,
-      default: 0,
-      min: 0,
-    },
+const normalizeNumber = (
+  value,
+  fallback = 0
+) => {
+  const number = Number(value);
 
-    pendingQty: {
-      type: Number,
-      default: 0,
-      min: 0,
-    },
+  return Number.isFinite(number)
+    ? number
+    : fallback;
+};
 
-    unit: {
-      type: String,
-      trim: true,
-      default: "Pcs",
-    },
+const normalizeStatus = (value) => {
+  const status = normalizeText(
+    value,
+    "Draft"
+  );
 
-    unitPrice: {
-      type: Number,
-      default: 0,
-      min: 0,
-    },
+  if (status === "Partial") {
+    return "Partially Received";
+  }
 
-    amount: {
-      type: Number,
-      default: 0,
-      min: 0,
-    },
+  if (status === "Complete") {
+    return "Completed";
+  }
 
-    remarks: {
-      type: String,
-      trim: true,
-      default: "",
-    },
-  },
-  { _id: false }
-);
+  return status;
+};
 
-const grnSchema = new mongoose.Schema(
-  {
-    grnNo: {
-      type: String,
-      required: true,
-      unique: true,
-      trim: true,
-      uppercase: true,
-    },
+const normalizeInspectionStatus = (
+  value
+) => {
+  const status = normalizeText(
+    value,
+    "Pending"
+  );
 
-    purchaseOrder: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "PurchaseOrder",
-      required: [true, "Purchase Order is required"],
-    },
+  if (status === "Partial") {
+    return "Partially Accepted";
+  }
 
-    purchaseOrderNo: {
-      type: String,
-      required: true,
-      trim: true,
-    },
+  if (status === "Failed") {
+    return "Rejected";
+  }
 
-    vendor: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "Vendor",
-      required: [true, "Vendor is required"],
-    },
+  return status;
+};
 
-    vendorName: {
-      type: String,
-      required: true,
-      trim: true,
-    },
+/*
+|--------------------------------------------------------------------------
+| GRN Item Schema
+|--------------------------------------------------------------------------
+*/
 
-    vendorPhone: {
-      type: String,
-      trim: true,
-      default: "",
-    },
+const grnItemSchema =
+  new mongoose.Schema(
+    {
+      /*
+       * Purchase Order کے embedded item کی ID۔
+       * اس سے معلوم ہوگا کہ GRN کی یہ line
+       * Purchase Order کی کس line سے متعلق ہے۔
+       */
+      purchaseOrderItemId: {
+        type: mongoose.Schema.Types.ObjectId,
+        default: null,
+      },
 
-    vendorEmail: {
-      type: String,
-      trim: true,
-      default: "",
-    },
+      /*
+       * اصل Item Master link۔
+       * Stock Ledger اسی ObjectId کے ذریعے بنے گا۔
+       */
+      item: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "Item",
+        default: null,
+      },
 
-    vendorAddress: {
-      type: String,
-      trim: true,
-      default: "",
-    },
+      description: {
+        type: String,
+        required: [
+          true,
+          "Item description is required",
+        ],
+        trim: true,
+        maxlength: [
+          250,
+          "Item description cannot exceed 250 characters",
+        ],
+      },
 
-    receivedDate: {
-      type: String,
-      required: [true, "Received date is required"],
-    },
+      size: {
+        type: String,
+        trim: true,
+        default: "",
+        maxlength: [
+          100,
+          "Item size cannot exceed 100 characters",
+        ],
+      },
 
-    challanNo: {
-      type: String,
-      trim: true,
-      default: "",
-    },
+      orderedQty: {
+        type: Number,
+        default: 0,
+        min: [
+          0,
+          "Ordered quantity cannot be negative",
+        ],
+      },
 
-    invoiceNo: {
-      type: String,
-      trim: true,
-      default: "",
-    },
+      /*
+       * پہلے بنے ہوئے GRNs میں accepted quantity۔
+       */
+      previousReceivedQty: {
+        type: Number,
+        default: 0,
+        min: [
+          0,
+          "Previous received quantity cannot be negative",
+        ],
+      },
 
-    vehicleNo: {
-      type: String,
-      trim: true,
-      default: "",
-    },
+      receivedQty: {
+        type: Number,
+        required: [
+          true,
+          "Received quantity is required",
+        ],
+        min: [
+          0,
+          "Received quantity cannot be negative",
+        ],
+      },
 
-    warehouse: {
-      type: String,
-      trim: true,
-      default: "Main Warehouse",
-    },
+      rejectedQty: {
+        type: Number,
+        default: 0,
+        min: [
+          0,
+          "Rejected quantity cannot be negative",
+        ],
+      },
 
-    receivedBy: {
-      type: String,
-      trim: true,
-      default: "",
-    },
+      acceptedQty: {
+        type: Number,
+        default: 0,
+        min: [
+          0,
+          "Accepted quantity cannot be negative",
+        ],
+      },
 
-    checkedBy: {
-      type: String,
-      trim: true,
-      default: "",
-    },
+      pendingQty: {
+        type: Number,
+        default: 0,
+        min: [
+          0,
+          "Pending quantity cannot be negative",
+        ],
+      },
 
-    inspectionStatus: {
-      type: String,
-      enum: ["Pending", "Passed", "Failed", "Partial"],
-      default: "Pending",
-    },
+      unit: {
+        type: String,
+        trim: true,
+        default: "Pcs",
+        maxlength: [
+          30,
+          "Item unit cannot exceed 30 characters",
+        ],
+      },
 
-    status: {
-      type: String,
-      enum: ["Draft", "Received", "Posted", "Cancelled"],
-      default: "Received",
-    },
+      unitPrice: {
+        type: Number,
+        default: 0,
+        min: [
+          0,
+          "Unit price cannot be negative",
+        ],
+      },
 
-    purchaseStatus: {
-      type: String,
-      enum: ["Not Purchased", "Purchased"],
-      default: "Not Purchased",
-    },
+      amount: {
+        type: Number,
+        default: 0,
+        min: [
+          0,
+          "Amount cannot be negative",
+        ],
+      },
 
-    items: {
-      type: [grnItemSchema],
-      validate: {
-        validator: function (items) {
-          return items && items.length > 0;
-        },
-        message: "At least one GRN item is required",
+      remarks: {
+        type: String,
+        trim: true,
+        default: "",
+        maxlength: [
+          500,
+          "Item remarks cannot exceed 500 characters",
+        ],
       },
     },
+    {
+      /*
+       * ہر GRN line کی اپنی _id ضروری ہے۔
+       * یہی Stock Ledger referenceLineId میں استعمال ہوگی۔
+       */
+      _id: true,
+      id: false,
+    }
+  );
 
-    totalOrderedQty: {
-      type: Number,
-      default: 0,
-      min: 0,
-    },
+/*
+ * Mongoose 9 synchronous middleware:
+ * یہاں next() استعمال نہیں ہوگا۔
+ */
+grnItemSchema.pre(
+  "validate",
+  function () {
+    this.description = normalizeText(
+      this.description
+    );
 
-    totalReceivedQty: {
-      type: Number,
-      default: 0,
-      min: 0,
-    },
+    this.size = normalizeText(
+      this.size
+    );
 
-    totalRejectedQty: {
-      type: Number,
-      default: 0,
-      min: 0,
-    },
+    this.unit = normalizeText(
+      this.unit,
+      "Pcs"
+    );
 
-    totalAcceptedQty: {
-      type: Number,
-      default: 0,
-      min: 0,
-    },
+    this.remarks = normalizeText(
+      this.remarks
+    );
 
-    totalPendingQty: {
-      type: Number,
-      default: 0,
-      min: 0,
-    },
+    this.orderedQty = normalizeNumber(
+      this.orderedQty
+    );
 
-    subtotal: {
-      type: Number,
-      default: 0,
-      min: 0,
-    },
+    this.previousReceivedQty =
+      normalizeNumber(
+        this.previousReceivedQty
+      );
 
-    remarks: {
-      type: String,
-      trim: true,
-      default: "",
-    },
-  },
-  { timestamps: true }
+    this.receivedQty = normalizeNumber(
+      this.receivedQty
+    );
+
+    this.rejectedQty = normalizeNumber(
+      this.rejectedQty
+    );
+
+    this.unitPrice = normalizeNumber(
+      this.unitPrice
+    );
+
+    if (
+      this.rejectedQty >
+      this.receivedQty
+    ) {
+      this.invalidate(
+        "rejectedQty",
+        "Rejected quantity received quantity se zyada nahi ho sakti"
+      );
+    }
+
+    this.acceptedQty = Math.max(
+      this.receivedQty -
+        this.rejectedQty,
+      0
+    );
+
+    const totalPreviouslyAccepted =
+      this.previousReceivedQty +
+      this.acceptedQty;
+
+    this.pendingQty = Math.max(
+      this.orderedQty -
+        totalPreviouslyAccepted,
+      0
+    );
+
+    this.amount =
+      this.acceptedQty *
+      this.unitPrice;
+  }
 );
 
-module.exports = mongoose.model("GRN", grnSchema);
+/*
+|--------------------------------------------------------------------------
+| Main GRN Schema
+|--------------------------------------------------------------------------
+*/
+
+const grnSchema =
+  new mongoose.Schema(
+    {
+      grnNo: {
+        type: String,
+        required: [
+          true,
+          "GRN number is required",
+        ],
+        unique: true,
+        trim: true,
+        uppercase: true,
+        maxlength: [
+          50,
+          "GRN number cannot exceed 50 characters",
+        ],
+      },
+
+      purchaseOrder: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "PurchaseOrder",
+        required: [
+          true,
+          "Purchase Order is required",
+        ],
+        index: true,
+      },
+
+      purchaseOrderNo: {
+        type: String,
+        required: [
+          true,
+          "Purchase Order number is required",
+        ],
+        trim: true,
+        uppercase: true,
+      },
+
+      vendor: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "Vendor",
+        required: [
+          true,
+          "Vendor is required",
+        ],
+        index: true,
+      },
+
+      /*
+       * Vendor snapshots محفوظ رکھے جائیں گے۔
+       */
+      vendorName: {
+        type: String,
+        required: [
+          true,
+          "Vendor name is required",
+        ],
+        trim: true,
+      },
+
+      vendorPhone: {
+        type: String,
+        trim: true,
+        default: "",
+      },
+
+      vendorEmail: {
+        type: String,
+        trim: true,
+        lowercase: true,
+        default: "",
+      },
+
+      vendorAddress: {
+        type: String,
+        trim: true,
+        default: "",
+      },
+
+      receivedDate: {
+        type: String,
+        required: [
+          true,
+          "Received date is required",
+        ],
+        default: todayDate,
+        validate: {
+          validator(value) {
+            return /^\d{4}-\d{2}-\d{2}$/.test(
+              value
+            );
+          },
+          message:
+            "Received date format YYYY-MM-DD hona chahiye",
+        },
+        index: true,
+      },
+
+      challanNo: {
+        type: String,
+        trim: true,
+        default: "",
+      },
+
+      invoiceNo: {
+        type: String,
+        trim: true,
+        default: "",
+      },
+
+      vehicleNo: {
+        type: String,
+        trim: true,
+        uppercase: true,
+        default: "",
+      },
+
+      /*
+       * اصل Warehouse document link۔
+       */
+      warehouseId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "Warehouse",
+        default: null,
+        index: true,
+      },
+
+      /*
+       * Warehouse name snapshot۔
+       * GRN عام طور پر Raw Material Godown میں جائے گا۔
+       */
+      warehouse: {
+        type: String,
+        required: [
+          true,
+          "Warehouse is required",
+        ],
+        trim: true,
+        default: "Raw Material Godown",
+      },
+
+      receivedBy: {
+        type: String,
+        trim: true,
+        default: "",
+      },
+
+      checkedBy: {
+        type: String,
+        trim: true,
+        default: "",
+      },
+
+      inspectionStatus: {
+        type: String,
+        enum: {
+          values:
+            INSPECTION_STATUSES,
+          message:
+            "Invalid inspection status",
+        },
+        default: "Pending",
+        index: true,
+      },
+
+      status: {
+        type: String,
+        enum: {
+          values: GRN_STATUSES,
+          message:
+            "Invalid GRN status",
+        },
+        default: "Draft",
+        index: true,
+      },
+
+      purchaseStatus: {
+        type: String,
+        enum: {
+          values: PURCHASE_STATUSES,
+          message:
+            "Invalid GRN purchase status",
+        },
+        default: "Not Purchased",
+        index: true,
+      },
+
+      items: {
+        type: [grnItemSchema],
+        validate: {
+          validator(items) {
+            return (
+              Array.isArray(items) &&
+              items.length > 0
+            );
+          },
+          message:
+            "At least one GRN item is required",
+        },
+      },
+
+      totalOrderedQty: {
+        type: Number,
+        default: 0,
+        min: 0,
+      },
+
+      totalReceivedQty: {
+        type: Number,
+        default: 0,
+        min: 0,
+      },
+
+      totalRejectedQty: {
+        type: Number,
+        default: 0,
+        min: 0,
+      },
+
+      totalAcceptedQty: {
+        type: Number,
+        default: 0,
+        min: 0,
+      },
+
+      totalPendingQty: {
+        type: Number,
+        default: 0,
+        min: 0,
+      },
+
+      subtotal: {
+        type: Number,
+        default: 0,
+        min: 0,
+      },
+
+      /*
+       * Stock Ledger میں GRN posting ہوچکی ہے یا نہیں۔
+       */
+      stockPosted: {
+        type: Boolean,
+        default: false,
+        index: true,
+      },
+
+      stockPostedAt: {
+        type: Date,
+        default: null,
+      },
+
+      cancelledAt: {
+        type: Date,
+        default: null,
+      },
+
+      remarks: {
+        type: String,
+        trim: true,
+        default: "",
+        maxlength: [
+          1000,
+          "GRN remarks cannot exceed 1000 characters",
+        ],
+      },
+    },
+    {
+      timestamps: true,
+      versionKey: false,
+      toJSON: {
+        virtuals: true,
+      },
+      toObject: {
+        virtuals: true,
+      },
+    }
+  );
+
+grnSchema.index({
+  purchaseOrder: 1,
+  status: 1,
+});
+
+grnSchema.index({
+  vendor: 1,
+  receivedDate: 1,
+});
+
+grnSchema.index({
+  warehouseId: 1,
+  receivedDate: 1,
+});
+
+/*
+ * Mongoose 9 synchronous middleware۔
+ */
+grnSchema.pre(
+  "validate",
+  function () {
+    this.grnNo = normalizeText(
+      this.grnNo
+    ).toUpperCase();
+
+    this.purchaseOrderNo =
+      normalizeText(
+        this.purchaseOrderNo
+      ).toUpperCase();
+
+    this.vendorName =
+      normalizeText(
+        this.vendorName
+      );
+
+    this.vendorPhone =
+      normalizeText(
+        this.vendorPhone
+      );
+
+    this.vendorEmail =
+      normalizeText(
+        this.vendorEmail
+      ).toLowerCase();
+
+    this.vendorAddress =
+      normalizeText(
+        this.vendorAddress
+      );
+
+    this.receivedDate =
+      normalizeText(
+        this.receivedDate,
+        todayDate()
+      );
+
+    this.challanNo =
+      normalizeText(
+        this.challanNo
+      );
+
+    this.invoiceNo =
+      normalizeText(
+        this.invoiceNo
+      );
+
+    this.vehicleNo =
+      normalizeText(
+        this.vehicleNo
+      ).toUpperCase();
+
+    this.warehouse =
+      normalizeText(
+        this.warehouse,
+        "Raw Material Godown"
+      );
+
+    this.receivedBy =
+      normalizeText(
+        this.receivedBy
+      );
+
+    this.checkedBy =
+      normalizeText(
+        this.checkedBy
+      );
+
+    this.status = normalizeStatus(
+      this.status
+    );
+
+    this.inspectionStatus =
+      normalizeInspectionStatus(
+        this.inspectionStatus
+      );
+
+    this.remarks =
+      normalizeText(
+        this.remarks
+      );
+
+    const rows = Array.isArray(
+      this.items
+    )
+      ? this.items
+      : [];
+
+    this.totalOrderedQty =
+      rows.reduce(
+        (sum, item) =>
+          sum +
+          normalizeNumber(
+            item.orderedQty
+          ),
+        0
+      );
+
+    this.totalReceivedQty =
+      rows.reduce(
+        (sum, item) =>
+          sum +
+          normalizeNumber(
+            item.receivedQty
+          ),
+        0
+      );
+
+    this.totalRejectedQty =
+      rows.reduce(
+        (sum, item) =>
+          sum +
+          normalizeNumber(
+            item.rejectedQty
+          ),
+        0
+      );
+
+    this.totalAcceptedQty =
+      rows.reduce(
+        (sum, item) =>
+          sum +
+          normalizeNumber(
+            item.acceptedQty
+          ),
+        0
+      );
+
+    this.totalPendingQty =
+      rows.reduce(
+        (sum, item) =>
+          sum +
+          normalizeNumber(
+            item.pendingQty
+          ),
+        0
+      );
+
+    this.subtotal = rows.reduce(
+      (sum, item) =>
+        sum +
+        normalizeNumber(
+          item.amount
+        ),
+      0
+    );
+
+    if (
+      this.inspectionStatus ===
+        "Rejected" &&
+      this.totalAcceptedQty > 0
+    ) {
+      this.invalidate(
+        "inspectionStatus",
+        "Rejected GRN mein accepted quantity zero honi chahiye"
+      );
+    }
+
+    if (
+      this.status ===
+      "Cancelled"
+    ) {
+      this.cancelledAt =
+        this.cancelledAt ||
+        new Date();
+    }
+  }
+);
+
+grnSchema.virtual(
+  "hasAcceptedStock"
+).get(function () {
+  return (
+    Number(
+      this.totalAcceptedQty || 0
+    ) > 0
+  );
+});
+
+module.exports = mongoose.model(
+  "GRN",
+  grnSchema
+);

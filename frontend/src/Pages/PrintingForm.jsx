@@ -1,441 +1,751 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, {
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
+
 import {
-  Plus,
-  Clock,
-  Trash2,
   ArrowLeft,
-  PencilLine,
+  CheckCircle2,
+  Edit3,
+  Loader2,
+  Play,
+  Plus,
   Printer,
-  Search,
   RefreshCcw,
+  Search,
+  Trash2,
+  X,
+  XCircle,
 } from "lucide-react";
+
 import { API_BASE_URL } from "../config/api";
 
-const defaultFormData = {
-  jobCardId: "",
-  product: "",
-  material: "",
-  size: "",
-  qty: "",
-  qtyUnit: "Kg",
-  colorType: "Single",
+const API_PRINTING = `${API_BASE_URL}/printing`;
+const API_JOBS = `${API_BASE_URL}/production-items`;
+
+const todayDate = () =>
+  new Date().toISOString().slice(0, 10);
+
+const numberValue = (value) => {
+  const number = Number(value);
+
+  return Number.isFinite(number) ? number : 0;
+};
+
+const formatQuantity = (value) =>
+  numberValue(value).toLocaleString(undefined, {
+    maximumFractionDigits: 3,
+  });
+
+const money = (value) =>
+  `Rs. ${numberValue(value).toLocaleString(undefined, {
+    maximumFractionDigits: 2,
+  })}`;
+
+const idOf = (value) => {
+  if (!value) {
+    return "";
+  }
+
+  if (typeof value === "object") {
+    return String(value._id || value.id || "");
+  }
+
+  return String(value);
+};
+
+const normalizeArray = (data, keys = []) => {
+  if (Array.isArray(data)) {
+    return data;
+  }
+
+  for (const key of keys) {
+    if (Array.isArray(data?.[key])) {
+      return data[key];
+    }
+  }
+
+  if (Array.isArray(data?.data)) {
+    return data.data;
+  }
+
+  return [];
+};
+
+const apiRequest = async (url, options = {}) => {
+  const response = await fetch(url, {
+    ...options,
+
+    headers: {
+      "Content-Type": "application/json",
+      ...(options.headers || {}),
+    },
+  });
+
+  const data = await response
+    .json()
+    .catch(() => ({}));
+
+  if (!response.ok) {
+    throw new Error(
+      data.message ||
+        data.error ||
+        "Request failed."
+    );
+  }
+
+  return data;
+};
+
+const getDefaultForm = () => ({
+  printingNo: "",
+  productionJob: "",
+  entryDate: todayDate(),
+  plannedQty: "",
+  printedQty: "",
+  goodQty: "",
+  rejectedQty: "0",
+  wastageQty: "0",
+  unit: "Pcs",
+  paperSize: "",
+  colorType: "",
+  side: "1-side",
   impressions: "",
   platesCount: "4",
-  rate: "",
-  wastageQty: "0",
-  returnedQty: "0",
-  outQty: "",
   machine: "Machine 01",
-  paperSize: "",
-  employee: "",
+  operator: "",
   helper: "",
   shift: "Day",
   startTime: "",
   endTime: "",
+  rate: "0",
   remarks: "",
-};
+});
 
-const money = (value) => `Rs. ${Number(value || 0).toLocaleString()}`;
+const inputClass =
+  "w-full rounded-lg border border-slate-300 bg-slate-50 px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-blue-600 focus:bg-white focus:ring-2 focus:ring-blue-100 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500";
 
-const calculateOutQty = (qty, wastageQty, returnedQty) => {
-  const totalQty = Number(qty || 0);
-  const wastage = Number(wastageQty || 0);
-  const returned = Number(returnedQty || 0);
+const statusClass = (status) => {
+  const classes = {
+    Draft:
+      "bg-slate-100 text-slate-700 border-slate-200",
 
-  const result = totalQty - wastage - returned;
-  return result > 0 ? result : 0;
-};
+    "In Progress":
+      "bg-blue-100 text-blue-700 border-blue-200",
 
-const normalizeArray = (data) => {
-  if (Array.isArray(data)) return data;
-  if (Array.isArray(data?.items)) return data.items;
-  if (Array.isArray(data?.productionItems)) return data.productionItems;
-  if (Array.isArray(data?.data)) return data.data;
-  return [];
+    Completed:
+      "bg-emerald-100 text-emerald-700 border-emerald-200",
+
+    Cancelled:
+      "bg-red-100 text-red-700 border-red-200",
+  };
+
+  return classes[status] || classes.Draft;
 };
 
 const PrintingEntry = () => {
+  const [entries, setEntries] = useState([]);
+  const [productionJobs, setProductionJobs] =
+    useState([]);
+
+  const [formData, setFormData] = useState(
+    getDefaultForm()
+  );
+
   const [showForm, setShowForm] = useState(false);
-  const [side, setSide] = useState("1-side");
   const [editId, setEditId] = useState(null);
 
-  const [entries, setEntries] = useState([]);
-  const [productionItems, setProductionItems] = useState([]);
-
   const [loading, setLoading] = useState(false);
-  const [jobLoading, setJobLoading] = useState(false);
-  const [searchQuery, setSearchQuery] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [actionId, setActionId] = useState("");
 
-  const [formData, setFormData] = useState(defaultFormData);
+  const [searchQuery, setSearchQuery] =
+    useState("");
 
-  const API_URL = `${API_BASE_URL}/printing`;
-  const PRODUCTION_ITEMS_URL = `${API_BASE_URL}/production-items`;
+  const [statusFilter, setStatusFilter] =
+    useState("All");
 
-  const fetchEntries = async () => {
+  const fetchData = async () => {
     try {
       setLoading(true);
-      const response = await fetch(`${API_URL}/all`);
 
-      if (!response.ok) throw new Error("Server error");
+      const [printingData, jobData] =
+        await Promise.all([
+          apiRequest(`${API_PRINTING}/all`),
+          apiRequest(`${API_JOBS}/all`),
+        ]);
 
-      const data = await response.json();
-      setEntries(normalizeArray(data));
+      setEntries(
+        normalizeArray(printingData, [
+          "entries",
+          "printing",
+        ])
+      );
+
+      setProductionJobs(
+        normalizeArray(jobData, [
+          "jobs",
+          "productionItems",
+        ])
+      );
     } catch (error) {
-      console.error("Error fetching printing data:", error);
-      setEntries([]);
+      console.error("Printing Load Error:", error);
+
+      alert(
+        error.message ||
+          "Unable to load printing records."
+      );
     } finally {
       setLoading(false);
     }
   };
 
-  const fetchProductionItems = async () => {
-    try {
-      setJobLoading(true);
-      const response = await fetch(`${PRODUCTION_ITEMS_URL}/all`);
-
-      if (!response.ok) throw new Error("Production items server error");
-
-      const data = await response.json();
-      setProductionItems(normalizeArray(data));
-    } catch (error) {
-      console.error("Error fetching production items:", error);
-      setProductionItems([]);
-    } finally {
-      setJobLoading(false);
-    }
-  };
-
   useEffect(() => {
-    fetchEntries();
-    fetchProductionItems();
+    fetchData();
   }, []);
 
-  useEffect(() => {
-    window.scrollTo({ top: 0, behavior: "smooth" });
-  }, [showForm]);
+  const eligibleJobs = useMemo(() => {
+    return productionJobs.filter((job) => {
+      const remainingQty = Math.max(
+        numberValue(job.targetQty) -
+          numberValue(job.goodQty),
+        0
+      );
 
-  const jobCardOptions = useMemo(() => {
-    return productionItems
-      .map((item) => ({
-        code: item.code || item.jobCardId || "",
-        name: item.name || "",
-        customerName: item.customerName || "",
-        paperType: item.paperType || "",
-        gsm: item.gsm || "",
-        sheetSize: item.sheetSize || "",
-        finishedSize: item.finishedSize || "",
-        quantity: item.quantity || "",
-        unit: item.unit || "",
-        noOfColors: item.noOfColors || "",
-      }))
-      .filter((item) => item.code);
-  }, [productionItems]);
+      return (
+        job.materialIssuePosted === true &&
+        [
+          "Material Issued",
+          "In Printing",
+          "Quality Check",
+        ].includes(job.status) &&
+        job.productionOutputPosted !== true &&
+        remainingQty > 0
+      );
+    });
+  }, [productionJobs]);
 
-  const resetForm = () => {
-    setFormData(defaultFormData);
-    setSide("1-side");
-    setEditId(null);
+  const selectedJob = useMemo(() => {
+    return productionJobs.find(
+      (job) =>
+        String(job._id) ===
+        String(formData.productionJob)
+    );
+  }, [productionJobs, formData.productionJob]);
+
+  const classifiedQty =
+    numberValue(formData.goodQty) +
+    numberValue(formData.rejectedQty) +
+    numberValue(formData.wastageQty);
+
+  const calculatedAmount =
+    numberValue(formData.printedQty) *
+    numberValue(formData.rate);
+
+  const nextPrintingNo = async () => {
+    const data = await apiRequest(
+      `${API_PRINTING}/next-no`
+    );
+
+    return data.printingNo || "";
   };
 
   const openNewForm = async () => {
-    setEditId(null);
-    resetForm();
-    await fetchProductionItems();
-    setShowForm(true);
+    try {
+      const printingNo = await nextPrintingNo();
+
+      setEditId(null);
+
+      setFormData({
+        ...getDefaultForm(),
+        printingNo,
+      });
+
+      setShowForm(true);
+    } catch (error) {
+      alert(
+        error.message ||
+          "Unable to prepare a new printing entry."
+      );
+    }
   };
 
   const closeForm = () => {
     setShowForm(false);
-    resetForm();
+    setEditId(null);
+    setFormData(getDefaultForm());
   };
 
-  const handleJobCardChange = (jobCode) => {
-    const selectedJob = productionItems.find(
-      (item) =>
-        String(item.code || item.jobCardId || "").toLowerCase() ===
-        String(jobCode || "").toLowerCase()
+  const updateField = (field, value) => {
+    setFormData((current) => ({
+      ...current,
+      [field]: value,
+    }));
+  };
+
+  const handleJobChange = (jobId) => {
+    const job = productionJobs.find(
+      (row) =>
+        String(row._id) === String(jobId)
     );
 
-    if (!selectedJob) {
-      setFormData({
-        ...formData,
-        jobCardId: jobCode,
-      });
+    if (!job) {
+      updateField("productionJob", "");
+
       return;
     }
 
-    const materialText = [
-      selectedJob.paperType || "",
-      selectedJob.gsm ? `${selectedJob.gsm} GSM` : "",
-    ]
-      .filter(Boolean)
-      .join(" - ");
+    const remainingQty = Math.max(
+      numberValue(job.targetQty) -
+        numberValue(job.goodQty),
+      0
+    );
 
-    setFormData({
-      ...formData,
-      jobCardId: selectedJob.code || jobCode,
-      product: selectedJob.name || formData.product,
-      material: materialText || formData.material,
-      size:
-        selectedJob.finishedSize ||
-        selectedJob.sheetSize ||
-        formData.size,
-      paperSize: selectedJob.sheetSize || formData.paperSize,
-      qty: selectedJob.totalSheets || selectedJob.quantity || formData.qty,
-      qtyUnit: selectedJob.unit || formData.qtyUnit,
+    setFormData((current) => ({
+      ...current,
+
+      productionJob: job._id,
+
+      plannedQty: String(remainingQty),
+
+      unit: job.unit || "Pcs",
+
+      paperSize:
+        job.sheetSize || current.paperSize,
+
       colorType:
-        selectedJob.noOfColors?.toLowerCase?.().includes("4") ||
-        selectedJob.noOfColors?.toLowerCase?.().includes("multi")
-          ? "Multi"
-          : formData.colorType,
-      remarks: selectedJob.remarks || formData.remarks,
-    });
+        job.noOfColors || current.colorType,
+
+      impressions: String(remainingQty),
+    }));
   };
 
-  const updateForm = (field, value) => {
-    const updated = {
-      ...formData,
-      [field]: value,
-    };
-
-    if (field === "qty" || field === "wastageQty" || field === "returnedQty") {
-      updated.outQty = calculateOutQty(
-        field === "qty" ? value : updated.qty,
-        field === "wastageQty" ? value : updated.wastageQty,
-        field === "returnedQty" ? value : updated.returnedQty
-      );
-    }
-
-    setFormData(updated);
-  };
-
-  const handleEdit = (entry) => {
+  const openEdit = (entry) => {
     setEditId(entry._id);
 
     setFormData({
-      ...defaultFormData,
-      jobCardId: entry.jobCardId || "",
-      product: entry.product || "",
-      material: entry.material || "",
-      size: entry.size || "",
-      qty: entry.qty || "",
-      qtyUnit: entry.qtyUnit || "Kg",
-      colorType: entry.colorType || "Single",
-      impressions: entry.impressions || entry.qty || "",
-      platesCount: entry.platesCount || "4",
-      rate: entry.rate || "",
-      wastageQty: entry.wastageQty || "0",
-      returnedQty: entry.returnedQty || "0",
-      outQty:
-        entry.outQty ||
-        calculateOutQty(entry.qty, entry.wastageQty, entry.returnedQty),
-      machine: entry.machine || "Machine 01",
+      printingNo: entry.printingNo || "",
+
+      productionJob: idOf(entry.productionJob),
+
+      entryDate:
+        String(entry.entryDate || "").slice(0, 10) ||
+        todayDate(),
+
+      plannedQty: String(entry.plannedQty ?? ""),
+
+      printedQty: String(entry.printedQty ?? ""),
+
+      goodQty: String(entry.goodQty ?? ""),
+
+      rejectedQty: String(entry.rejectedQty ?? 0),
+
+      wastageQty: String(entry.wastageQty ?? 0),
+
+      unit: entry.unit || "Pcs",
+
       paperSize: entry.paperSize || "",
-      employee: entry.employee || "",
+
+      colorType: entry.colorType || "",
+
+      side: entry.side || "1-side",
+
+      impressions: String(entry.impressions ?? ""),
+
+      platesCount: String(entry.platesCount ?? 0),
+
+      machine: entry.machine || "Machine 01",
+
+      operator: entry.operator || "",
+
       helper: entry.helper || "",
+
       shift: entry.shift || "Day",
+
       startTime: entry.startTime || "",
+
       endTime: entry.endTime || "",
+
+      rate: String(entry.rate ?? 0),
+
       remarks: entry.remarks || "",
     });
 
-    setSide(entry.side || "1-side");
     setShowForm(true);
   };
 
-  const handleSubmit = async () => {
-    if (!formData.jobCardId.trim()) {
-      alert("Job No required hai");
-      return;
+  const validateForm = () => {
+    if (!formData.productionJob) {
+      alert("Please select a production job.");
+
+      return false;
     }
 
-    if (!formData.product.trim()) {
-      alert("Product / Job Name required hai");
-      return;
+    if (numberValue(formData.plannedQty) <= 0) {
+      alert(
+        "Planned quantity must be greater than zero."
+      );
+
+      return false;
     }
 
-    if (!formData.material.trim()) {
-      alert("Material required hai");
-      return;
+    if (!formData.machine.trim()) {
+      alert("Printing machine is required.");
+
+      return false;
     }
 
-    if (!formData.size.trim()) {
-      alert("Size required hai");
-      return;
+    if (!formData.operator.trim()) {
+      alert("Printing operator is required.");
+
+      return false;
     }
 
-    if (Number(formData.qty || 0) <= 0) {
-      alert("Quantity required hai");
-      return;
+    if (
+      numberValue(formData.printedQty) < 0 ||
+      numberValue(formData.goodQty) < 0 ||
+      numberValue(formData.rejectedQty) < 0 ||
+      numberValue(formData.wastageQty) < 0
+    ) {
+      alert("Quantities cannot be negative.");
+
+      return false;
     }
 
-    if (!formData.employee.trim()) {
-      alert("Operator / Employee required hai");
-      return;
+    if (
+      numberValue(formData.goodQty) >
+      numberValue(formData.plannedQty)
+    ) {
+      alert(
+        "Good quantity cannot exceed planned quantity."
+      );
+
+      return false;
     }
 
-    const calculatedOutQty = calculateOutQty(
-      formData.qty,
-      formData.wastageQty,
-      formData.returnedQty
-    );
+    return true;
+  };
 
-    const calculatedAmount = Number(formData.qty || 0) * Number(formData.rate || 0);
+  const buildPayload = () => ({
+    printingNo: formData.printingNo,
 
-    const existingEntry = editId
-      ? entries.find((entry) => entry._id === editId)
-      : null;
+    productionJob: formData.productionJob,
 
-    const payload = {
-      ...formData,
-      qty: Number(formData.qty || 0),
-      impressions: Number(formData.impressions || formData.qty || 0),
-      platesCount: Number(formData.platesCount || 0),
-      rate: Number(formData.rate || 0),
-      wastageQty: Number(formData.wastageQty || 0),
-      returnedQty: Number(formData.returnedQty || 0),
-      outQty: Number(calculatedOutQty || 0),
-      totalAmount: calculatedAmount,
-      side,
-      time: editId
-        ? existingEntry?.time
-        : new Date().toLocaleTimeString([], {
-            hour: "2-digit",
-            minute: "2-digit",
-          }),
-      entryDate: editId
-        ? existingEntry?.entryDate || new Date().toISOString().slice(0, 10)
-        : new Date().toISOString().slice(0, 10),
-    };
+    entryDate: formData.entryDate,
+
+    plannedQty: numberValue(formData.plannedQty),
+
+    printedQty: numberValue(formData.printedQty),
+
+    goodQty: numberValue(formData.goodQty),
+
+    rejectedQty: numberValue(
+      formData.rejectedQty
+    ),
+
+    wastageQty: numberValue(formData.wastageQty),
+
+    unit: formData.unit,
+
+    paperSize: formData.paperSize.trim(),
+
+    colorType: formData.colorType.trim(),
+
+    side: formData.side,
+
+    impressions: numberValue(formData.impressions),
+
+    platesCount: numberValue(formData.platesCount),
+
+    machine: formData.machine.trim(),
+
+    operator: formData.operator.trim(),
+
+    helper: formData.helper.trim(),
+
+    shift: formData.shift,
+
+    startTime: formData.startTime,
+
+    endTime: formData.endTime,
+
+    rate: numberValue(formData.rate),
+
+    remarks: formData.remarks.trim(),
+  });
+
+  const saveEntry = async (event) => {
+    event.preventDefault();
+
+    if (!validateForm()) {
+      return;
+    }
 
     try {
-      const url = editId ? `${API_URL}/update/${editId}` : `${API_URL}/add`;
-      const method = editId ? "PUT" : "POST";
+      setSaving(true);
 
-      const response = await fetch(url, {
-        method,
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
+      await apiRequest(
+        editId
+          ? `${API_PRINTING}/update/${editId}`
+          : `${API_PRINTING}/add`,
+        {
+          method: editId ? "PUT" : "POST",
+          body: JSON.stringify(buildPayload()),
+        }
+      );
 
-      if (response.ok) {
-        await fetchEntries();
-        closeForm();
-      } else {
-        const errorData = await response.json();
-        alert(`Server Error: ${errorData.message || "Unable to save entry"}`);
-      }
+      await fetchData();
+      closeForm();
     } catch (error) {
-      alert("Network error! Please check your connection.");
+      alert(
+        error.message ||
+          "Unable to save the printing entry."
+      );
+    } finally {
+      setSaving(false);
     }
   };
 
-  const handleDelete = async (id) => {
-    if (!window.confirm("Delete this printing entry?")) return;
+  const startPrinting = async (entry) => {
+    if (
+      !window.confirm(
+        `Start printing ${entry.printingNo}?`
+      )
+    ) {
+      return;
+    }
 
     try {
-      const response = await fetch(`${API_URL}/delete/${id}`, {
-        method: "DELETE",
-      });
+      setActionId(entry._id);
 
-      if (response.ok) {
-        setEntries(entries.filter((entry) => entry._id !== id));
-      } else {
-        alert("Delete failed");
-      }
+      await apiRequest(
+        `${API_PRINTING}/start/${entry._id}`,
+        {
+          method: "POST",
+          body: JSON.stringify({}),
+        }
+      );
+
+      await fetchData();
     } catch (error) {
-      alert("Could not delete entry.");
+      alert(
+        error.message ||
+          "Unable to start printing."
+      );
+    } finally {
+      setActionId("");
+    }
+  };
+
+  const completePrinting = async (entry) => {
+    if (
+      numberValue(entry.printedQty) <= 0
+    ) {
+      alert(
+        "Edit the entry and enter printing quantities before completion."
+      );
+
+      return;
+    }
+
+    const totalClassified =
+      numberValue(entry.goodQty) +
+      numberValue(entry.rejectedQty) +
+      numberValue(entry.wastageQty);
+
+    if (
+      Math.abs(
+        totalClassified -
+          numberValue(entry.printedQty)
+      ) > 0.000001
+    ) {
+      alert(
+        "Good, rejected and wastage quantities must equal printed quantity."
+      );
+
+      return;
+    }
+
+    if (
+      !window.confirm(
+        `Complete printing ${entry.printingNo}?`
+      )
+    ) {
+      return;
+    }
+
+    try {
+      setActionId(entry._id);
+
+      await apiRequest(
+        `${API_PRINTING}/complete/${entry._id}`,
+        {
+          method: "POST",
+          body: JSON.stringify({}),
+        }
+      );
+
+      await fetchData();
+    } catch (error) {
+      alert(
+        error.message ||
+          "Unable to complete printing."
+      );
+    } finally {
+      setActionId("");
+    }
+  };
+
+  const cancelPrinting = async (entry) => {
+    const cancelReason = window.prompt(
+      "Enter cancellation reason:",
+      ""
+    );
+
+    if (cancelReason === null) {
+      return;
+    }
+
+    try {
+      setActionId(entry._id);
+
+      await apiRequest(
+        `${API_PRINTING}/cancel/${entry._id}`,
+        {
+          method: "POST",
+
+          body: JSON.stringify({
+            cancelReason:
+              cancelReason.trim() ||
+              "Printing entry cancelled",
+          }),
+        }
+      );
+
+      await fetchData();
+    } catch (error) {
+      alert(
+        error.message ||
+          "Unable to cancel printing."
+      );
+    } finally {
+      setActionId("");
+    }
+  };
+
+  const deletePrinting = async (entry) => {
+    if (
+      !window.confirm(
+        `Delete ${entry.printingNo}?`
+      )
+    ) {
+      return;
+    }
+
+    try {
+      setActionId(entry._id);
+
+      await apiRequest(
+        `${API_PRINTING}/delete/${entry._id}`,
+        {
+          method: "DELETE",
+        }
+      );
+
+      await fetchData();
+    } catch (error) {
+      alert(
+        error.message ||
+          "Unable to delete printing."
+      );
+    } finally {
+      setActionId("");
     }
   };
 
   const printEntry = (entry) => {
     const printWindow = window.open("", "_blank");
 
+    if (!printWindow) {
+      return;
+    }
+
     printWindow.document.write(`
       <html>
         <head>
-          <title>${entry.jobCardId || "Printing Entry"}</title>
+          <title>${entry.printingNo}</title>
           <style>
             body {
               font-family: Arial, sans-serif;
               padding: 30px;
               color: #111827;
             }
-            h1 {
+
+            h1, h2 {
               text-align: center;
-              margin: 0;
-              font-size: 28px;
             }
-            h2 {
-              text-align: center;
-              text-decoration: underline;
-              margin: 18px 0;
-            }
-            .box {
-              border: 1px solid #111827;
-              padding: 12px;
-              margin-bottom: 14px;
-              line-height: 1.8;
-              font-size: 13px;
-            }
+
             table {
               width: 100%;
               border-collapse: collapse;
+              margin-top: 20px;
             }
+
             th, td {
               border: 1px solid #111827;
               padding: 8px;
               font-size: 12px;
-              text-align: left;
             }
+
             th {
               background: #f3f4f6;
             }
-            .sign {
-              margin-top: 70px;
-              display: flex;
-              justify-content: space-between;
+
+            .details {
+              border: 1px solid #111827;
+              padding: 12px;
+              line-height: 1.8;
             }
           </style>
         </head>
+
         <body>
           <h1>Urwa Packages</h1>
-          <h2>Printing Entry</h2>
+          <h2>Printing Record</h2>
 
-          <div class="box">
-            <b>Job No:</b> ${entry.jobCardId || ""}<br/>
-            <b>Product:</b> ${entry.product || ""}<br/>
-            <b>Material:</b> ${entry.material || ""}<br/>
-            <b>Size:</b> ${entry.size || ""}<br/>
-            <b>Color:</b> ${entry.colorType || ""}<br/>
-            <b>Machine:</b> ${entry.machine || ""}<br/>
-            <b>Operator:</b> ${entry.employee || ""}<br/>
-            <b>Printing Side:</b> ${entry.side || ""}<br/>
+          <div class="details">
+            <b>Printing No:</b> ${entry.printingNo}<br/>
+            <b>Job No:</b> ${entry.jobNo}<br/>
+            <b>Product:</b> ${entry.finishedGoodName}<br/>
+            <b>Date:</b> ${entry.entryDate}<br/>
+            <b>Machine:</b> ${entry.machine}<br/>
+            <b>Operator:</b> ${entry.operator}<br/>
+            <b>Status:</b> ${entry.status}
           </div>
 
           <table>
             <thead>
               <tr>
-                <th>Qty</th>
-                <th>Unit</th>
+                <th>Planned</th>
+                <th>Printed</th>
+                <th>Good</th>
+                <th>Rejected</th>
                 <th>Wastage</th>
-                <th>Returned</th>
-                <th>Out</th>
-                <th>Impressions</th>
-                <th>Plates</th>
+                <th>Unit</th>
                 <th>Rate</th>
-                <th>Total</th>
+                <th>Amount</th>
               </tr>
             </thead>
+
             <tbody>
               <tr>
-                <td>${entry.qty || 0}</td>
-                <td>${entry.qtyUnit || ""}</td>
+                <td>${entry.plannedQty || 0}</td>
+                <td>${entry.printedQty || 0}</td>
+                <td>${entry.goodQty || 0}</td>
+                <td>${entry.rejectedQty || 0}</td>
                 <td>${entry.wastageQty || 0}</td>
-                <td>${entry.returnedQty || 0}</td>
-                <td>${entry.outQty || 0}</td>
-                <td>${entry.impressions || 0}</td>
-                <td>${entry.platesCount || 0}</td>
+                <td>${entry.unit || ""}</td>
                 <td>${entry.rate || 0}</td>
                 <td>${entry.totalAmount || 0}</td>
               </tr>
@@ -444,13 +754,9 @@ const PrintingEntry = () => {
 
           <p><b>Remarks:</b> ${entry.remarks || ""}</p>
 
-          <div class="sign">
-            <div>Operator: __________________</div>
-            <div>Supervisor: __________________</div>
-            <div>Approved By: __________________</div>
-          </div>
-
-          <script>window.print();</script>
+          <script>
+            window.print();
+          </script>
         </body>
       </html>
     `);
@@ -458,104 +764,145 @@ const PrintingEntry = () => {
     printWindow.document.close();
   };
 
-  const filteredEntries = entries.filter((entry) => {
-    const keyword = searchQuery.toLowerCase();
+  const filteredEntries = useMemo(() => {
+    const keyword = searchQuery
+      .trim()
+      .toLowerCase();
 
-    return (
-      entry.jobCardId?.toLowerCase().includes(keyword) ||
-      entry.product?.toLowerCase().includes(keyword) ||
-      entry.material?.toLowerCase().includes(keyword) ||
-      entry.employee?.toLowerCase().includes(keyword) ||
-      entry.machine?.toLowerCase().includes(keyword)
-    );
-  });
+    return entries.filter((entry) => {
+      const searchableText = [
+        entry.printingNo,
+        entry.jobNo,
+        entry.jobName,
+        entry.finishedGoodCode,
+        entry.finishedGoodName,
+        entry.machine,
+        entry.operator,
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
 
-  const summary = useMemo(() => {
-    return {
-      totalEntries: entries.length,
-      totalQty: entries.reduce((s, e) => s + Number(e.qty || 0), 0),
-      totalWastage: entries.reduce((s, e) => s + Number(e.wastageQty || 0), 0),
-      totalReturned: entries.reduce((s, e) => s + Number(e.returnedQty || 0), 0),
-      totalOut: entries.reduce((s, e) => s + Number(e.outQty || 0), 0),
-      totalAmount: entries.reduce((s, e) => s + Number(e.totalAmount || 0), 0),
-    };
-  }, [entries]);
+      return (
+        (!keyword ||
+          searchableText.includes(keyword)) &&
+        (statusFilter === "All" ||
+          entry.status === statusFilter)
+      );
+    });
+  }, [entries, searchQuery, statusFilter]);
+
+  const stats = useMemo(
+    () => ({
+      total: entries.length,
+
+      draft: entries.filter(
+        (entry) => entry.status === "Draft"
+      ).length,
+
+      inProgress: entries.filter(
+        (entry) => entry.status === "In Progress"
+      ).length,
+
+      completed: entries.filter(
+        (entry) => entry.status === "Completed"
+      ).length,
+
+      goodQty: entries
+        .filter((entry) => entry.status === "Completed")
+        .reduce(
+          (sum, entry) =>
+            sum + numberValue(entry.goodQty),
+          0
+        ),
+
+      wastageQty: entries
+        .filter((entry) => entry.status === "Completed")
+        .reduce(
+          (sum, entry) =>
+            sum + numberValue(entry.wastageQty),
+          0
+        ),
+    }),
+    [entries]
+  );
 
   if (!showForm) {
     return (
-      <div className="w-full mx-auto p-6 space-y-6">
-        <div className="bg-[#1e40af] text-white p-5 rounded-t-xl flex flex-col md:flex-row justify-between md:items-center gap-4 shadow-sm">
+      <div className="w-full mx-auto p-3 sm:p-5 md:p-6 space-y-5">
+        <div className="bg-[#1e40af] text-white p-5 rounded-xl flex flex-col md:flex-row justify-between md:items-center gap-4 shadow-sm">
           <div className="flex items-center gap-3">
             <button
+              type="button"
               onClick={() => window.history.back()}
-              className="p-1 hover:bg-blue-700 rounded-lg transition-all"
+              className="p-1 hover:bg-blue-700 rounded-lg"
             >
-              <ArrowLeft size={20} className="text-white" />
+              <ArrowLeft size={20} />
             </button>
 
-            <div>
-              <h1 className="text-lg font-bold text-white tracking-wide">
-                Printing Log
-              </h1>
-              <p className="text-blue-100 text-xs font-normal">
-                Manage production-level printing entries, material movement and wastage
-              </p>
-            </div>
+            <h1 className="text-xl font-bold">
+              Printing
+            </h1>
           </div>
 
-          <button
-            onClick={openNewForm}
-            className="flex items-center justify-center gap-1.5 bg-[#2563eb] text-white px-5 py-2.5 rounded-lg font-semibold text-xs hover:bg-blue-700 transition-all shadow-sm border border-blue-400"
-          >
-            <Plus size={16} />
-            Add New Entry
-          </button>
-        </div>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={fetchData}
+              disabled={loading}
+              className="flex items-center gap-2 rounded-lg bg-white/10 px-4 py-2 text-sm font-semibold hover:bg-white/20 disabled:opacity-60"
+            >
+              <RefreshCcw
+                size={16}
+                className={loading ? "animate-spin" : ""}
+              />
 
-        <div className="grid grid-cols-1 md:grid-cols-6 gap-4">
-          <div className="bg-white rounded-xl border p-4">
-            <p className="text-xs text-slate-500">Entries</p>
-            <h3 className="text-xl font-bold">{summary.totalEntries}</h3>
-          </div>
+              Refresh
+            </button>
 
-          <div className="bg-white rounded-xl border p-4">
-            <p className="text-xs text-slate-500">Total Qty</p>
-            <h3 className="text-xl font-bold">{summary.totalQty}</h3>
-          </div>
+            <button
+              type="button"
+              onClick={openNewForm}
+              className="flex items-center gap-2 rounded-lg bg-white px-4 py-2 text-sm font-bold text-blue-700"
+            >
+              <Plus size={16} />
 
-          <div className="bg-white rounded-xl border p-4">
-            <p className="text-xs text-slate-500">Wastage</p>
-            <h3 className="text-xl font-bold text-red-600">
-              {summary.totalWastage}
-            </h3>
-          </div>
-
-          <div className="bg-white rounded-xl border p-4">
-            <p className="text-xs text-slate-500">Returned</p>
-            <h3 className="text-xl font-bold text-orange-600">
-              {summary.totalReturned}
-            </h3>
-          </div>
-
-          <div className="bg-white rounded-xl border p-4">
-            <p className="text-xs text-slate-500">Out</p>
-            <h3 className="text-xl font-bold text-emerald-600">
-              {summary.totalOut}
-            </h3>
-          </div>
-
-          <div className="bg-white rounded-xl border p-4">
-            <p className="text-xs text-slate-500">Total Bill</p>
-            <h3 className="text-xl font-bold">{money(summary.totalAmount)}</h3>
+              New Printing
+            </button>
           </div>
         </div>
 
-        <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-          <div className="p-4 border-b border-slate-100 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
-            <div className="flex items-center gap-2 font-bold text-sm text-[#1e40af]">
-              <Clock size={16} />
-              Recent Printing Jobs
-            </div>
+        <div className="grid grid-cols-2 lg:grid-cols-6 gap-3">
+          <StatCard label="Total" value={stats.total} />
+          <StatCard label="Draft" value={stats.draft} />
+
+          <StatCard
+            label="In Progress"
+            value={stats.inProgress}
+          />
+
+          <StatCard
+            label="Completed"
+            value={stats.completed}
+          />
+
+          <StatCard
+            label="Good Quantity"
+            value={formatQuantity(stats.goodQty)}
+          />
+
+          <StatCard
+            label="Wastage"
+            value={formatQuantity(stats.wastageQty)}
+            danger
+          />
+        </div>
+
+        <div className="bg-white border rounded-xl overflow-hidden shadow-sm">
+          <div className="p-4 border-b flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+            <h2 className="font-bold text-slate-800">
+              Printing Register
+            </h2>
 
             <div className="flex flex-col sm:flex-row gap-2">
               <div className="relative">
@@ -563,646 +910,803 @@ const PrintingEntry = () => {
                   size={15}
                   className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
                 />
+
                 <input
                   value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="pl-9 pr-3 py-2 border rounded-lg text-xs w-full sm:w-72"
-                  placeholder="Search job, product, material, operator..."
+                  onChange={(event) =>
+                    setSearchQuery(event.target.value)
+                  }
+                  className="w-full sm:w-72 rounded-lg border py-2 pl-9 pr-3 text-xs"
+                  placeholder="Search printing, job, product..."
                 />
               </div>
 
-              <button
-                onClick={() => {
-                  fetchEntries();
-                  fetchProductionItems();
-                }}
-                className="inline-flex items-center justify-center gap-2 px-3 py-2 border rounded-lg text-xs hover:bg-slate-50"
+              <select
+                value={statusFilter}
+                onChange={(event) =>
+                  setStatusFilter(event.target.value)
+                }
+                className="rounded-lg border px-3 py-2 text-xs"
               >
-                <RefreshCcw size={14} />
-                Refresh
-              </button>
+                <option value="All">All Statuses</option>
+                <option value="Draft">Draft</option>
+
+                <option value="In Progress">
+                  In Progress
+                </option>
+
+                <option value="Completed">
+                  Completed
+                </option>
+
+                <option value="Cancelled">
+                  Cancelled
+                </option>
+              </select>
             </div>
           </div>
 
           <div className="overflow-x-auto">
-            {loading ? (
-              <div className="p-10 text-center font-medium text-slate-400 text-sm">
-                Loading records...
-              </div>
-            ) : (
-              <table className="w-full text-left text-xs border-collapse">
-                <thead className="bg-slate-50 text-slate-500 font-bold uppercase tracking-wider border-b border-slate-200">
+            <table className="w-full min-w-[1250px] text-left text-xs">
+              <thead className="bg-slate-800 text-white uppercase">
+                <tr>
+                  <th className="p-4">Printing / Job</th>
+                  <th className="p-4">Finished Good</th>
+                  <th className="p-4 text-right">Planned</th>
+                  <th className="p-4 text-right">Printed</th>
+                  <th className="p-4 text-right">Good</th>
+                  <th className="p-4 text-right">Rejected</th>
+                  <th className="p-4 text-right">Wastage</th>
+                  <th className="p-4">Machine / Operator</th>
+                  <th className="p-4 text-right">Amount</th>
+                  <th className="p-4 text-center">Status</th>
+                  <th className="p-4 text-center">Actions</th>
+                </tr>
+              </thead>
+
+              <tbody>
+                {loading ? (
                   <tr>
-                    <th className="px-5 py-3.5">Time / Job No</th>
-                    <th className="px-5 py-3.5">Material / Size</th>
-                    <th className="px-5 py-3.5">Product</th>
-                    <th className="px-5 py-3.5">Qty</th>
-                    <th className="px-5 py-3.5">Wastage / Returned / Out</th>
-                    <th className="px-5 py-3.5">Color / Side</th>
-                    <th className="px-5 py-3.5">Machine</th>
-                    <th className="px-5 py-3.5">Bill</th>
-                    <th className="px-5 py-3.5">Operator</th>
-                    <th className="px-5 py-3.5 text-center">Action</th>
-                  </tr>
-                </thead>
-
-                <tbody className="divide-y divide-slate-100 text-slate-700">
-                  {filteredEntries.map((entry) => (
-                    <tr
-                      key={entry._id}
-                      className="hover:bg-slate-50/80 transition-colors"
+                    <td
+                      colSpan="11"
+                      className="p-10 text-center"
                     >
-                      <td className="px-5 py-3.5">
-                        <div className="font-semibold">{entry.time}</div>
-                        <div className="text-[11px] font-bold text-blue-600">
-                          {entry.jobCardId || "N/A"}
-                        </div>
-                      </td>
+                      <Loader2 className="mx-auto animate-spin text-blue-600" />
+                    </td>
+                  </tr>
+                ) : filteredEntries.length === 0 ? (
+                  <tr>
+                    <td
+                      colSpan="11"
+                      className="p-10 text-center text-slate-400"
+                    >
+                      No printing records found.
+                    </td>
+                  </tr>
+                ) : (
+                  filteredEntries.map((entry) => {
+                    const busy = actionId === entry._id;
 
-                      <td className="px-5 py-3.5">
-                        <div className="font-medium">{entry.material}</div>
-                        <div className="text-[11px] text-slate-400">
-                          {entry.size || entry.paperSize || "Custom"}
-                        </div>
-                      </td>
-
-                      <td className="px-5 py-3.5 font-medium">
-                        {entry.product}
-                      </td>
-
-                      <td className="px-5 py-3.5 font-semibold">
-                        {entry.qty} {entry.qtyUnit || ""}
-                      </td>
-
-                      <td className="px-5 py-3.5">
-                        <div className="text-red-600 font-semibold">
-                          W: {entry.wastageQty || 0}
-                        </div>
-                        <div className="text-orange-600 font-semibold">
-                          R: {entry.returnedQty || 0}
-                        </div>
-                        <div className="text-emerald-600 font-bold">
-                          Out: {entry.outQty || 0}
-                        </div>
-                      </td>
-
-                      <td className="px-5 py-3.5">
-                        <div className="font-semibold">{entry.colorType}</div>
-                        <div className="text-[11px] text-slate-400">
-                          {entry.side}
-                        </div>
-                      </td>
-
-                      <td className="px-5 py-3.5">
-                        <div className="font-medium">{entry.machine}</div>
-                        <div className="text-[11px] text-slate-400">
-                          {entry.shift || "Day"}
-                        </div>
-                      </td>
-
-                      <td className="px-5 py-3.5 font-bold text-emerald-600">
-                        {money(entry.totalAmount || Number(entry.qty || 0) * Number(entry.rate || 0))}
-                      </td>
-
-                      <td className="px-5 py-3.5 text-slate-600">
-                        {entry.employee}
-                      </td>
-
-                      <td className="px-5 py-3.5">
-                        <div className="flex justify-center gap-1.5">
-                          <button
-                            onClick={() => printEntry(entry)}
-                            className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-md transition-all"
-                          >
-                            <Printer size={16} />
-                          </button>
-
-                          <button
-                            onClick={() => handleEdit(entry)}
-                            className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-md transition-all"
-                          >
-                            <PencilLine size={16} />
-                          </button>
-
-                          <button
-                            onClick={() => handleDelete(entry._id)}
-                            className="p-1.5 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-md transition-all"
-                          >
-                            <Trash2 size={16} />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-
-                  {filteredEntries.length === 0 && (
-                    <tr>
-                      <td
-                        colSpan="10"
-                        className="p-10 text-center text-slate-400"
+                    return (
+                      <tr
+                        key={entry._id}
+                        className="border-t hover:bg-slate-50"
                       >
-                        No printing record found.
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            )}
+                        <td className="p-4">
+                          <div className="font-bold text-blue-700">
+                            {entry.printingNo}
+                          </div>
+
+                          <div className="mt-1 font-semibold">
+                            {entry.jobNo}
+                          </div>
+
+                          <div className="text-[10px] text-slate-500">
+                            {entry.entryDate}
+                          </div>
+                        </td>
+
+                        <td className="p-4">
+                          <div className="font-semibold">
+                            {entry.finishedGoodName}
+                          </div>
+
+                          <div className="font-mono text-[10px] text-blue-600">
+                            {entry.finishedGoodCode}
+                          </div>
+                        </td>
+
+                        <td className="p-4 text-right">
+                          {formatQuantity(entry.plannedQty)}{" "}
+                          {entry.unit}
+                        </td>
+
+                        <td className="p-4 text-right font-bold">
+                          {formatQuantity(entry.printedQty)}
+                        </td>
+
+                        <td className="p-4 text-right font-bold text-emerald-700">
+                          {formatQuantity(entry.goodQty)}
+                        </td>
+
+                        <td className="p-4 text-right font-bold text-orange-700">
+                          {formatQuantity(entry.rejectedQty)}
+                        </td>
+
+                        <td className="p-4 text-right font-bold text-red-700">
+                          {formatQuantity(entry.wastageQty)}
+                        </td>
+
+                        <td className="p-4">
+                          <div className="font-semibold">
+                            {entry.machine}
+                          </div>
+
+                          <div className="text-[10px] text-slate-500">
+                            {entry.operator}
+                          </div>
+                        </td>
+
+                        <td className="p-4 text-right font-bold">
+                          {money(entry.totalAmount)}
+                        </td>
+
+                        <td className="p-4 text-center">
+                          <span
+                            className={`inline-flex rounded-full border px-3 py-1 text-[10px] font-bold ${statusClass(
+                              entry.status
+                            )}`}
+                          >
+                            {entry.status}
+                          </span>
+                        </td>
+
+                        <td className="p-4">
+                          <div className="flex justify-center gap-1.5">
+                            <ActionButton
+                              title="Print"
+                              onClick={() => printEntry(entry)}
+                              color="slate"
+                            >
+                              <Printer size={15} />
+                            </ActionButton>
+
+                            {["Draft", "In Progress"].includes(
+                              entry.status
+                            ) && (
+                              <ActionButton
+                                title="Edit"
+                                onClick={() => openEdit(entry)}
+                                disabled={busy}
+                                color="blue"
+                              >
+                                <Edit3 size={15} />
+                              </ActionButton>
+                            )}
+
+                            {entry.status === "Draft" && (
+                              <ActionButton
+                                title="Start"
+                                onClick={() =>
+                                  startPrinting(entry)
+                                }
+                                disabled={busy}
+                                color="emerald"
+                              >
+                                <Play size={15} />
+                              </ActionButton>
+                            )}
+
+                            {entry.status === "In Progress" && (
+                              <ActionButton
+                                title="Complete"
+                                onClick={() =>
+                                  completePrinting(entry)
+                                }
+                                disabled={busy}
+                                color="emerald"
+                              >
+                                <CheckCircle2 size={15} />
+                              </ActionButton>
+                            )}
+
+                            {!["Cancelled"].includes(
+                              entry.status
+                            ) && (
+                              <ActionButton
+                                title="Cancel"
+                                onClick={() =>
+                                  cancelPrinting(entry)
+                                }
+                                disabled={busy}
+                                color="orange"
+                              >
+                                <XCircle size={15} />
+                              </ActionButton>
+                            )}
+
+                            {entry.status === "Draft" && (
+                              <ActionButton
+                                title="Delete"
+                                onClick={() =>
+                                  deletePrinting(entry)
+                                }
+                                disabled={busy}
+                                color="red"
+                              >
+                                <Trash2 size={15} />
+                              </ActionButton>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
           </div>
         </div>
       </div>
     );
   }
 
-  const calculatedOutQty = calculateOutQty(
-    formData.qty,
-    formData.wastageQty,
-    formData.returnedQty
-  );
-
-  const calculatedAmount =
-    Number(formData.qty || 0) * Number(formData.rate || 0);
-
   return (
-    <div className="w-full mx-auto p-6">
-      <div className="bg-[#1e40af] text-white p-5 rounded-t-xl flex justify-between items-center shadow-sm">
+    <div className="w-full mx-auto p-3 sm:p-5 md:p-6">
+      <div className="bg-[#1e40af] text-white p-5 rounded-t-xl flex justify-between items-center">
         <div className="flex items-center gap-3">
           <button
+            type="button"
             onClick={closeForm}
-            className="p-1 hover:bg-blue-700 rounded-lg transition-all"
+            className="p-1 hover:bg-blue-700 rounded-lg"
           >
-            <ArrowLeft size={20} className="text-white" />
+            <ArrowLeft size={20} />
           </button>
 
-          <h1 className="text-lg font-bold tracking-wide">
-            {editId ? "Edit Printing Entry" : "Create New Printing Entry"}
+          <h1 className="text-lg font-bold">
+            {editId
+              ? "Edit Printing"
+              : "New Printing"}
           </h1>
         </div>
 
         <button
+          type="button"
           onClick={closeForm}
-          className="bg-blue-700 text-white px-4 py-2 rounded-lg font-medium text-xs hover:bg-blue-800 transition-all border border-blue-500"
+          className="p-2 rounded-lg hover:bg-blue-700"
         >
-          Back to List
+          <X size={18} />
         </button>
       </div>
 
-      <div className="bg-white rounded-b-xl border-x border-b border-slate-200 shadow-sm overflow-hidden">
-        <div className="p-6 space-y-8">
-          <div>
-            <h3 className="text-xs font-bold text-blue-600 uppercase tracking-wider mb-4 border-b border-slate-100 pb-1">
-              1. Job & Production Information
-            </h3>
+      <form
+        onSubmit={saveEntry}
+        className="bg-white border-x border-b rounded-b-xl p-5 md:p-7 space-y-7"
+      >
+        <Section title="Production Job">
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+            <Field label="Printing Number">
+              <input
+                value={formData.printingNo}
+                readOnly
+                className={`${inputClass} font-mono`}
+              />
+            </Field>
 
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-5">
-              <div className="space-y-1.5">
-                <label className="text-xs font-semibold text-slate-600">
-                  Job Card No
-                </label>
+            <Field label="Production Job" required wide>
+              <select
+                value={formData.productionJob}
+                onChange={(event) =>
+                  handleJobChange(event.target.value)
+                }
+                disabled={Boolean(editId)}
+                className={inputClass}
+              >
+                <option value="">
+                  Select Production Job
+                </option>
 
-                <input
-                  list="job-card-options"
-                  value={formData.jobCardId}
-                  onChange={(e) => handleJobCardChange(e.target.value)}
-                  className="w-full bg-[#f8fafc] border border-slate-200 rounded-lg p-2.5 text-xs text-slate-700 outline-none focus:border-blue-500 focus:bg-white font-medium"
-                  placeholder="Type or select job no e.g. JOB-1"
-                />
+                {eligibleJobs.map((job) => (
+                  <option key={job._id} value={job._id}>
+                    {job.jobNo} — {job.jobName}
+                  </option>
+                ))}
 
-                <datalist id="job-card-options">
-                  {jobCardOptions.map((job) => (
-                    <option key={job.code} value={job.code}>
-                      {job.code} - {job.name}
+                {editId &&
+                  selectedJob &&
+                  !eligibleJobs.some(
+                    (job) => job._id === selectedJob._id
+                  ) && (
+                    <option
+                      value={selectedJob._id}
+                    >
+                      {selectedJob.jobNo} —{" "}
+                      {selectedJob.jobName}
                     </option>
-                  ))}
-                </datalist>
+                  )}
+              </select>
+            </Field>
 
-                <p className="text-[10px] text-slate-400">
-                  {jobLoading
-                    ? "Loading job cards..."
-                    : "Type manually or select from production items."}
-                </p>
-              </div>
+            <Field label="Printing Date" required>
+              <input
+                type="date"
+                value={formData.entryDate}
+                onChange={(event) =>
+                  updateField(
+                    "entryDate",
+                    event.target.value
+                  )
+                }
+                className={inputClass}
+              />
+            </Field>
 
-              <div className="space-y-1.5">
-                <label className="text-xs font-semibold text-slate-600">
-                  Product / Job Name
-                </label>
+            <Field label="Finished Good">
+              <input
+                value={
+                  selectedJob
+                    ? `${selectedJob.finishedGoodCode || ""} — ${
+                        selectedJob.finishedGoodName || ""
+                      }`
+                    : ""
+                }
+                readOnly
+                className={inputClass}
+              />
+            </Field>
 
-                <input
-                  value={formData.product}
-                  onChange={(e) => updateForm("product", e.target.value)}
-                  className="w-full bg-[#f8fafc] border border-slate-200 rounded-lg p-2.5 text-xs text-slate-700 outline-none focus:border-blue-500 focus:bg-white font-medium"
-                  placeholder="Product name"
-                />
-              </div>
+            <Field label="Customer">
+              <input
+                value={selectedJob?.customerName || ""}
+                readOnly
+                className={inputClass}
+              />
+            </Field>
 
-              <div className="space-y-1.5">
-                <label className="text-xs font-semibold text-slate-600">
-                  Material
-                </label>
+            <Field label="Job Target">
+              <input
+                value={
+                  selectedJob
+                    ? `${formatQuantity(
+                        selectedJob.targetQty
+                      )} ${selectedJob.unit || ""}`
+                    : ""
+                }
+                readOnly
+                className={inputClass}
+              />
+            </Field>
+          </div>
+        </Section>
 
-                <input
-                  value={formData.material}
-                  onChange={(e) => updateForm("material", e.target.value)}
-                  className="w-full bg-[#f8fafc] border border-slate-200 rounded-lg p-2.5 text-xs text-slate-700 outline-none focus:border-blue-500 focus:bg-white font-medium"
-                  placeholder="e.g. ALU ALU, Art Card 300gsm"
-                />
-              </div>
+        <Section title="Quantities">
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-6 gap-4">
+            <Field label="Planned Quantity" required>
+              <input
+                type="number"
+                min="0"
+                step="any"
+                value={formData.plannedQty}
+                onChange={(event) =>
+                  updateField(
+                    "plannedQty",
+                    event.target.value
+                  )
+                }
+                className={inputClass}
+              />
+            </Field>
 
-              <div className="space-y-1.5">
-                <label className="text-xs font-semibold text-slate-600">
-                  Size
-                </label>
+            <Field label="Printed Quantity">
+              <input
+                type="number"
+                min="0"
+                step="any"
+                value={formData.printedQty}
+                onChange={(event) =>
+                  updateField(
+                    "printedQty",
+                    event.target.value
+                  )
+                }
+                className={inputClass}
+              />
+            </Field>
 
-                <input
-                  value={formData.size}
-                  onChange={(e) => updateForm("size", e.target.value)}
-                  className="w-full bg-[#f8fafc] border border-slate-200 rounded-lg p-2.5 text-xs text-slate-700 outline-none focus:border-blue-500 focus:bg-white font-medium"
-                  placeholder="e.g. 150 mm"
-                />
-              </div>
-            </div>
+            <Field label="Good Quantity">
+              <input
+                type="number"
+                min="0"
+                step="any"
+                value={formData.goodQty}
+                onChange={(event) =>
+                  updateField("goodQty", event.target.value)
+                }
+                className={inputClass}
+              />
+            </Field>
+
+            <Field label="Rejected Quantity">
+              <input
+                type="number"
+                min="0"
+                step="any"
+                value={formData.rejectedQty}
+                onChange={(event) =>
+                  updateField(
+                    "rejectedQty",
+                    event.target.value
+                  )
+                }
+                className={inputClass}
+              />
+            </Field>
+
+            <Field label="Wastage Quantity">
+              <input
+                type="number"
+                min="0"
+                step="any"
+                value={formData.wastageQty}
+                onChange={(event) =>
+                  updateField(
+                    "wastageQty",
+                    event.target.value
+                  )
+                }
+                className={inputClass}
+              />
+            </Field>
+
+            <Field label="Unit">
+              <input
+                value={formData.unit}
+                onChange={(event) =>
+                  updateField("unit", event.target.value)
+                }
+                className={inputClass}
+              />
+            </Field>
           </div>
 
-          <div>
-            <h3 className="text-xs font-bold text-blue-600 uppercase tracking-wider mb-4 border-b border-slate-100 pb-1">
-              2. Quantity, Color & Material Movement
-            </h3>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-4">
+            <SummaryBox
+              label="Classified Quantity"
+              value={`${formatQuantity(
+                classifiedQty
+              )} ${formData.unit}`}
+            />
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-5">
-              <div className="space-y-1.5">
-                <label className="text-xs font-semibold text-slate-600">
-                  Qty
-                </label>
+            <SummaryBox
+              label="Unclassified Quantity"
+              value={`${formatQuantity(
+                Math.max(
+                  numberValue(formData.printedQty) -
+                    classifiedQty,
+                  0
+                )
+              )} ${formData.unit}`}
+            />
 
-                <input
-                  type="number"
-                  value={formData.qty}
-                  onChange={(e) => updateForm("qty", e.target.value)}
-                  placeholder="e.g. 200"
-                  className="w-full bg-[#f8fafc] border border-slate-200 rounded-lg p-2.5 text-xs text-slate-700 outline-none focus:border-blue-500 focus:bg-white font-medium"
-                />
-              </div>
-
-              <div className="space-y-1.5">
-                <label className="text-xs font-semibold text-slate-600">
-                  Qty Unit
-                </label>
-
-                <select
-                  value={formData.qtyUnit}
-                  onChange={(e) => updateForm("qtyUnit", e.target.value)}
-                  className="w-full bg-[#f8fafc] border border-slate-200 rounded-lg p-2.5 text-xs text-slate-700 outline-none focus:border-blue-500 focus:bg-white font-medium"
-                >
-                  <option>Kg</option>
-                  <option>Sheets</option>
-                  <option>Pcs</option>
-                  <option>Rolls</option>
-                  <option>Boxes</option>
-                </select>
-              </div>
-
-              <div className="space-y-1.5">
-                <label className="text-xs font-semibold text-slate-600">
-                  Color
-                </label>
-
-                <select
-                  value={formData.colorType}
-                  onChange={(e) => updateForm("colorType", e.target.value)}
-                  className="w-full bg-[#f8fafc] border border-slate-200 rounded-lg p-2.5 text-xs text-slate-700 outline-none focus:border-blue-500 focus:bg-white font-medium"
-                >
-                  <option>Single</option>
-                  <option>Double</option>
-                  <option>CMYK</option>
-                  <option>Multi</option>
-                  <option>Spot Color</option>
-                  <option>No Color</option>
-                </select>
-              </div>
-
-              <div className="space-y-1.5">
-                <label className="text-xs font-semibold text-slate-600">
-                  Wastage
-                </label>
-
-                <input
-                  type="number"
-                  value={formData.wastageQty}
-                  onChange={(e) => updateForm("wastageQty", e.target.value)}
-                  placeholder="e.g. 2"
-                  className="w-full bg-[#f8fafc] border border-slate-200 rounded-lg p-2.5 text-xs text-slate-700 outline-none focus:border-blue-500 focus:bg-white font-medium"
-                />
-              </div>
-
-              <div className="space-y-1.5">
-                <label className="text-xs font-semibold text-slate-600">
-                  Returned
-                </label>
-
-                <input
-                  type="number"
-                  value={formData.returnedQty}
-                  onChange={(e) => updateForm("returnedQty", e.target.value)}
-                  placeholder="e.g. 8"
-                  className="w-full bg-[#f8fafc] border border-slate-200 rounded-lg p-2.5 text-xs text-slate-700 outline-none focus:border-blue-500 focus:bg-white font-medium"
-                />
-              </div>
-
-              <div className="space-y-1.5">
-                <label className="text-xs font-semibold text-slate-600">
-                  Out
-                </label>
-
-                <input
-                  type="number"
-                  value={formData.outQty || calculatedOutQty}
-                  readOnly
-                  className="w-full bg-emerald-50 border border-emerald-100 rounded-lg p-2.5 text-xs text-emerald-700 outline-none font-bold"
-                />
-              </div>
-            </div>
-          </div>
-
-          <div>
-            <h3 className="text-xs font-bold text-blue-600 uppercase tracking-wider mb-4 border-b border-slate-100 pb-1">
-              3. Machine & Printing Specs
-            </h3>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-5">
-              <div className="space-y-1.5">
-                <label className="text-xs font-semibold text-slate-600">
-                  Machine
-                </label>
-
-                <select
-                  value={formData.machine}
-                  onChange={(e) => updateForm("machine", e.target.value)}
-                  className="w-full bg-[#f8fafc] border border-slate-200 rounded-lg p-2.5 text-xs text-slate-700 outline-none focus:border-blue-500 focus:bg-white font-medium"
-                >
-                  <option>Machine 01</option>
-                  <option>Machine 02</option>
-                  <option>Machine 03 (Heidelberg)</option>
-                  <option>Machine 04</option>
-                </select>
-              </div>
-
-              <div className="space-y-1.5">
-                <label className="text-xs font-semibold text-slate-600">
-                  Paper Size
-                </label>
-
-                <input
-                  type="text"
-                  value={formData.paperSize}
-                  onChange={(e) => updateForm("paperSize", e.target.value)}
-                  placeholder="e.g. 18x23, 20x30"
-                  className="w-full bg-[#f8fafc] border border-slate-200 rounded-lg p-2.5 text-xs text-slate-700 outline-none focus:border-blue-500 focus:bg-white font-medium"
-                />
-              </div>
-
-              <div className="space-y-1.5">
-                <label className="text-xs font-semibold text-slate-600">
-                  Impressions
-                </label>
-
-                <input
-                  type="number"
-                  value={formData.impressions}
-                  onChange={(e) => updateForm("impressions", e.target.value)}
-                  placeholder="Leave blank to match qty"
-                  className="w-full bg-[#f8fafc] border border-slate-200 rounded-lg p-2.5 text-xs text-slate-700 outline-none focus:border-blue-500 focus:bg-white font-medium"
-                />
-              </div>
-
-              <div className="space-y-1.5">
-                <label className="text-xs font-semibold text-slate-600">
-                  Plates Count
-                </label>
-
-                <input
-                  type="number"
-                  value={formData.platesCount}
-                  onChange={(e) => updateForm("platesCount", e.target.value)}
-                  placeholder="4"
-                  className="w-full bg-[#f8fafc] border border-slate-200 rounded-lg p-2.5 text-xs text-slate-700 outline-none focus:border-blue-500 focus:bg-white font-medium"
-                />
-              </div>
-
-              <div className="space-y-1.5">
-                <label className="text-xs font-semibold text-slate-600">
-                  Unit Rate
-                </label>
-
-                <input
-                  type="number"
-                  value={formData.rate}
-                  onChange={(e) => updateForm("rate", e.target.value)}
-                  placeholder="0.00"
-                  className="w-full bg-[#f8fafc] border border-slate-200 rounded-lg p-2.5 text-xs text-slate-700 outline-none focus:border-blue-500 focus:bg-white font-medium"
-                />
-              </div>
-
-              <div className="space-y-1.5">
-                <label className="text-xs font-semibold text-slate-600">
-                  Shift
-                </label>
-
-                <select
-                  value={formData.shift}
-                  onChange={(e) => updateForm("shift", e.target.value)}
-                  className="w-full bg-[#f8fafc] border border-slate-200 rounded-lg p-2.5 text-xs text-slate-700 outline-none focus:border-blue-500 focus:bg-white font-medium"
-                >
-                  <option>Day</option>
-                  <option>Night</option>
-                </select>
-              </div>
-            </div>
-          </div>
-
-          <div>
-            <h3 className="text-xs font-bold text-blue-600 uppercase tracking-wider mb-4 border-b border-slate-100 pb-1">
-              4. Operator & Time
-            </h3>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-5">
-              <div className="space-y-1.5">
-                <label className="text-xs font-semibold text-slate-600">
-                  Assigned Operator
-                </label>
-
-                <input
-                  value={formData.employee}
-                  onChange={(e) => updateForm("employee", e.target.value)}
-                  className="w-full bg-[#f8fafc] border border-slate-200 rounded-lg p-2.5 text-xs text-slate-700 outline-none focus:border-blue-500 focus:bg-white font-medium"
-                  placeholder="Operator name"
-                />
-              </div>
-
-              <div className="space-y-1.5">
-                <label className="text-xs font-semibold text-slate-600">
-                  Helper
-                </label>
-
-                <input
-                  value={formData.helper}
-                  onChange={(e) => updateForm("helper", e.target.value)}
-                  className="w-full bg-[#f8fafc] border border-slate-200 rounded-lg p-2.5 text-xs text-slate-700 outline-none focus:border-blue-500 focus:bg-white font-medium"
-                  placeholder="Helper name"
-                />
-              </div>
-
-              <div className="space-y-1.5">
-                <label className="text-xs font-semibold text-slate-600">
-                  Start Time
-                </label>
-
-                <input
-                  type="time"
-                  value={formData.startTime}
-                  onChange={(e) => updateForm("startTime", e.target.value)}
-                  className="w-full bg-[#f8fafc] border border-slate-200 rounded-lg p-2.5 text-xs text-slate-700 outline-none focus:border-blue-500 focus:bg-white font-medium"
-                />
-              </div>
-
-              <div className="space-y-1.5">
-                <label className="text-xs font-semibold text-slate-600">
-                  End Time
-                </label>
-
-                <input
-                  type="time"
-                  value={formData.endTime}
-                  onChange={(e) => updateForm("endTime", e.target.value)}
-                  className="w-full bg-[#f8fafc] border border-slate-200 rounded-lg p-2.5 text-xs text-slate-700 outline-none focus:border-blue-500 focus:bg-white font-medium"
-                />
-              </div>
-            </div>
-          </div>
-
-          <div className="space-y-2">
-            <label className="text-xs font-semibold text-slate-600">
-              Printing Sides
-            </label>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <button
-                type="button"
-                onClick={() => setSide("1-side")}
-                className={`flex items-center justify-between p-4 rounded-lg border text-left transition-all ${
-                  side === "1-side"
-                    ? "border-blue-600 bg-blue-50/50"
-                    : "border-slate-200 bg-[#f8fafc]"
-                }`}
-              >
-                <div>
-                  <p className="font-bold text-xs text-slate-700">
-                    SINGLE SIDE
-                  </p>
-                  <p className="text-[10px] text-slate-400">
-                    Front printing only
-                  </p>
-                </div>
-
-                {side === "1-side" && (
-                  <div className="w-4 h-4 bg-blue-600 rounded-full flex items-center justify-center text-white text-[9px]">
-                    ✓
-                  </div>
-                )}
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setSide("2-side")}
-                className={`flex items-center justify-between p-4 rounded-lg border text-left transition-all ${
-                  side === "2-side"
-                    ? "border-blue-600 bg-blue-50/50"
-                    : "border-slate-200 bg-[#f8fafc]"
-                }`}
-              >
-                <div>
-                  <p className="font-bold text-xs text-slate-700">
-                    DOUBLE SIDE
-                  </p>
-                  <p className="text-[10px] text-slate-400">
-                    Front & back printing
-                  </p>
-                </div>
-
-                {side === "2-side" && (
-                  <div className="w-4 h-4 bg-blue-600 rounded-full flex items-center justify-center text-white text-[9px]">
-                    ✓
-                  </div>
-                )}
-              </button>
-            </div>
-          </div>
-
-          <div>
-            <label className="text-xs font-semibold text-slate-600">
-              Remarks
-            </label>
-
-            <textarea
-              value={formData.remarks}
-              onChange={(e) => updateForm("remarks", e.target.value)}
-              rows="3"
-              className="w-full mt-1 bg-[#f8fafc] border border-slate-200 rounded-lg p-2.5 text-xs text-slate-700 outline-none focus:border-blue-500 focus:bg-white font-medium"
-              placeholder="Any special printing instruction..."
+            <SummaryBox
+              label="Printing Amount"
+              value={money(calculatedAmount)}
             />
           </div>
+        </Section>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div className="bg-slate-50 border border-slate-200 rounded-lg p-4">
-              <span className="text-xs font-semibold text-slate-600">
-                Out Qty:
-              </span>
-              <div className="text-xl font-bold text-emerald-600">
-                {calculatedOutQty} {formData.qtyUnit}
-              </div>
-            </div>
+        <Section title="Printing Details">
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+            <Field label="Machine" required>
+              <select
+                value={formData.machine}
+                onChange={(event) =>
+                  updateField("machine", event.target.value)
+                }
+                className={inputClass}
+              >
+                <option value="Machine 01">
+                  Machine 01
+                </option>
 
-            <div className="bg-slate-50 border border-slate-200 rounded-lg p-4">
-              <span className="text-xs font-semibold text-slate-600">
-                Wastage + Returned:
-              </span>
-              <div className="text-xl font-bold text-red-600">
-                {Number(formData.wastageQty || 0) +
-                  Number(formData.returnedQty || 0)}{" "}
-                {formData.qtyUnit}
-              </div>
-            </div>
+                <option value="Machine 02">
+                  Machine 02
+                </option>
 
-            <div className="bg-slate-50 border border-slate-200 rounded-lg p-4">
-              <span className="text-xs font-semibold text-slate-600">
-                Calculated Printing Cost:
-              </span>
-              <div className="text-xl font-bold text-slate-800">
-                {money(calculatedAmount)}
-              </div>
-            </div>
+                <option value="Machine 03 (Heidelberg)">
+                  Machine 03 (Heidelberg)
+                </option>
+
+                <option value="Machine 04">
+                  Machine 04
+                </option>
+              </select>
+            </Field>
+
+            <Field label="Operator" required>
+              <input
+                value={formData.operator}
+                onChange={(event) =>
+                  updateField(
+                    "operator",
+                    event.target.value
+                  )
+                }
+                className={inputClass}
+              />
+            </Field>
+
+            <Field label="Helper">
+              <input
+                value={formData.helper}
+                onChange={(event) =>
+                  updateField("helper", event.target.value)
+                }
+                className={inputClass}
+              />
+            </Field>
+
+            <Field label="Shift">
+              <select
+                value={formData.shift}
+                onChange={(event) =>
+                  updateField("shift", event.target.value)
+                }
+                className={inputClass}
+              >
+                <option value="Day">Day</option>
+                <option value="Night">Night</option>
+              </select>
+            </Field>
+
+            <Field label="Paper Size">
+              <input
+                value={formData.paperSize}
+                onChange={(event) =>
+                  updateField(
+                    "paperSize",
+                    event.target.value
+                  )
+                }
+                className={inputClass}
+              />
+            </Field>
+
+            <Field label="Colour">
+              <input
+                value={formData.colorType}
+                onChange={(event) =>
+                  updateField(
+                    "colorType",
+                    event.target.value
+                  )
+                }
+                className={inputClass}
+              />
+            </Field>
+
+            <Field label="Printing Side">
+              <select
+                value={formData.side}
+                onChange={(event) =>
+                  updateField("side", event.target.value)
+                }
+                className={inputClass}
+              >
+                <option value="1-side">Single Side</option>
+                <option value="2-side">Double Side</option>
+              </select>
+            </Field>
+
+            <Field label="Impressions">
+              <input
+                type="number"
+                min="0"
+                step="any"
+                value={formData.impressions}
+                onChange={(event) =>
+                  updateField(
+                    "impressions",
+                    event.target.value
+                  )
+                }
+                className={inputClass}
+              />
+            </Field>
+
+            <Field label="Plate Count">
+              <input
+                type="number"
+                min="0"
+                value={formData.platesCount}
+                onChange={(event) =>
+                  updateField(
+                    "platesCount",
+                    event.target.value
+                  )
+                }
+                className={inputClass}
+              />
+            </Field>
+
+            <Field label="Start Time">
+              <input
+                type="time"
+                value={formData.startTime}
+                onChange={(event) =>
+                  updateField(
+                    "startTime",
+                    event.target.value
+                  )
+                }
+                className={inputClass}
+              />
+            </Field>
+
+            <Field label="End Time">
+              <input
+                type="time"
+                value={formData.endTime}
+                onChange={(event) =>
+                  updateField(
+                    "endTime",
+                    event.target.value
+                  )
+                }
+                className={inputClass}
+              />
+            </Field>
+
+            <Field label="Rate">
+              <input
+                type="number"
+                min="0"
+                step="any"
+                value={formData.rate}
+                onChange={(event) =>
+                  updateField("rate", event.target.value)
+                }
+                className={inputClass}
+              />
+            </Field>
           </div>
-        </div>
+        </Section>
 
-        <div className="p-4 bg-slate-50 border-t border-slate-200 flex justify-end gap-3">
+        <Section title="Remarks">
+          <textarea
+            rows="4"
+            value={formData.remarks}
+            onChange={(event) =>
+              updateField("remarks", event.target.value)
+            }
+            className={`${inputClass} min-h-[100px]`}
+          />
+        </Section>
+
+        <div className="flex justify-end gap-3 border-t pt-5">
           <button
             type="button"
             onClick={closeForm}
-            className="px-5 py-2 border border-slate-300 text-slate-600 font-medium text-xs rounded-lg bg-white hover:bg-slate-50 transition-all"
+            className="rounded-lg border px-6 py-2.5 text-sm font-semibold text-slate-600"
           >
             Cancel
           </button>
 
           <button
-            type="button"
-            onClick={handleSubmit}
-            className="px-6 py-2 bg-[#0284c7] text-white font-bold text-xs rounded-lg hover:bg-blue-700 transition-all shadow-sm"
+            type="submit"
+            disabled={saving}
+            className="flex items-center gap-2 rounded-lg bg-blue-700 px-7 py-2.5 text-sm font-bold text-white hover:bg-blue-800 disabled:opacity-60"
           >
-            {editId ? "Update Data" : "Save Printing Entry"}
+            {saving && (
+              <Loader2
+                size={17}
+                className="animate-spin"
+              />
+            )}
+
+            {saving
+              ? "Saving..."
+              : editId
+              ? "Update Printing"
+              : "Save Draft"}
           </button>
         </div>
-      </div>
+      </form>
     </div>
+  );
+};
+
+const Section = ({ title, children }) => (
+  <section>
+    <h3 className="mb-4 border-b pb-2 text-xs font-bold uppercase tracking-wider text-blue-700">
+      {title}
+    </h3>
+
+    {children}
+  </section>
+);
+
+const Field = ({
+  label,
+  required = false,
+  wide = false,
+  children,
+}) => (
+  <div className={wide ? "md:col-span-2" : ""}>
+    <label className="mb-1.5 block text-xs font-bold text-slate-600">
+      {label}
+
+      {required && (
+        <span className="text-red-600"> *</span>
+      )}
+    </label>
+
+    {children}
+  </div>
+);
+
+const StatCard = ({
+  label,
+  value,
+  danger = false,
+}) => (
+  <div className="rounded-xl border bg-white p-4 shadow-sm">
+    <p className="text-xs text-slate-500">{label}</p>
+
+    <h3
+      className={`mt-1 text-xl font-bold ${
+        danger ? "text-red-600" : "text-slate-900"
+      }`}
+    >
+      {value}
+    </h3>
+  </div>
+);
+
+const SummaryBox = ({ label, value }) => (
+  <div className="rounded-xl border bg-slate-50 p-4">
+    <p className="text-xs text-slate-500">{label}</p>
+
+    <h3 className="mt-1 text-lg font-bold text-slate-900">
+      {value}
+    </h3>
+  </div>
+);
+
+const ActionButton = ({
+  title,
+  onClick,
+  disabled,
+  color,
+  children,
+}) => {
+  const colors = {
+    slate:
+      "text-slate-600 hover:bg-slate-100",
+
+    blue:
+      "text-blue-600 hover:bg-blue-50",
+
+    emerald:
+      "text-emerald-600 hover:bg-emerald-50",
+
+    orange:
+      "text-orange-600 hover:bg-orange-50",
+
+    red:
+      "text-red-600 hover:bg-red-50",
+  };
+
+  return (
+    <button
+      type="button"
+      title={title}
+      onClick={onClick}
+      disabled={disabled}
+      className={`rounded-lg p-2 disabled:cursor-not-allowed disabled:opacity-40 ${colors[color]}`}
+    >
+      {children}
+    </button>
   );
 };
 

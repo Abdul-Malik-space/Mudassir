@@ -1,408 +1,2292 @@
-import React, { useState, useEffect } from 'react';
-import { Plus, Package, Trash2, ArrowLeft, PencilLine, CheckCircle2, Database, Loader2 } from 'lucide-react';
-import { API_BASE_URL } from "../config/api";
+import React, {
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 
-const ReadyProductEntry = () => {
-  const [showForm, setShowForm] = useState(false);
-  const [editId, setEditId] = useState(null);
-  const [entries, setEntries] = useState([]);
-  const [loading, setLoading] = useState(false);
+import {
+  ArrowLeft,
+  CheckCircle2,
+  Edit3,
+  Loader2,
+  Plus,
+  RefreshCcw,
+  Search,
+  Send,
+  Trash2,
+  X,
+  XCircle,
+} from "lucide-react";
 
-  // عارضی جاب کارڈ لسٹ (بیک اینڈ آنے پر ریپلیس کر لیں)
-  const [jobCards, setJobCards] = useState(['JOB-3589', 'JOB-1024', 'JOB-7782']);
+import {
+  API_BASE_URL,
+} from "../config/api";
 
-  // بیکنڈ API کا URL
-  const API_URL = `${API_BASE_URL}/ready-products`;
+const API_READY =
+  `${API_BASE_URL}/ready-products`;
 
-  // --- API سے ڈیٹا لوڈ کرنا ---
-  const fetchEntries = async () => {
-    setLoading(true);
-    try {
-      const response = await fetch(`${API_URL}/all`);
-      const data = await response.json();
-      setEntries(data);
-    } catch (error) {
-      console.error("Error fetching data:", error);
-    } finally {
-      setLoading(false);
+const todayDate = () =>
+  new Date()
+    .toISOString()
+    .slice(0, 10);
+
+const numberValue = (
+  value
+) => {
+  const number =
+    Number(value);
+
+  return Number.isFinite(
+    number
+  )
+    ? number
+    : 0;
+};
+
+const formatQuantity = (
+  value
+) =>
+  numberValue(
+    value
+  ).toLocaleString(
+    undefined,
+    {
+      maximumFractionDigits:
+        3,
     }
-  };
+  );
 
-  useEffect(() => {
-    fetchEntries();
-  }, []);
-
-  const [formData, setFormData] = useState({
-    jobCardId: '',
-    product: '',
-    process: 'Pasting',
-    qty: '',
-    location: 'Main Store',
-    packaging: '',
-    employee: ''
-  });
-
-  const totalStock = entries.reduce((acc, curr) => acc + Number(curr.qty || 0), 0);
-
-  // --- سبمٹ فنکشن (Create & Update) ---
-  const handleSubmit = async () => {
-    if (!formData.jobCardId || !formData.product || !formData.qty || !formData.employee) {
-      alert("Please fill Job Card, Product Name, Quantity and Employee!");
-      return;
+const money = (
+  value
+) =>
+  `Rs. ${numberValue(
+    value
+  ).toLocaleString(
+    undefined,
+    {
+      maximumFractionDigits:
+        2,
     }
+  )}`;
 
-    const existingEntry = editId ? entries.find(e => e._id === editId) : null;
-    const payload = {
-      ...formData,
-      qty: Number(formData.qty),
-      time: editId ? existingEntry?.time : new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-    };
+const idOf = (
+  value
+) => {
+  if (!value) {
+    return "";
+  }
 
-    try {
-      const method = editId ? 'PUT' : 'POST';
-      const url = editId ? `${API_URL}/update/${editId}` : `${API_URL}/add`;
-
-      const response = await fetch(url, {
-        method: method,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-      if (response.ok) {
-        fetchEntries();
-        closeForm();
-      } else {
-        alert("Server responded with an error");
-      }
-    } catch (error) {
-      alert("Error saving record!");
-    }
-  };
-
-  const handleDelete = async (id) => {
-    if (window.confirm("Are you sure you want to delete this record?")) {
-      try {
-        const response = await fetch(`${API_URL}/delete/${id}`, { method: 'DELETE' });
-        if (response.ok) {
-          fetchEntries();
-        } else {
-          alert("Delete failed on server!");
-        }
-      } catch (error) {
-        alert("Error deleting record!");
-      }
-    }
-  };
-
-  const handleEdit = (entry) => {
-    setEditId(entry._id);
-    setFormData({
-      jobCardId: entry.jobCardId || '',
-      product: entry.product || '',
-      process: entry.process || 'Pasting',
-      qty: entry.qty || '',
-      location: entry.location || 'Main Store',
-      packaging: entry.packaging || '',
-      employee: entry.employee || ''
-    });
-    setShowForm(true);
-  };
-
-  const closeForm = () => {
-    setFormData({ jobCardId: '', product: '', process: 'Pasting', qty: '', location: 'Main Store', packaging: '', employee: '' });
-    setEditId(null);
-    setShowForm(false);
-  };
-
-  // --- ویو 1: مین ڈیش بورڈ (لسٹ) ---
-  if (!showForm) {
-    return (
-      <div className="w-full mx-auto p-6 space-y-6">
-        
-        {/* ٹاپ ہیڈر کارڈ - کلاسک بلیو تھیم */}
-        <div className="bg-[#1e40af] text-white p-5 rounded-t-xl flex justify-between items-center relative shadow-sm">
-          <div className="flex items-center gap-3">
-            <button onClick={() => window.history.back()} className="p-1 hover:bg-blue-700 rounded-lg transition-all">
-              <ArrowLeft size={20} className="text-white" />
-            </button>
-            <div>
-              <h1 className="text-lg font-bold text-white tracking-wide">Ready Inventory Log</h1>
-              <p className="text-blue-100 text-xs font-normal">Manage final packed products and warehouse stock</p>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-4">
-            {/* ٹوٹل اسٹاک کاؤنٹر */}
-            <div className="hidden md:flex bg-blue-800/50 border border-blue-500 px-4 py-1.5 rounded-lg items-center gap-3">
-              <div className="text-right">
-                <p className="text-[9px] font-bold text-blue-200 uppercase tracking-wider">Total Ready Stock</p>
-                <p className="text-sm font-black text-white">{totalStock.toLocaleString()} <span className="text-[10px] font-normal text-blue-200">units</span></p>
-              </div>
-              <Database size={16} className="text-blue-200" />
-            </div>
-
-            <button 
-              onClick={() => { closeForm(); setShowForm(true); }}
-              className="flex items-center gap-1.5 bg-[#2563eb] text-white px-5 py-2.5 rounded-lg font-semibold text-xs hover:bg-blue-700 transition-all shadow-sm border border-blue-400"
-            >
-              <Plus size={16} /> Add to Stock
-            </button>
-          </div>
-        </div>
-
-        {/* ٹیبل سیکشن */}
-        <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-          {loading ? (
-            <div className="flex justify-center items-center p-20">
-              <Loader2 className="animate-spin text-blue-600" size={36} />
-            </div>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs border-collapse">
-                <thead className="bg-slate-50 text-slate-500 font-bold uppercase tracking-wider border-b border-slate-200">
-                  <tr>
-                    <th className="px-5 py-3.5">Job No / Process</th>
-                    <th className="px-5 py-3.5">Product Details</th>
-                    <th className="px-5 py-3.5">Ready Qty</th>
-                    <th className="px-5 py-3.5">Warehouse Location</th>
-                    <th className="px-5 py-3.5">Packed By</th>
-                    <th className="px-5 py-3.5 text-center">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 text-slate-700">
-                  {entries.map((entry) => (
-                    <tr key={entry._id} className="hover:bg-slate-50/80 transition-colors">
-                      <td className="px-5 py-3.5">
-                        <div className="font-bold text-blue-600">{entry.jobCardId || 'N/A'}</div>
-                        <div className="text-[10px] font-bold text-slate-400 uppercase mt-0.5">{entry.process}</div>
-                      </td>
-                      <td className="px-5 py-3.5">
-                        <div className="font-semibold text-slate-800 flex items-center gap-1.5">
-                          <Package size={14} className="text-slate-400" />
-                          {entry.product}
-                        </div>
-                        {entry.packaging && <div className="text-[11px] text-slate-400 font-medium mt-0.5">{entry.packaging}</div>}
-                      </td>
-                      <td className="px-5 py-3.5">
-                        <span className="font-bold bg-emerald-50 text-emerald-700 border border-emerald-100 px-2 py-1 rounded">
-                          {Number(entry.qty).toLocaleString()}
-                        </span>
-                      </td>
-                      <td className="px-5 py-3.5">
-                        <span className="text-[10px] font-bold uppercase text-slate-600 bg-slate-100 border border-slate-200 px-2.5 py-0.5 rounded">
-                          {entry.location}
-                        </span>
-                      </td>
-                      <td className="px-5 py-3.5">
-                        <div className="font-medium">{entry.employee}</div>
-                        <div className="text-[10px] text-slate-400">{entry.time}</div>
-                      </td>
-                      <td className="px-5 py-3.5">
-                        <div className="flex justify-center gap-1.5">
-                          <button 
-                            onClick={() => handleEdit(entry)} 
-                            className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-md transition-all"
-                          >
-                            <PencilLine size={16} />
-                          </button>
-                          <button 
-                            onClick={() => handleDelete(entry._id)} 
-                            className="p-1.5 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-md transition-all"
-                          >
-                            <Trash2 size={16} />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
-      </div>
+  if (
+    typeof value ===
+    "object"
+  ) {
+    return String(
+      value._id ||
+      value.id ||
+      ""
     );
   }
 
-  // --- ویو 2: انٹری فارم ویو ---
+  return String(value);
+};
+
+const normalizeArray = (
+  data,
+  keys = []
+) => {
+  if (
+    Array.isArray(data)
+  ) {
+    return data;
+  }
+
+  for (
+    const key of keys
+  ) {
+    if (
+      Array.isArray(
+        data?.[key]
+      )
+    ) {
+      return data[key];
+    }
+  }
+
+  if (
+    Array.isArray(
+      data?.data
+    )
+  ) {
+    return data.data;
+  }
+
+  return [];
+};
+
+const apiRequest =
+  async (
+    url,
+    options = {}
+  ) => {
+    const response =
+      await fetch(
+        url,
+        {
+          ...options,
+
+          headers: {
+            "Content-Type":
+              "application/json",
+
+            ...(options.headers ||
+              {}),
+          },
+        }
+      );
+
+    const data =
+      await response
+        .json()
+        .catch(
+          () => ({})
+        );
+
+    if (!response.ok) {
+      throw new Error(
+        data.message ||
+        data.error ||
+        "Request failed."
+      );
+    }
+
+    return data;
+  };
+
+const inputClass =
+  "w-full rounded-lg border border-slate-300 bg-slate-50 px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-blue-600 focus:bg-white focus:ring-2 focus:ring-blue-100 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500";
+
+const emptyForm = () => ({
+  readyNo: "",
+  printing: "",
+  qcDate: todayDate(),
+  passedQty: "",
+  rejectedQty: "0",
+  holdQty: "0",
+  unit: "Pcs",
+  checkedBy: "",
+  packedBy: "",
+  packaging: "",
+  rate: "0",
+  remarks: "",
+});
+
+const statusClass = (
+  status
+) => {
+  const classes = {
+    Draft:
+      "border-slate-200 bg-slate-100 text-slate-700",
+
+    Posted:
+      "border-emerald-200 bg-emerald-100 text-emerald-700",
+
+    Cancelled:
+      "border-red-200 bg-red-100 text-red-700",
+  };
+
   return (
-    <div className="w-full mx-auto p-6">
-      
-      {/* فارم ہیڈر نیلے رنگ کا کلاسک لک */}
-      <div className="bg-[#1e40af] text-white p-5 rounded-t-xl flex justify-between items-center shadow-sm">
-        <div className="flex items-center gap-3">
-          <button onClick={closeForm} className="p-1 hover:bg-blue-700 rounded-lg transition-all">
-             <ArrowLeft size={20} className="text-white" />
-          </button>
-          <h1 className="text-lg font-bold tracking-wide">
-            {editId ? 'Edit Inventory Stock' : 'Add Ready Stock to Warehouse'}
-          </h1>
-        </div>
-        <button 
-          onClick={closeForm}
-          className="bg-blue-700 text-white px-4 py-2 rounded-lg font-medium text-xs hover:bg-blue-800 transition-all border border-blue-500"
-        >
-          Back to List
-        </button>
-      </div>
+    classes[status] ||
+    classes.Draft
+  );
+};
 
-      <div className="bg-white rounded-b-xl border-x border-b border-slate-200 shadow-sm overflow-hidden">
-        <div className="p-6 space-y-8">
-          
-          {/* سیکشن 1: جاب لنک اور پروڈکٹ نام */}
-          <div>
-            <h3 className="text-xs font-bold text-blue-600 tracking-wider uppercase mb-4 border-b border-slate-100 pb-1">1. Job & Product Information</h3>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-              
-              {/* جاب کارڈ سلیکشن ڈراپ ڈاؤن */}
-              <div className="space-y-1.5">
-                <label className="text-xs font-semibold text-slate-600">Select Job Card</label>
-                <select
-                  value={formData.jobCardId}
-                  onChange={(e) => setFormData({...formData, jobCardId: e.target.value})}
-                  className="w-full bg-[#f8fafc] border border-slate-200 rounded-lg p-2.5 text-xs text-slate-700 outline-none focus:border-blue-500 focus:bg-white font-medium cursor-pointer"
-                >
-                  <option value="">Select Job No</option>
-                  {jobCards.map((job) => (
-                    <option key={job} value={job}>{job}</option>
-                  ))}
-                </select>
-              </div>
+const qcClass = (
+  status
+) => {
+  const classes = {
+    Passed:
+      "bg-emerald-100 text-emerald-700",
 
-              {/* پروڈکٹ نیم ان پٹ */}
-              <div className="space-y-1.5">
-                <label className="text-xs font-semibold text-slate-600">Product Name</label>
-                <input 
-                  type="text" 
-                  value={formData.product}
-                  onChange={(e) => setFormData({...formData, product: e.target.value})}
-                  placeholder="e.g. Premium Perfume Box" 
-                  className="w-full bg-[#f8fafc] border border-slate-200 rounded-lg p-2.5 text-xs text-slate-700 outline-none focus:border-blue-500 focus:bg-white font-medium" 
+    "Partially Passed":
+      "bg-amber-100 text-amber-700",
+
+    Rejected:
+      "bg-red-100 text-red-700",
+
+    Hold:
+      "bg-slate-100 text-slate-700",
+  };
+
+  return (
+    classes[status] ||
+    classes.Hold
+  );
+};
+
+const ReadyProductEntry =
+  () => {
+    const [
+      entries,
+      setEntries,
+    ] = useState([]);
+
+    const [
+      eligiblePrintings,
+      setEligiblePrintings,
+    ] = useState([]);
+
+    const [
+      formData,
+      setFormData,
+    ] = useState(
+      emptyForm()
+    );
+
+    const [
+      selectedPrintingData,
+      setSelectedPrintingData,
+    ] = useState(null);
+
+    const [
+      showForm,
+      setShowForm,
+    ] = useState(false);
+
+    const [
+      editId,
+      setEditId,
+    ] = useState(null);
+
+    const [
+      loading,
+      setLoading,
+    ] = useState(false);
+
+    const [
+      saving,
+      setSaving,
+    ] = useState(false);
+
+    const [
+      actionId,
+      setActionId,
+    ] = useState("");
+
+    const [
+      search,
+      setSearch,
+    ] = useState("");
+
+    const [
+      statusFilter,
+      setStatusFilter,
+    ] = useState(
+      "All"
+    );
+
+    const fetchData =
+      async () => {
+        try {
+          setLoading(
+            true
+          );
+
+          const [
+            entryData,
+            printingData,
+          ] =
+            await Promise.all(
+              [
+                apiRequest(
+                  `${API_READY}/all`
+                ),
+
+                apiRequest(
+                  `${API_READY}/eligible-printings`
+                ),
+              ]
+            );
+
+          setEntries(
+            normalizeArray(
+              entryData,
+              [
+                "entries",
+                "readyProducts",
+              ]
+            )
+          );
+
+          setEligiblePrintings(
+            normalizeArray(
+              printingData,
+              [
+                "printings",
+                "entries",
+              ]
+            )
+          );
+        } catch (error) {
+          console.error(
+            "Ready Product Load Error:",
+            error
+          );
+
+          alert(
+            error.message ||
+            "Unable to load ready product records."
+          );
+        } finally {
+          setLoading(
+            false
+          );
+        }
+      };
+
+    useEffect(
+      () => {
+        fetchData();
+      },
+      []
+    );
+
+    const selectedPrinting =
+      useMemo(
+        () => {
+          if (
+            selectedPrintingData
+          ) {
+            return selectedPrintingData;
+          }
+
+          return eligiblePrintings.find(
+            (
+              printing
+            ) =>
+              String(
+                printing._id
+              ) ===
+              String(
+                formData.printing
+              )
+          );
+        },
+        [
+          eligiblePrintings,
+          formData.printing,
+          selectedPrintingData,
+        ]
+      );
+
+    const printingGoodQty =
+      numberValue(
+        selectedPrinting?.goodQty
+      );
+
+    const classifiedQty =
+      numberValue(
+        formData.passedQty
+      ) +
+      numberValue(
+        formData.rejectedQty
+      ) +
+      numberValue(
+        formData.holdQty
+      );
+
+    const calculatedAmount =
+      numberValue(
+        formData.passedQty
+      ) *
+      numberValue(
+        formData.rate
+      );
+
+    const openNewForm =
+      async () => {
+        try {
+          const data =
+            await apiRequest(
+              `${API_READY}/next-no`
+            );
+
+          setEditId(
+            null
+          );
+
+          setSelectedPrintingData(
+            null
+          );
+
+          setFormData({
+            ...emptyForm(),
+
+            readyNo:
+              data.readyNo ||
+              "",
+          });
+
+          setShowForm(
+            true
+          );
+        } catch (error) {
+          alert(
+            error.message ||
+            "Unable to prepare a new ready product entry."
+          );
+        }
+      };
+
+    const closeForm =
+      () => {
+        setShowForm(
+          false
+        );
+
+        setEditId(
+          null
+        );
+
+        setSelectedPrintingData(
+          null
+        );
+
+        setFormData(
+          emptyForm()
+        );
+      };
+
+    const updateField = (
+      field,
+      value
+    ) => {
+      setFormData(
+        (
+          current
+        ) => ({
+          ...current,
+
+          [field]:
+            value,
+        })
+      );
+    };
+
+    const handlePrintingChange = (
+      printingId
+    ) => {
+      const printing =
+        eligiblePrintings.find(
+          (row) =>
+            String(
+              row._id
+            ) ===
+            String(
+              printingId
+            )
+        );
+
+      setSelectedPrintingData(
+        printing ||
+        null
+      );
+
+      if (!printing) {
+        setFormData(
+          (
+            current
+          ) => ({
+            ...current,
+
+            printing:
+              "",
+
+            passedQty:
+              "",
+
+            rejectedQty:
+              "0",
+
+            holdQty:
+              "0",
+          })
+        );
+
+        return;
+      }
+
+      const goodQty =
+        numberValue(
+          printing.goodQty
+        );
+
+      setFormData(
+        (
+          current
+        ) => ({
+          ...current,
+
+          printing:
+            printing._id,
+
+          passedQty:
+            String(
+              goodQty
+            ),
+
+          rejectedQty:
+            "0",
+
+          holdQty:
+            "0",
+
+          unit:
+            printing.unit ||
+            "Pcs",
+
+          rate:
+            String(
+              printing
+                .finishedGoodItem
+                ?.purchasePrice ||
+              0
+            ),
+        })
+      );
+    };
+
+    const openEdit = (
+      entry
+    ) => {
+      const printing =
+        typeof entry.printing ===
+        "object"
+          ? entry.printing
+          : null;
+
+      setEditId(
+        entry._id
+      );
+
+      setSelectedPrintingData(
+        printing
+          ? {
+              ...printing,
+
+              productionJob:
+                typeof entry.productionJob ===
+                "object"
+                  ? entry.productionJob
+                  : null,
+
+              finishedGoodItem:
+                typeof entry.finishedGoodItem ===
+                "object"
+                  ? entry.finishedGoodItem
+                  : null,
+            }
+          : null
+      );
+
+      setFormData({
+        readyNo:
+          entry.readyNo ||
+          "",
+
+        printing:
+          idOf(
+            entry.printing
+          ),
+
+        qcDate:
+          String(
+            entry.qcDate ||
+            ""
+          ).slice(
+            0,
+            10
+          ) ||
+          todayDate(),
+
+        passedQty:
+          String(
+            entry.passedQty ??
+            ""
+          ),
+
+        rejectedQty:
+          String(
+            entry.rejectedQty ??
+            0
+          ),
+
+        holdQty:
+          String(
+            entry.holdQty ??
+            0
+          ),
+
+        unit:
+          entry.unit ||
+          "Pcs",
+
+        checkedBy:
+          entry.checkedBy ||
+          "",
+
+        packedBy:
+          entry.packedBy ||
+          "",
+
+        packaging:
+          entry.packaging ||
+          "",
+
+        rate:
+          String(
+            entry.rate ??
+            0
+          ),
+
+        remarks:
+          entry.remarks ||
+          "",
+      });
+
+      setShowForm(
+        true
+      );
+    };
+
+    const validateForm = (
+      forPosting = false
+    ) => {
+      if (
+        !formData.printing
+      ) {
+        alert(
+          "Please select a completed printing record."
+        );
+
+        return false;
+      }
+
+      if (
+        printingGoodQty <= 0
+      ) {
+        alert(
+          "Printing good quantity must be greater than zero."
+        );
+
+        return false;
+      }
+
+      if (
+        Math.abs(
+          classifiedQty -
+          printingGoodQty
+        ) > 0.000001
+      ) {
+        alert(
+          "Passed, rejected and hold quantities must equal printing good quantity."
+        );
+
+        return false;
+      }
+
+      if (
+        forPosting &&
+        numberValue(
+          formData.passedQty
+        ) <= 0
+      ) {
+        alert(
+          "Passed quantity must be greater than zero before posting."
+        );
+
+        return false;
+      }
+
+      if (
+        !formData.checkedBy.trim()
+      ) {
+        alert(
+          "Quality checker is required."
+        );
+
+        return false;
+      }
+
+      return true;
+    };
+
+    const buildPayload =
+      () => ({
+        printing:
+          formData.printing,
+
+        qcDate:
+          formData.qcDate,
+
+        passedQty:
+          numberValue(
+            formData.passedQty
+          ),
+
+        rejectedQty:
+          numberValue(
+            formData.rejectedQty
+          ),
+
+        holdQty:
+          numberValue(
+            formData.holdQty
+          ),
+
+        unit:
+          formData.unit,
+
+        checkedBy:
+          formData.checkedBy.trim(),
+
+        packedBy:
+          formData.packedBy.trim(),
+
+        packaging:
+          formData.packaging.trim(),
+
+        rate:
+          numberValue(
+            formData.rate
+          ),
+
+        remarks:
+          formData.remarks.trim(),
+      });
+
+    const saveDraft =
+      async () => {
+        if (
+          !validateForm(
+            false
+          )
+        ) {
+          return;
+        }
+
+        try {
+          setSaving(
+            true
+          );
+
+          await apiRequest(
+            editId
+              ? `${API_READY}/update/${editId}`
+              : `${API_READY}/add`,
+
+            {
+              method:
+                editId
+                  ? "PUT"
+                  : "POST",
+
+              body:
+                JSON.stringify(
+                  buildPayload()
+                ),
+            }
+          );
+
+          await fetchData();
+
+          closeForm();
+        } catch (error) {
+          alert(
+            error.message ||
+            "Unable to save the ready product draft."
+          );
+        } finally {
+          setSaving(
+            false
+          );
+        }
+      };
+
+    const postOutput =
+      async () => {
+        if (
+          !validateForm(
+            true
+          )
+        ) {
+          return;
+        }
+
+        if (
+          !window.confirm(
+            `Post ${formatQuantity(
+              formData.passedQty
+            )} ${formData.unit} to Finished Goods Warehouse?`
+          )
+        ) {
+          return;
+        }
+
+        try {
+          setSaving(
+            true
+          );
+
+          if (editId) {
+            await apiRequest(
+              `${API_READY}/update/${editId}`,
+
+              {
+                method:
+                  "PUT",
+
+                body:
+                  JSON.stringify(
+                    buildPayload()
+                  ),
+              }
+            );
+
+            await apiRequest(
+              `${API_READY}/post/${editId}`,
+
+              {
+                method:
+                  "POST",
+
+                body:
+                  JSON.stringify(
+                    {}
+                  ),
+              }
+            );
+          } else {
+            await apiRequest(
+              `${API_READY}/create-and-post`,
+
+              {
+                method:
+                  "POST",
+
+                body:
+                  JSON.stringify(
+                    buildPayload()
+                  ),
+              }
+            );
+          }
+
+          await fetchData();
+
+          closeForm();
+        } catch (error) {
+          alert(
+            error.message ||
+            "Unable to post production output."
+          );
+        } finally {
+          setSaving(
+            false
+          );
+        }
+      };
+
+    const postDraft =
+      async (
+        entry
+      ) => {
+        if (
+          !window.confirm(
+            `Post ${entry.readyNo} to Finished Goods Warehouse?`
+          )
+        ) {
+          return;
+        }
+
+        try {
+          setActionId(
+            entry._id
+          );
+
+          await apiRequest(
+            `${API_READY}/post/${entry._id}`,
+
+            {
+              method:
+                "POST",
+
+              body:
+                JSON.stringify(
+                  {}
+                ),
+            }
+          );
+
+          await fetchData();
+        } catch (error) {
+          alert(
+            error.message ||
+            "Unable to post production output."
+          );
+        } finally {
+          setActionId(
+            ""
+          );
+        }
+      };
+
+    const cancelPosted =
+      async (
+        entry
+      ) => {
+        const cancelReason =
+          window.prompt(
+            "Enter cancellation reason:",
+            ""
+          );
+
+        if (
+          cancelReason ===
+          null
+        ) {
+          return;
+        }
+
+        try {
+          setActionId(
+            entry._id
+          );
+
+          await apiRequest(
+            `${API_READY}/cancel/${entry._id}`,
+
+            {
+              method:
+                "POST",
+
+              body:
+                JSON.stringify({
+                  cancelReason:
+                    cancelReason.trim() ||
+                    "Production output cancelled",
+                }),
+            }
+          );
+
+          await fetchData();
+        } catch (error) {
+          alert(
+            error.message ||
+            "Unable to cancel production output."
+          );
+        } finally {
+          setActionId(
+            ""
+          );
+        }
+      };
+
+    const deleteDraft =
+      async (
+        entry
+      ) => {
+        if (
+          !window.confirm(
+            `Delete ${entry.readyNo}?`
+          )
+        ) {
+          return;
+        }
+
+        try {
+          setActionId(
+            entry._id
+          );
+
+          await apiRequest(
+            `${API_READY}/delete/${entry._id}`,
+
+            {
+              method:
+                "DELETE",
+            }
+          );
+
+          await fetchData();
+        } catch (error) {
+          alert(
+            error.message ||
+            "Unable to delete the draft."
+          );
+        } finally {
+          setActionId(
+            ""
+          );
+        }
+      };
+
+    const filteredEntries =
+      useMemo(
+        () => {
+          const keyword =
+            search
+              .trim()
+              .toLowerCase();
+
+          return entries.filter(
+            (
+              entry
+            ) => {
+              const searchable =
+                [
+                  entry.readyNo,
+                  entry.jobNo,
+                  entry.printingNo,
+                  entry.finishedGoodCode,
+                  entry.finishedGoodName,
+                  entry.checkedBy,
+                ]
+                  .filter(
+                    Boolean
+                  )
+                  .join(" ")
+                  .toLowerCase();
+
+              return (
+                (!keyword ||
+                  searchable.includes(
+                    keyword
+                  )) &&
+
+                (statusFilter ===
+                  "All" ||
+                  entry.status ===
+                  statusFilter)
+              );
+            }
+          );
+        },
+        [
+          entries,
+          search,
+          statusFilter,
+        ]
+      );
+
+    const stats =
+      useMemo(
+        () => ({
+          total:
+            entries.length,
+
+          draft:
+            entries.filter(
+              (
+                entry
+              ) =>
+                entry.status ===
+                "Draft"
+            ).length,
+
+          posted:
+            entries.filter(
+              (
+                entry
+              ) =>
+                entry.status ===
+                "Posted"
+            ).length,
+
+          output:
+            entries
+              .filter(
+                (
+                  entry
+                ) =>
+                  entry.status ===
+                  "Posted"
+              )
+              .reduce(
+                (
+                  sum,
+                  entry
+                ) =>
+                  sum +
+                  numberValue(
+                    entry.passedQty
+                  ),
+                0
+              ),
+
+          rejected:
+            entries
+              .filter(
+                (
+                  entry
+                ) =>
+                  entry.status ===
+                  "Posted"
+              )
+              .reduce(
+                (
+                  sum,
+                  entry
+                ) =>
+                  sum +
+                  numberValue(
+                    entry.rejectedQty
+                  ),
+                0
+              ),
+
+          eligible:
+            eligiblePrintings.length,
+        }),
+        [
+          entries,
+          eligiblePrintings,
+        ]
+      );
+
+    if (showForm) {
+      const job =
+        selectedPrinting
+          ?.productionJob;
+
+      const finishedGood =
+        selectedPrinting
+          ?.finishedGoodItem;
+
+      return (
+        <div className="w-full p-3 sm:p-5 md:p-6">
+          <div className="flex items-center justify-between rounded-t-xl bg-[#1e40af] p-5 text-white">
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={
+                  closeForm
+                }
+                className="rounded-lg p-1 hover:bg-blue-700"
+              >
+                <ArrowLeft
+                  size={
+                    20
+                  }
                 />
-              </div>
+              </button>
 
+              <h1 className="text-lg font-bold">
+                {editId
+                  ? "Edit Ready Product"
+                  : "New Ready Product"}
+              </h1>
             </div>
+
+            <button
+              type="button"
+              onClick={
+                closeForm
+              }
+              className="rounded-lg p-2 hover:bg-blue-700"
+            >
+              <X
+                size={
+                  18
+                }
+              />
+            </button>
           </div>
 
-          {/* سیکشن 2: مینوفیکچرنگ فلو کا آخری عمل */}
-          <div>
-            <h3 className="text-xs font-bold text-blue-600 tracking-wider uppercase mb-4 border-b border-slate-100 pb-1">2. Verification & Final Process</h3>
-            <div className="space-y-2">
-              <label className="text-xs font-semibold text-slate-600">Final Processing Stage Applied</label>
-              <div className="flex flex-wrap gap-2">
-                {['UV Coating', 'Die Cutting', 'Pasting', 'Embossing'].map((tag) => (
-                  <button 
-                    type="button"
-                    key={tag} 
-                    onClick={() => setFormData({...formData, process: tag})}
-                    className={`px-4 py-2 rounded-lg border text-xs font-bold transition-all ${formData.process === tag ? 'border-blue-600 bg-blue-50/50 text-blue-700' : 'border-slate-200 bg-[#f8fafc] text-slate-500 hover:border-slate-300'}`}
+          <div className="space-y-7 rounded-b-xl border-x border-b bg-white p-5 md:p-7">
+            <Section title="Completed Printing">
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+                <Field label="Ready Number">
+                  <input
+                    value={
+                      formData.readyNo
+                    }
+                    readOnly
+                    className={`${inputClass} font-mono`}
+                  />
+                </Field>
+
+                <Field
+                  label="Completed Printing"
+                  required
+                  wide
+                >
+                  <select
+                    value={
+                      formData.printing
+                    }
+                    onChange={(
+                      event
+                    ) =>
+                      handlePrintingChange(
+                        event
+                          .target
+                          .value
+                      )
+                    }
+                    disabled={
+                      Boolean(
+                        editId
+                      )
+                    }
+                    className={
+                      inputClass
+                    }
                   >
-                    {formData.process === tag ? '✓ ' : '+ '} {tag}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
+                    <option value="">
+                      Select Completed Printing
+                    </option>
 
-          {/* سیکشن 3: اسٹاک تعداد اور ویئر ہاؤس لوکیشن */}
-          <div>
-            <h3 className="text-xs font-bold text-blue-600 tracking-wider uppercase mb-4 border-b border-slate-100 pb-1">3. Stock Logistics & Location</h3>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-5 bg-slate-50 p-5 rounded-lg border border-slate-200">
-              
-              {/* تیار کوانٹٹی تعداد */}
-              <div className="space-y-1.5">
-                <label className="text-xs font-semibold text-slate-600">Finished Quantity (Units)</label>
-                <input 
-                  type="number" 
-                  value={formData.qty}
-                  onChange={(e) => setFormData({...formData, qty: e.target.value})}
-                  placeholder="0" 
-                  className="w-full bg-transparent border-b border-slate-300 py-1.5 outline-none focus:border-blue-500 text-2xl font-bold text-slate-800" 
+                    {eligiblePrintings.map(
+                      (
+                        printing
+                      ) => (
+                        <option
+                          key={
+                            printing._id
+                          }
+                          value={
+                            printing._id
+                          }
+                        >
+                          {
+                            printing.printingNo
+                          }{" "}
+                          —{" "}
+                          {
+                            printing
+                              .productionJob
+                              ?.jobNo
+                          }{" "}
+                          —{" "}
+                          {printing
+                            .finishedGoodItem
+                            ?.name ||
+                            printing
+                              .productionJob
+                              ?.finishedGoodName}
+                        </option>
+                      )
+                    )}
+
+                    {editId &&
+                      selectedPrinting && (
+                        <option
+                          value={
+                            selectedPrinting._id
+                          }
+                        >
+                          {
+                            selectedPrinting.printingNo
+                          }{" "}
+                          —{" "}
+                          {
+                            job?.jobNo
+                          }
+                        </option>
+                      )}
+                  </select>
+                </Field>
+
+                <Field
+                  label="QC Date"
+                  required
+                >
+                  <input
+                    type="date"
+                    value={
+                      formData.qcDate
+                    }
+                    onChange={(
+                      event
+                    ) =>
+                      updateField(
+                        "qcDate",
+                        event
+                          .target
+                          .value
+                      )
+                    }
+                    className={
+                      inputClass
+                    }
+                  />
+                </Field>
+
+                <Field label="Production Job">
+                  <input
+                    value={
+                      job
+                        ? `${job.jobNo} — ${job.jobName}`
+                        : ""
+                    }
+                    readOnly
+                    className={
+                      inputClass
+                    }
+                  />
+                </Field>
+
+                <Field
+                  label="Finished Good"
+                  wide
+                >
+                  <input
+                    value={
+                      finishedGood
+                        ? `${finishedGood.code} — ${finishedGood.name}`
+                        : job
+                          ? `${job.finishedGoodCode || ""} — ${job.finishedGoodName || ""}`
+                          : ""
+                    }
+                    readOnly
+                    className={
+                      inputClass
+                    }
+                  />
+                </Field>
+
+                <Field label="Customer">
+                  <input
+                    value={
+                      job
+                        ?.customerName ||
+                      ""
+                    }
+                    readOnly
+                    className={
+                      inputClass
+                    }
+                  />
+                </Field>
+
+                <Field label="Warehouse">
+                  <input
+                    value="Finished Goods Warehouse"
+                    readOnly
+                    className={
+                      inputClass
+                    }
+                  />
+                </Field>
+              </div>
+            </Section>
+
+            <Section title="Quality Check">
+              <div className="mb-4 grid grid-cols-1 gap-3 md:grid-cols-3">
+                <SummaryBox
+                  label="Printing Good Quantity"
+                  value={`${formatQuantity(
+                    printingGoodQty
+                  )} ${
+                    formData.unit
+                  }`}
+                />
+
+                <SummaryBox
+                  label="Classified Quantity"
+                  value={`${formatQuantity(
+                    classifiedQty
+                  )} ${
+                    formData.unit
+                  }`}
+                />
+
+                <SummaryBox
+                  label="Output Amount"
+                  value={money(
+                    calculatedAmount
+                  )}
                 />
               </div>
-              
-              {/* ویئر ہاؤس لوکیشن سلیکٹر */}
-              <div className="space-y-1.5">
-                <label className="text-xs font-semibold text-slate-600">Warehouse Storage Location</label>
-                <select 
-                  value={formData.location}
-                  onChange={(e) => setFormData({...formData, location: e.target.value})}
-                  className="w-full bg-transparent border-b border-slate-300 py-2 outline-none focus:border-blue-500 font-bold text-slate-600 text-xs cursor-pointer"
+
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+                <Field
+                  label="Passed Quantity"
+                  required
                 >
-                  <option>Main Store</option>
-                  <option>Finished Goods Area</option>
-                  <option>Dispatch Floor</option>
-                </select>
+                  <input
+                    type="number"
+                    min="0"
+                    step="any"
+                    value={
+                      formData.passedQty
+                    }
+                    onChange={(
+                      event
+                    ) =>
+                      updateField(
+                        "passedQty",
+                        event
+                          .target
+                          .value
+                      )
+                    }
+                    className={
+                      inputClass
+                    }
+                  />
+                </Field>
+
+                <Field label="Rejected Quantity">
+                  <input
+                    type="number"
+                    min="0"
+                    step="any"
+                    value={
+                      formData.rejectedQty
+                    }
+                    onChange={(
+                      event
+                    ) =>
+                      updateField(
+                        "rejectedQty",
+                        event
+                          .target
+                          .value
+                      )
+                    }
+                    className={
+                      inputClass
+                    }
+                  />
+                </Field>
+
+                <Field label="Hold Quantity">
+                  <input
+                    type="number"
+                    min="0"
+                    step="any"
+                    value={
+                      formData.holdQty
+                    }
+                    onChange={(
+                      event
+                    ) =>
+                      updateField(
+                        "holdQty",
+                        event
+                          .target
+                          .value
+                      )
+                    }
+                    className={
+                      inputClass
+                    }
+                  />
+                </Field>
+
+                <Field label="Unit">
+                  <input
+                    value={
+                      formData.unit
+                    }
+                    readOnly
+                    className={
+                      inputClass
+                    }
+                  />
+                </Field>
+              </div>
+            </Section>
+
+            <Section title="Final Details">
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+                <Field
+                  label="Quality Checked By"
+                  required
+                >
+                  <input
+                    value={
+                      formData.checkedBy
+                    }
+                    onChange={(
+                      event
+                    ) =>
+                      updateField(
+                        "checkedBy",
+                        event
+                          .target
+                          .value
+                      )
+                    }
+                    className={
+                      inputClass
+                    }
+                  />
+                </Field>
+
+                <Field label="Packed By">
+                  <input
+                    value={
+                      formData.packedBy
+                    }
+                    onChange={(
+                      event
+                    ) =>
+                      updateField(
+                        "packedBy",
+                        event
+                          .target
+                          .value
+                      )
+                    }
+                    className={
+                      inputClass
+                    }
+                  />
+                </Field>
+
+                <Field label="Packaging">
+                  <input
+                    value={
+                      formData.packaging
+                    }
+                    onChange={(
+                      event
+                    ) =>
+                      updateField(
+                        "packaging",
+                        event
+                          .target
+                          .value
+                      )
+                    }
+                    className={
+                      inputClass
+                    }
+                    placeholder="e.g. 1 master carton"
+                  />
+                </Field>
+
+                <Field label="Cost Rate">
+                  <input
+                    type="number"
+                    min="0"
+                    step="any"
+                    value={
+                      formData.rate
+                    }
+                    onChange={(
+                      event
+                    ) =>
+                      updateField(
+                        "rate",
+                        event
+                          .target
+                          .value
+                      )
+                    }
+                    className={
+                      inputClass
+                    }
+                  />
+                </Field>
               </div>
 
-              {/* کوالٹی کا خودکار اسٹیٹس پینل */}
-              <div className="space-y-1.5">
-                <label className="text-xs font-semibold text-slate-400">Quality Control</label>
-                <div className="flex items-center gap-2 py-2">
-                  <span className="h-2.5 w-2.5 bg-emerald-500 rounded-full animate-pulse"></span>
-                  <span className="text-xs font-bold text-slate-700 tracking-tight">QC Passed & Secured</span>
-                </div>
+              <div className="mt-4">
+                <Field label="Remarks">
+                  <textarea
+                    rows="4"
+                    value={
+                      formData.remarks
+                    }
+                    onChange={(
+                      event
+                    ) =>
+                      updateField(
+                        "remarks",
+                        event
+                          .target
+                          .value
+                      )
+                    }
+                    className={`${inputClass} min-h-[105px]`}
+                  />
+                </Field>
               </div>
+            </Section>
 
+            <div className="flex flex-col justify-end gap-3 border-t pt-5 sm:flex-row">
+              <button
+                type="button"
+                onClick={
+                  closeForm
+                }
+                className="rounded-lg border px-6 py-2.5 text-sm font-semibold text-slate-600"
+              >
+                Cancel
+              </button>
+
+              <button
+                type="button"
+                onClick={
+                  saveDraft
+                }
+                disabled={
+                  saving
+                }
+                className="flex items-center justify-center gap-2 rounded-lg bg-slate-700 px-6 py-2.5 text-sm font-bold text-white hover:bg-slate-800 disabled:opacity-60"
+              >
+                {saving ? (
+                  <Loader2
+                    size={
+                      17
+                    }
+                    className="animate-spin"
+                  />
+                ) : (
+                  <CheckCircle2
+                    size={
+                      17
+                    }
+                  />
+                )}
+
+                Save Draft
+              </button>
+
+              <button
+                type="button"
+                onClick={
+                  postOutput
+                }
+                disabled={
+                  saving
+                }
+                className="flex items-center justify-center gap-2 rounded-lg bg-emerald-700 px-6 py-2.5 text-sm font-bold text-white hover:bg-emerald-800 disabled:opacity-60"
+              >
+                {saving ? (
+                  <Loader2
+                    size={
+                      17
+                    }
+                    className="animate-spin"
+                  />
+                ) : (
+                  <Send
+                    size={
+                      17
+                    }
+                  />
+                )}
+
+                Post Production Output
+              </button>
             </div>
           </div>
+        </div>
+      );
+    }
 
-          {/* سیکشن 4: پیکنگ اور ہینڈلر تفصیلات */}
-          <div>
-            <h3 className="text-xs font-bold text-blue-600 tracking-wider uppercase mb-4 border-b border-slate-100 pb-1">4. Packaging & Handler Assignment</h3>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-              
-              {/* پیکیجنگ انفارمیشن */}
-              <div className="space-y-1.5">
-                <label className="text-xs font-semibold text-slate-600">Packaging Type / Box Counts</label>
-                <input 
-                  type="text" 
-                  value={formData.packaging}
-                  onChange={(e) => setFormData({...formData, packaging: e.target.value})}
-                  placeholder="e.g. 50 Master Cartons" 
-                  className="w-full bg-[#f8fafc] border border-slate-200 rounded-lg p-2.5 text-xs text-slate-700 outline-none focus:border-blue-500" 
+    return (
+      <div className="w-full space-y-5 p-3 sm:p-5 md:p-6">
+        <div className="flex flex-col gap-4 rounded-xl bg-[#1e40af] p-5 text-white shadow-sm md:flex-row md:items-center md:justify-between">
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() =>
+                window.history.back()
+              }
+              className="rounded-lg p-1 hover:bg-blue-700"
+            >
+              <ArrowLeft
+                size={
+                  20
+                }
+              />
+            </button>
+
+            <h1 className="text-xl font-bold">
+              Ready Product
+            </h1>
+          </div>
+
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={
+                fetchData
+              }
+              disabled={
+                loading
+              }
+              className="flex items-center gap-2 rounded-lg bg-white/10 px-4 py-2 text-sm font-semibold hover:bg-white/20 disabled:opacity-60"
+            >
+              <RefreshCcw
+                size={
+                  16
+                }
+                className={
+                  loading
+                    ? "animate-spin"
+                    : ""
+                }
+              />
+
+              Refresh
+            </button>
+
+            <button
+              type="button"
+              onClick={
+                openNewForm
+              }
+              className="flex items-center gap-2 rounded-lg bg-white px-4 py-2 text-sm font-bold text-blue-700"
+            >
+              <Plus
+                size={
+                  16
+                }
+              />
+
+              New Ready Product
+            </button>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-6">
+          <StatCard
+            label="Total"
+            value={
+              stats.total
+            }
+          />
+
+          <StatCard
+            label="Draft"
+            value={
+              stats.draft
+            }
+          />
+
+          <StatCard
+            label="Posted"
+            value={
+              stats.posted
+            }
+          />
+
+          <StatCard
+            label="Output Quantity"
+            value={formatQuantity(
+              stats.output
+            )}
+          />
+
+          <StatCard
+            label="Rejected"
+            value={formatQuantity(
+              stats.rejected
+            )}
+            danger
+          />
+
+          <StatCard
+            label="Completed Printing"
+            value={
+              stats.eligible
+            }
+          />
+        </div>
+
+        <div className="overflow-hidden rounded-xl border bg-white shadow-sm">
+          <div className="flex flex-col gap-3 border-b p-4 md:flex-row md:items-center md:justify-between">
+            <h2 className="font-bold text-slate-800">
+              Ready Product Register
+            </h2>
+
+            <div className="flex flex-col gap-2 sm:flex-row">
+              <div className="relative">
+                <Search
+                  size={
+                    15
+                  }
+                  className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
+                />
+
+                <input
+                  value={
+                    search
+                  }
+                  onChange={(
+                    event
+                  ) =>
+                    setSearch(
+                      event
+                        .target
+                        .value
+                    )
+                  }
+                  className="w-full rounded-lg border py-2 pl-9 pr-3 text-xs sm:w-72"
+                  placeholder="Search ready, job, printing, product..."
                 />
               </div>
-              
-              {/* پیکنگ ملازم */}
-              <div className="space-y-1.5">
-                <label className="text-xs font-semibold text-slate-600">Packing Employee (Incharge)</label>
-                <select 
-                  value={formData.employee}
-                  onChange={(e) => setFormData({...formData, employee: e.target.value})}
-                  className="w-full bg-[#f8fafc] border border-slate-200 rounded-lg p-2.5 text-xs text-slate-700 outline-none focus:border-blue-500 font-medium cursor-pointer"
-                >
-                  <option value="">Select Employee...</option>
-                  <option>Rashid Khan</option>
-                  <option>M. Salman</option>
-                </select>
-              </div>
 
+              <select
+                value={
+                  statusFilter
+                }
+                onChange={(
+                  event
+                ) =>
+                  setStatusFilter(
+                    event
+                      .target
+                      .value
+                  )
+                }
+                className="rounded-lg border px-3 py-2 text-xs"
+              >
+                <option value="All">
+                  All Statuses
+                </option>
+
+                <option value="Draft">
+                  Draft
+                </option>
+
+                <option value="Posted">
+                  Posted
+                </option>
+
+                <option value="Cancelled">
+                  Cancelled
+                </option>
+              </select>
             </div>
           </div>
 
-        </div>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[1220px] text-left text-xs">
+              <thead className="bg-slate-800 uppercase text-white">
+                <tr>
+                  <th className="p-4">
+                    Ready / Printing
+                  </th>
 
-        {/* بوٹم پینل بٹنز بار */}
-        <div className="p-4 bg-slate-50 border-t border-slate-200 flex justify-end gap-3">
-          <button 
-            type="button"
-            onClick={closeForm}
-            className="px-5 py-2 border border-slate-300 text-slate-600 font-medium text-xs rounded-lg bg-white hover:bg-slate-50 transition-all"
-          >
-            Cancel
-          </button>
-          <button 
-            type="button"
-            onClick={handleSubmit}
-            className="px-6 py-2 bg-[#0284c7] text-white font-bold text-xs rounded-lg hover:bg-blue-700 transition-all shadow-sm flex items-center gap-1.5"
-          >
-            <CheckCircle2 size={14} />
-            {editId ? 'Update Stock' : 'Add to Inventory'}
-          </button>
-        </div>
+                  <th className="p-4">
+                    Job
+                  </th>
 
+                  <th className="p-4">
+                    Finished Good
+                  </th>
+
+                  <th className="p-4 text-right">
+                    Printing Good
+                  </th>
+
+                  <th className="p-4 text-right">
+                    Passed
+                  </th>
+
+                  <th className="p-4 text-right">
+                    Rejected
+                  </th>
+
+                  <th className="p-4 text-right">
+                    Hold
+                  </th>
+
+                  <th className="p-4">
+                    QC
+                  </th>
+
+                  <th className="p-4">
+                    Warehouse
+                  </th>
+
+                  <th className="p-4 text-right">
+                    Amount
+                  </th>
+
+                  <th className="p-4 text-center">
+                    Status
+                  </th>
+
+                  <th className="p-4 text-center">
+                    Actions
+                  </th>
+                </tr>
+              </thead>
+
+              <tbody>
+                {loading ? (
+                  <tr>
+                    <td
+                      colSpan="12"
+                      className="p-10 text-center"
+                    >
+                      <Loader2 className="mx-auto animate-spin text-blue-600" />
+                    </td>
+                  </tr>
+                ) : filteredEntries.length ===
+                  0 ? (
+                  <tr>
+                    <td
+                      colSpan="12"
+                      className="p-10 text-center text-slate-400"
+                    >
+                      No ready product records found.
+                    </td>
+                  </tr>
+                ) : (
+                  filteredEntries.map(
+                    (
+                      entry
+                    ) => {
+                      const busy =
+                        actionId ===
+                        entry._id;
+
+                      return (
+                        <tr
+                          key={
+                            entry._id
+                          }
+                          className="border-t hover:bg-slate-50"
+                        >
+                          <td className="p-4">
+                            <div className="font-bold text-blue-700">
+                              {
+                                entry.readyNo
+                              }
+                            </div>
+
+                            <div className="mt-1 font-semibold">
+                              {
+                                entry.printingNo
+                              }
+                            </div>
+
+                            <div className="text-[10px] text-slate-500">
+                              {
+                                entry.qcDate
+                              }
+                            </div>
+                          </td>
+
+                          <td className="p-4">
+                            <div className="font-semibold">
+                              {
+                                entry.jobNo
+                              }
+                            </div>
+
+                            <div className="text-[10px] text-slate-500">
+                              {entry.customerName ||
+                                "-"}
+                            </div>
+                          </td>
+
+                          <td className="p-4">
+                            <div className="font-semibold">
+                              {
+                                entry.finishedGoodName
+                              }
+                            </div>
+
+                            <div className="font-mono text-[10px] text-blue-600">
+                              {
+                                entry.finishedGoodCode
+                              }
+                            </div>
+                          </td>
+
+                          <td className="p-4 text-right">
+                            {formatQuantity(
+                              entry.printingGoodQty
+                            )}{" "}
+                            {
+                              entry.unit
+                            }
+                          </td>
+
+                          <td className="p-4 text-right font-bold text-emerald-700">
+                            {formatQuantity(
+                              entry.passedQty
+                            )}
+                          </td>
+
+                          <td className="p-4 text-right font-bold text-red-700">
+                            {formatQuantity(
+                              entry.rejectedQty
+                            )}
+                          </td>
+
+                          <td className="p-4 text-right font-bold text-amber-700">
+                            {formatQuantity(
+                              entry.holdQty
+                            )}
+                          </td>
+
+                          <td className="p-4">
+                            <span
+                              className={`inline-flex rounded-full px-2.5 py-1 text-[10px] font-bold ${qcClass(
+                                entry.qcStatus
+                              )}`}
+                            >
+                              {
+                                entry.qcStatus
+                              }
+                            </span>
+
+                            <div className="mt-1 text-[10px] text-slate-500">
+                              {entry.checkedBy ||
+                                "-"}
+                            </div>
+                          </td>
+
+                          <td className="p-4">
+                            Finished Goods Warehouse
+                          </td>
+
+                          <td className="p-4 text-right font-bold">
+                            {money(
+                              entry.totalAmount
+                            )}
+                          </td>
+
+                          <td className="p-4 text-center">
+                            <span
+                              className={`inline-flex rounded-full border px-3 py-1 text-[10px] font-bold ${statusClass(
+                                entry.status
+                              )}`}
+                            >
+                              {
+                                entry.status
+                              }
+                            </span>
+                          </td>
+
+                          <td className="p-4">
+                            <div className="flex justify-center gap-1.5">
+                              {entry.status ===
+                                "Draft" && (
+                                <>
+                                  <ActionButton
+                                    title="Edit"
+                                    onClick={() =>
+                                      openEdit(
+                                        entry
+                                      )
+                                    }
+                                    disabled={
+                                      busy
+                                    }
+                                    color="blue"
+                                  >
+                                    <Edit3
+                                      size={
+                                        15
+                                      }
+                                    />
+                                  </ActionButton>
+
+                                  <ActionButton
+                                    title="Post Output"
+                                    onClick={() =>
+                                      postDraft(
+                                        entry
+                                      )
+                                    }
+                                    disabled={
+                                      busy
+                                    }
+                                    color="emerald"
+                                  >
+                                    <Send
+                                      size={
+                                        15
+                                      }
+                                    />
+                                  </ActionButton>
+
+                                  <ActionButton
+                                    title="Delete"
+                                    onClick={() =>
+                                      deleteDraft(
+                                        entry
+                                      )
+                                    }
+                                    disabled={
+                                      busy
+                                    }
+                                    color="red"
+                                  >
+                                    <Trash2
+                                      size={
+                                        15
+                                      }
+                                    />
+                                  </ActionButton>
+                                </>
+                              )}
+
+                              {entry.status ===
+                                "Posted" && (
+                                <ActionButton
+                                  title="Cancel and Reverse"
+                                  onClick={() =>
+                                    cancelPosted(
+                                      entry
+                                    )
+                                  }
+                                  disabled={
+                                    busy
+                                  }
+                                  color="orange"
+                                >
+                                  <XCircle
+                                    size={
+                                      15
+                                    }
+                                  />
+                                </ActionButton>
+                              )}
+
+                              {busy && (
+                                <Loader2
+                                  size={
+                                    15
+                                  }
+                                  className="animate-spin text-blue-600"
+                                />
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    }
+                  )
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
       </div>
-    </div>
+    );
+  };
+
+const Section = ({
+  title,
+  children,
+}) => (
+  <section>
+    <h3 className="mb-4 border-b pb-2 text-xs font-bold uppercase tracking-wider text-blue-700">
+      {title}
+    </h3>
+
+    {children}
+  </section>
+);
+
+const Field = ({
+  label,
+  required = false,
+  wide = false,
+  children,
+}) => (
+  <div
+    className={
+      wide
+        ? "md:col-span-2"
+        : ""
+    }
+  >
+    <label className="mb-1.5 block text-xs font-bold text-slate-600">
+      {label}
+
+      {required && (
+        <span className="text-red-600">
+          {" "}
+          *
+        </span>
+      )}
+    </label>
+
+    {children}
+  </div>
+);
+
+const SummaryBox = ({
+  label,
+  value,
+}) => (
+  <div className="rounded-xl border bg-slate-50 p-4">
+    <p className="text-xs text-slate-500">
+      {label}
+    </p>
+
+    <h3 className="mt-1 text-lg font-bold text-slate-900">
+      {value}
+    </h3>
+  </div>
+);
+
+const StatCard = ({
+  label,
+  value,
+  danger = false,
+}) => (
+  <div className="rounded-xl border bg-white p-4 shadow-sm">
+    <p className="text-xs text-slate-500">
+      {label}
+    </p>
+
+    <h3
+      className={`mt-1 text-xl font-bold ${
+        danger
+          ? "text-red-600"
+          : "text-slate-900"
+      }`}
+    >
+      {value}
+    </h3>
+  </div>
+);
+
+const ActionButton = ({
+  title,
+  onClick,
+  disabled,
+  color,
+  children,
+}) => {
+  const colors = {
+    blue:
+      "text-blue-600 hover:bg-blue-50",
+
+    emerald:
+      "text-emerald-600 hover:bg-emerald-50",
+
+    orange:
+      "text-orange-600 hover:bg-orange-50",
+
+    red:
+      "text-red-600 hover:bg-red-50",
+  };
+
+  return (
+    <button
+      type="button"
+      title={title}
+      onClick={onClick}
+      disabled={disabled}
+      className={`rounded-lg p-2 disabled:cursor-not-allowed disabled:opacity-40 ${colors[color]}`}
+    >
+      {children}
+    </button>
   );
 };
 

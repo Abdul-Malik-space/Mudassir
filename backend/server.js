@@ -272,12 +272,26 @@ const stockLedgerRoutes = require(
   "./routes/stockLedgerRoutes"
 );
 
+const systemResetRoutes = require("./routes/systemResetRoutes");
+const materialIssueRoutes = require(
+  "./routes/materialIssueRoutes"
+);
+
 /*
 |--------------------------------------------------------------------------
 | Dashboard Routes
 |--------------------------------------------------------------------------
 */
 
+
+app.use(
+  "/api/material-issues",
+  materialIssueRoutes
+);
+app.use(
+  "/api/system-reset",
+  systemResetRoutes
+);
 const dashboardRoutes = require(
   "./routes/dashboardRoutes"
 );
@@ -293,6 +307,8 @@ const tableSectionRoutes = require(
 const activityFeedRoutes = require(
   "./routes/activityFeedRoutes"
 );
+
+
 
 /*
 |--------------------------------------------------------------------------
