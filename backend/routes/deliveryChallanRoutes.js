@@ -4,9 +4,7 @@ const mongoose = require("mongoose");
 const router = express.Router();
 
 const Counter = require("../models/Counter");
-const DeliveryChallan = require(
-  "../models/DeliveryChallan"
-);
+const DeliveryChallan = require("../models/DeliveryChallan");
 const Item = require("../models/Item");
 const SalesOrder = require("../models/SalesOrder");
 const StockLedger = require("../models/StockLedger");
@@ -19,8 +17,7 @@ const {
 } = require("../utils/stockService");
 
 const FINISHED_GOODS_WAREHOUSE =
-  FINISHED_GOODS_GODOWN ||
-  "Finished Goods Godown";
+  FINISHED_GOODS_GODOWN || "Finished Goods Godown";
 
 const FINISHED_GOODS_ALIASES = [
   FINISHED_GOODS_WAREHOUSE,
@@ -32,17 +29,18 @@ const ACTIVE_DELIVERY_STATUSES = [
   "Received",
 ];
 
+const ELIGIBLE_SALES_ORDER_STATUSES = [
+  "Confirmed",
+  "In Production",
+  "Ready",
+  "Partially Delivered",
+];
+
 const todayDate = () =>
   new Date().toISOString().slice(0, 10);
 
-const cleanText = (
-  value,
-  fallback = ""
-) => {
-  const text = String(
-    value ?? ""
-  ).trim();
-
+const cleanText = (value, fallback = "") => {
+  const text = String(value ?? "").trim();
   return text || fallback;
 };
 
@@ -59,10 +57,7 @@ const idOf = (value) => {
     return "";
   }
 
-  if (
-    typeof value ===
-    "object"
-  ) {
+  if (typeof value === "object") {
     return String(
       value._id ||
         value.id ||
@@ -74,22 +69,14 @@ const idOf = (value) => {
 };
 
 const isValidId = (value) =>
-  mongoose.isValidObjectId(
-    value
-  );
+  mongoose.isValidObjectId(value);
 
 const duplicateMessage = (
   error,
   fallback
 ) => {
-  if (
-    error.code !==
-    11000
-  ) {
-    return (
-      error.message ||
-      fallback
-    );
+  if (error.code !== 11000) {
+    return error.message || fallback;
   }
 
   const field =
@@ -100,14 +87,10 @@ const duplicateMessage = (
   const value =
     error.keyValue?.[field];
 
-  return `Duplicate ${field}: ${String(
-    value
-  )}`;
+  return `Duplicate ${field}: ${String(value)}`;
 };
 
-const populateChallan = (
-  query
-) =>
+const populateChallan = (query) =>
   query
     .populate(
       "salesOrder",
@@ -115,7 +98,7 @@ const populateChallan = (
     )
     .populate(
       "customer",
-      "name customerName phone email address city status"
+      "name customerName phoneNumber phone email address city status"
     )
     .populate(
       "items.item",
@@ -142,8 +125,7 @@ const getFinishedGoodsWarehouse =
               "Finished Goods Warehouse",
           },
           {
-            code:
-              "WH-FG",
+            code: "WH-FG",
           },
         ],
       });
@@ -155,8 +137,7 @@ const getFinishedGoodsWarehouse =
     }
 
     if (
-      warehouse.status ===
-      "Inactive"
+      warehouse.status === "Inactive"
     ) {
       throw new Error(
         "Finished Goods Godown is inactive"
@@ -169,32 +150,22 @@ const getFinishedGoodsWarehouse =
 const getHighestExistingSequence =
   async () => {
     const rows =
-      await DeliveryChallan.find(
-        {}
-      )
-        .select(
-          "challanNo"
-        )
+      await DeliveryChallan.find({})
+        .select("challanNo")
         .lean();
 
     return rows.reduce(
-      (
-        highest,
-        row
-      ) => {
+      (highest, row) => {
         const match =
           String(
-            row.challanNo ||
-              ""
+            row.challanNo || ""
           ).match(
             /(\d+)(?!.*\d)/
           );
 
         const sequence =
           match
-            ? Number(
-                match[1]
-              )
+            ? Number(match[1])
             : 0;
 
         return Math.max(
@@ -327,13 +298,11 @@ const getCurrentStock =
             _id: null,
 
             qtyIn: {
-              $sum:
-                "$qtyIn",
+              $sum: "$qtyIn",
             },
 
             qtyOut: {
-              $sum:
-                "$qtyOut",
+              $sum: "$qtyOut",
             },
           },
         },
@@ -365,9 +334,7 @@ const getDeliveredQuantityMap =
       },
     };
 
-    if (
-      excludedChallanId
-    ) {
+    if (excludedChallanId) {
       query._id = {
         $ne:
           excludedChallanId,
@@ -387,13 +354,11 @@ const getDeliveredQuantityMap =
       new Map();
 
     for (
-      const challan of
-      challans
+      const challan of challans
     ) {
       for (
         const item of
-        challan.items ||
-        []
+        challan.items || []
       ) {
         const key =
           idOf(
@@ -450,7 +415,7 @@ const loadSalesOrder =
       )
         .populate(
           "customer",
-          "name customerName phone email address city status"
+          "name customerName phoneNumber phone email address city status"
         )
         .populate(
           "items.item",
@@ -464,33 +429,12 @@ const loadSalesOrder =
     }
 
     if (
-      salesOrder.status ===
-      "Cancelled"
-    ) {
-      throw new Error(
-        "A delivery challan cannot be created for a cancelled sales order"
-      );
-    }
-
-    if (
-      [
-        "Delivered",
-        "Invoiced",
-      ].includes(
+      !ELIGIBLE_SALES_ORDER_STATUSES.includes(
         salesOrder.status
       )
     ) {
       throw new Error(
-        "This sales order is already delivered or invoiced"
-      );
-    }
-
-    if (
-      salesOrder.status ===
-      "Draft"
-    ) {
-      throw new Error(
-        "Confirm the sales order before creating a delivery challan"
+        `Delivery Challan cannot be created for a Sales Order with status ${salesOrder.status}`
       );
     }
 
@@ -510,8 +454,7 @@ const buildCustomerDetails = (
   salesOrder
 ) => {
   const customer =
-    salesOrder.customer ||
-    {};
+    salesOrder.customer || {};
 
   const customerName =
     cleanText(
@@ -521,9 +464,7 @@ const buildCustomerDetails = (
         customer.name
     );
 
-  if (
-    !customerName
-  ) {
+  if (!customerName) {
     throw new Error(
       "Customer name is required"
     );
@@ -549,6 +490,7 @@ const buildCustomerDetails = (
       cleanText(
         body.customerPhone ||
           salesOrder.customerPhone ||
+          customer.phoneNumber ||
           customer.phone
       ),
 
@@ -585,9 +527,7 @@ const prepareDeliveryItems =
     requireCurrentStock = false,
   }) => {
     if (
-      !Array.isArray(
-        rows
-      )
+      !Array.isArray(rows)
     ) {
       throw new Error(
         "Delivery items must be an array"
@@ -603,27 +543,21 @@ const prepareDeliveryItems =
     const salesOrderItems =
       new Map(
         (
-          salesOrder.items ||
-          []
+          salesOrder.items || []
         ).map(
           (row) => [
-            String(
-              row._id
-            ),
+            String(row._id),
             row,
           ]
         )
       );
 
-    const prepared =
-      [];
-
+    const prepared = [];
     const usedSalesOrderRows =
       new Set();
 
     for (
-      const row of
-      rows
+      const row of rows
     ) {
       const salesOrderItemId =
         idOf(
@@ -949,17 +883,13 @@ const getEligibleSalesOrders =
     const salesOrders =
       await SalesOrder.find({
         status: {
-          $nin: [
-            "Draft",
-            "Cancelled",
-            "Delivered",
-            "Invoiced",
-          ],
+          $in:
+            ELIGIBLE_SALES_ORDER_STATUSES,
         },
       })
         .populate(
           "customer",
-          "name customerName phone email address city status"
+          "name customerName phoneNumber phone email address city status"
         )
         .populate(
           "items.item",
@@ -969,25 +899,21 @@ const getEligibleSalesOrders =
           createdAt: -1,
         });
 
-    const output =
-      [];
+    const output = [];
 
     for (
-      const order of
-      salesOrders
+      const order of salesOrders
     ) {
       const deliveredMap =
         await getDeliveredQuantityMap(
           order._id
         );
 
-      const items =
-        [];
+      const items = [];
 
       for (
         const row of
-        order.items ||
-        []
+        order.items || []
       ) {
         const item =
           row.item;
@@ -1124,8 +1050,7 @@ const getEligibleSalesOrders =
       }
 
       const customer =
-        order.customer ||
-        {};
+        order.customer || {};
 
       output.push({
         _id:
@@ -1158,6 +1083,7 @@ const getEligibleSalesOrders =
         customerPhone:
           cleanText(
             order.customerPhone ||
+              customer.phoneNumber ||
               customer.phone
           ),
 
@@ -1199,7 +1125,9 @@ const syncSalesOrder =
     if (
       !salesOrder ||
       salesOrder.status ===
-        "Cancelled"
+        "Cancelled" ||
+      salesOrder.status ===
+        "Invoiced"
     ) {
       return;
     }
@@ -1209,93 +1137,71 @@ const syncSalesOrder =
         salesOrder._id
       );
 
-    let totalOrdered =
-      0;
+    let totalOrdered = 0;
+    let totalDelivered = 0;
 
-    let totalDelivered =
-      0;
+    for (
+      const row of
+      salesOrder.items || []
+    ) {
+      const orderedQty =
+        cleanNumber(
+          row.quantity
+        );
 
-    const updatedItems =
-      (
-        salesOrder.items ||
-        []
-      ).map(
-        (row) => {
-          const orderedQty =
-            cleanNumber(
-              row.quantity
-            );
+      const deliveredQty =
+        cleanNumber(
+          deliveredMap.get(
+            String(
+              row._id
+            )
+          )
+        );
 
-          const deliveredQty =
-            cleanNumber(
-              deliveredMap.get(
-                String(
-                  row._id
-                )
-              )
-            );
+      row.deliveredQty =
+        deliveredQty;
 
-          const pendingQty =
-            Math.max(
-              orderedQty -
-                deliveredQty,
-              0
-            );
-
-          totalOrdered +=
-            orderedQty;
-
-          totalDelivered +=
-            deliveredQty;
-
-          return {
-            ...row.toObject(),
-
+      row.pendingQty =
+        Math.max(
+          orderedQty -
             deliveredQty,
+          0
+        );
 
-            pendingQty,
-          };
-        }
-      );
+      totalOrdered +=
+        orderedQty;
 
-    let status =
-      salesOrder.status;
+      totalDelivered +=
+        deliveredQty;
+    }
 
     if (
       totalDelivered <= 0
     ) {
       if (
-        status ===
-        "Partially Delivered"
+        [
+          "Partially Delivered",
+          "Delivered",
+        ].includes(
+          salesOrder.status
+        )
       ) {
-        status =
-          "Confirmed";
+        salesOrder.status =
+          "Ready";
       }
     } else if (
       totalOrdered > 0 &&
       totalDelivered >=
         totalOrdered
     ) {
-      status =
+      salesOrder.status =
         "Delivered";
     } else {
-      status =
+      salesOrder.status =
         "Partially Delivered";
     }
 
-    await SalesOrder.findByIdAndUpdate(
-      salesOrder._id,
-      {
-        items:
-          updatedItems,
-
-        status,
-      },
-      {
-        runValidators:
-          true,
-      }
-    );
+    await salesOrder.save();
   };
 
 const removeFailedDispatchEntries =
@@ -1424,8 +1330,7 @@ const dispatchChallan =
       }
     }
 
-    let createdEntry =
-      false;
+    let createdEntry = false;
 
     try {
       for (
@@ -1489,8 +1394,7 @@ const dispatchChallan =
             false,
         });
 
-        createdEntry =
-          true;
+        createdEntry = true;
       }
 
       challan.items =
@@ -1531,9 +1435,7 @@ const dispatchChallan =
         challan.salesOrder
       );
     } catch (error) {
-      if (
-        createdEntry
-      ) {
+      if (createdEntry) {
         await removeFailedDispatchEntries(
           challan._id
         );
@@ -1837,9 +1739,7 @@ router.get(
           invoiceStatus;
       }
 
-      if (
-        salesOrder
-      ) {
+      if (salesOrder) {
         if (
           !isValidId(
             salesOrder
@@ -1942,7 +1842,6 @@ router.get(
             query
           ).sort({
             challanDate: -1,
-
             createdAt: -1,
           })
         );
@@ -2002,7 +1901,6 @@ router.get(
 
       return res.json({
         success: true,
-
         data:
           challan,
       });
@@ -2024,8 +1922,7 @@ router.post(
   async (req, res) => {
     try {
       const body =
-        req.body ||
-        {};
+        req.body || {};
 
       const salesOrder =
         await loadSalesOrder(
@@ -2093,8 +1990,7 @@ router.post(
               body.dispatchDate
             ),
 
-          receivedDate:
-            "",
+          receivedDate: "",
 
           vehicleNo:
             cleanText(
@@ -2121,8 +2017,7 @@ router.post(
               body.dispatchedBy
             ),
 
-          receivedBy:
-            "",
+          receivedBy: "",
 
           receiverDesignation:
             "",
@@ -2139,8 +2034,7 @@ router.post(
             items
           ),
 
-          status:
-            "Draft",
+          status: "Draft",
 
           invoiceStatus:
             "Not Invoiced",
@@ -2252,8 +2146,7 @@ router.put(
       }
 
       const body =
-        req.body ||
-        {};
+        req.body || {};
 
       const salesOrder =
         await loadSalesOrder(

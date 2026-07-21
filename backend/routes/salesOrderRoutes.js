@@ -1,601 +1,1759 @@
 const express = require("express");
+const mongoose = require("mongoose");
+
 const router = express.Router();
 
-const SalesOrder = require("../models/SalesOrder");
-const Customer = require("../models/customer");
-const Counter = require("../models/Counter");
+const SalesOrder = require(
+  "../models/SalesOrder"
+);
 
-const allowedStatuses = [
-  "Draft",
-  "Confirmed",
-  "In Production",
-  "Ready",
-  "Partially Delivered",
-  "Delivered",
-  "Invoiced",
-  "Cancelled",
+const Customer = require(
+  "../models/customer"
+);
+
+const Item = require(
+  "../models/Item"
+);
+
+const Counter = require(
+  "../models/Counter"
+);
+
+const Warehouse = require(
+  "../models/Warehouse"
+);
+
+const StockLedger = require(
+  "../models/StockLedger"
+);
+
+const DeliveryChallan = require(
+  "../models/DeliveryChallan"
+);
+
+const {
+  ensureDefaultWarehouses,
+} = require(
+  "../utils/stockService"
+);
+
+const FINISHED_GOODS_GODOWN =
+  "Finished Goods Godown";
+
+const FINISHED_GOODS_ALIASES = [
+  "Finished Goods Godown",
+  "Finished Goods Warehouse",
 ];
 
-const allowedTaxTypes = ["without-tax", "with-tax"];
-const allowedTextTypes = ["", "with-text", "without-text"];
+const MANUAL_STATUS_TRANSITIONS = {
+  Draft: [
+    "Confirmed",
+    "Cancelled",
+  ],
 
-const getPaymentStatus = (grandTotal, advance) => {
-  const total = Number(grandTotal || 0);
-  const paid = Number(advance || 0);
+  Confirmed: [
+    "In Production",
+    "Ready",
+    "Cancelled",
+  ],
 
-  if (paid <= 0) return "Unpaid";
-  if (paid >= total) return "Paid";
-  return "Partially Paid";
+  "In Production": [
+    "Ready",
+    "Cancelled",
+  ],
+
+  Ready: [
+    "Cancelled",
+  ],
+
+  "Partially Delivered": [],
+
+  Delivered: [],
+
+  Invoiced: [],
+
+  Cancelled: [],
 };
 
-const getItemId = (value) => {
-  if (!value) return null;
-  if (typeof value === "object" && value._id) return value._id;
-  return value;
-};
+const todayDate = () =>
+  new Date()
+    .toISOString()
+    .slice(0, 10);
 
-const cleanSalesOrderItems = (items = []) => {
-  return items
-    .filter(
-      (item) =>
-        item &&
-        String(item.description || "").trim() &&
-        Number(item.quantity || 0) > 0 &&
-        Number(item.unitPrice || 0) >= 0
-    )
-    .map((item) => {
-      const quantity = Number(item.quantity || 0);
-      const unitPrice = Number(item.unitPrice || 0);
-      const cartons = Number(item.cartons || 0);
-      const deliveredQty = Number(item.deliveredQty || 0);
-      const pendingQty = Math.max(quantity - deliveredQty, 0);
-      const amount = quantity * unitPrice;
-
-      const cleanItem = {
-        item: getItemId(item.item) || null,
-
-        warehouse: String(item.warehouse || "Main Godown").trim(),
-        availableStock: Number(item.availableStock || 0),
-
-        description: String(item.description || "").trim(),
-        size: String(item.size || "").trim(),
-        textType: allowedTextTypes.includes(item.textType) ? item.textType : "",
-
-        cartons,
-        quantity,
-        deliveredQty,
-        pendingQty,
-
-        unit: String(item.unit || "Rolls").trim(),
-        unitPrice,
-        amount,
-
-        remarks: String(item.remarks || "").trim(),
-      };
-
-      if (item._id) {
-        cleanItem._id = item._id;
-      }
-
-      return cleanItem;
-    });
-};
-
-const calculateOrderTotals = (
-  items = [],
-  taxType = "without-tax",
-  advance = 0
+const cleanText = (
+  value,
+  fallback = ""
 ) => {
-  const cleanItems = cleanSalesOrderItems(items);
+  const text = String(
+    value ?? ""
+  ).trim();
 
-  const subtotal = cleanItems.reduce(
-    (sum, item) => sum + Number(item.amount || 0),
-    0
-  );
-
-  const totalCartons = cleanItems.reduce(
-    (sum, item) => sum + Number(item.cartons || 0),
-    0
-  );
-
-  const totalQuantity = cleanItems.reduce(
-    (sum, item) => sum + Number(item.quantity || 0),
-    0
-  );
-
-  const finalTaxType = allowedTaxTypes.includes(taxType)
-    ? taxType
-    : "without-tax";
-
-  const taxRate = finalTaxType === "with-tax" ? 18 : 0;
-  const salesTax = finalTaxType === "with-tax" ? subtotal * 0.18 : 0;
-  const grandTotal = subtotal + salesTax;
-  const finalAdvance = Number(advance || 0);
-  const balance = grandTotal - finalAdvance;
-
-  return {
-    cleanItems,
-    totalCartons,
-    totalQuantity,
-    subtotal,
-    taxType: finalTaxType,
-    taxRate,
-    salesTax,
-    grandTotal,
-    advance: finalAdvance,
-    balance,
-    paymentStatus: getPaymentStatus(grandTotal, finalAdvance),
-  };
+  return text || fallback;
 };
 
-const validateDeliveredQuantities = (items = []) => {
-  for (const item of items) {
-    if (Number(item.deliveredQty || 0) > Number(item.quantity || 0)) {
+const cleanNumber = (
+  value
+) => {
+  const number = Number(value);
+
+  return Number.isFinite(number)
+    ? Math.max(number, 0)
+    : 0;
+};
+
+const idOf = (
+  value
+) => {
+  if (!value) {
+    return "";
+  }
+
+  if (
+    typeof value ===
+    "object"
+  ) {
+    return String(
+      value._id ||
+        value.id ||
+        ""
+    );
+  }
+
+  return String(value);
+};
+
+const isValidId = (
+  value
+) =>
+  mongoose.isValidObjectId(
+    value
+  );
+
+const duplicateMessage = (
+  error,
+  fallback
+) => {
+  if (
+    error.code !== 11000
+  ) {
+    return (
+      error.message ||
+      fallback
+    );
+  }
+
+  const field =
+    Object.keys(
+      error.keyPattern || {}
+    )[0] || "value";
+
+  const value =
+    error.keyValue?.[
+      field
+    ];
+
+  return `Duplicate ${field}: ${String(
+    value
+  )}`;
+};
+
+const populateSalesOrder = (
+  query
+) =>
+  query
+    .populate(
+      "customer",
+      "customerName name phoneNumber phone email address city status"
+    )
+
+    .populate(
+      "items.item",
+      "code name itemType unit category brand purchasePrice salePrice status stockManaged"
+    )
+
+    .populate(
+      "items.warehouseId",
+      "code name warehouseType status"
+    );
+
+const getFinishedGoodsWarehouse =
+  async () => {
+    await ensureDefaultWarehouses();
+
+    const warehouse =
+      await Warehouse.findOne({
+        $or: [
+          {
+            code:
+              "WH-FG",
+          },
+
+          {
+            name:
+              FINISHED_GOODS_GODOWN,
+          },
+
+          {
+            name:
+              "Finished Goods Warehouse",
+          },
+        ],
+      });
+
+    if (!warehouse) {
       throw new Error(
-        `Delivered qty item "${item.description}" mein order qty se zyada nahi ho sakti`
+        "Finished Goods Godown not found"
       );
     }
-  }
-};
 
-const getNextSalesOrderNo = async () => {
-  let salesOrderNo = "";
+    if (
+      warehouse.status ===
+      "Inactive"
+    ) {
+      throw new Error(
+        "Finished Goods Godown is inactive"
+      );
+    }
 
-  for (let i = 0; i < 5; i++) {
-    const counter = await Counter.findOneAndUpdate(
-      { name: "salesOrderNo" },
-      { $inc: { seq: 1 } },
-      {
-        returnDocument: "after",
-        upsert: true,
-      }
-    );
-
-    salesOrderNo = `SO-${String(counter.seq).padStart(4, "0")}`;
-
-    const exists = await SalesOrder.findOne({ salesOrderNo });
-    if (!exists) return salesOrderNo;
-  }
-
-  throw new Error("Unable to generate unique sales order number");
-};
-
-const peekNextSalesOrderNo = async () => {
-  const counter = await Counter.findOne({ name: "salesOrderNo" });
-  const nextSeq = counter ? counter.seq + 1 : 1;
-
-  return `SO-${String(nextSeq).padStart(4, "0")}`;
-};
-
-const buildCustomerSnapshot = (customer) => {
-  return {
-    customer: customer._id,
-    customerName: customer.customerName || customer.name || "",
-    customerPhone: customer.phoneNumber || customer.phone || "",
-    customerEmail: customer.email || "",
-    customerAddress: customer.address || "",
-    customerCity: customer.city || "",
+    return warehouse;
   };
-};
 
-const populateSalesOrder = (query) => {
-  return query
-    .populate("customer", "customerName phoneNumber email address city")
-    .populate("items.item", "code name unit category brand purchasePrice salePrice");
-};
+const getCurrentStockMap =
+  async (
+    itemIds,
+    warehouse
+  ) => {
+    const cleanIds = [
+      ...new Set(
+        itemIds
+          .map(
+            (itemId) =>
+              idOf(
+                itemId
+              )
+          )
+          .filter(
+            (itemId) =>
+              isValidId(
+                itemId
+              )
+          )
+      ),
+    ];
 
-router.get("/next-no", async (req, res) => {
-  try {
-    const salesOrderNo = await peekNextSalesOrderNo();
-
-    res.status(200).json({
-      success: true,
-      salesOrderNo,
-    });
-  } catch (error) {
-    console.error("Sales Order Next No Error:", error);
-
-    res.status(500).json({
-      success: false,
-      message: "Sales order number generate nahi hua",
-      error: error.message,
-    });
-  }
-});
-
-router.get("/all", async (req, res) => {
-  try {
-    const { search = "", status = "", customer = "" } = req.query;
-
-    const query = {};
-
-    if (status && status !== "All") {
-      query.status = status;
+    if (
+      cleanIds.length === 0
+    ) {
+      return new Map();
     }
 
-    if (customer) {
-      query.customer = customer;
-    }
+    const objectIds =
+      cleanIds.map(
+        (itemId) =>
+          new mongoose.Types.ObjectId(
+            itemId
+          )
+      );
 
-    if (search) {
-      query.$or = [
-        { salesOrderNo: { $regex: search, $options: "i" } },
-        { customerName: { $regex: search, $options: "i" } },
-        { customerPhone: { $regex: search, $options: "i" } },
-        { poNo: { $regex: search, $options: "i" } },
-        { referenceNo: { $regex: search, $options: "i" } },
-        { "items.description": { $regex: search, $options: "i" } },
-        { "items.warehouse": { $regex: search, $options: "i" } },
-      ];
-    }
+    const rows =
+      await StockLedger.aggregate([
+        {
+          $match: {
+            item: {
+              $in:
+                objectIds,
+            },
 
-    const orders = await populateSalesOrder(
-      SalesOrder.find(query).sort({ createdAt: -1 })
+            $or: [
+              {
+                warehouseId:
+                  warehouse._id,
+              },
+
+              {
+                warehouse: {
+                  $in:
+                    FINISHED_GOODS_ALIASES,
+                },
+              },
+            ],
+          },
+        },
+
+        {
+          $group: {
+            _id: "$item",
+
+            qtyIn: {
+              $sum:
+                "$qtyIn",
+            },
+
+            qtyOut: {
+              $sum:
+                "$qtyOut",
+            },
+          },
+        },
+      ]);
+
+    return new Map(
+      rows.map(
+        (row) => [
+          String(
+            row._id
+          ),
+
+          Math.max(
+            cleanNumber(
+              row.qtyIn
+            ) -
+              cleanNumber(
+                row.qtyOut
+              ),
+            0
+          ),
+        ]
+      )
     );
+  };
 
-    res.status(200).json(orders);
-  } catch (error) {
-    console.error("Sales Orders Load Error:", error);
+const getHighestExistingSequence =
+  async () => {
+    const result =
+      await SalesOrder.aggregate([
+        {
+          $match: {
+            salesOrderNo:
+              /^SO-\d+$/i,
+          },
+        },
 
-    res.status(500).json({
-      success: false,
-      message: "Sales orders load nahi huay",
-      error: error.message,
-    });
-  }
-});
+        {
+          $project: {
+            sequence: {
+              $toInt: {
+                $arrayElemAt: [
+                  {
+                    $split: [
+                      "$salesOrderNo",
+                      "-",
+                    ],
+                  },
 
-router.get("/:id", async (req, res) => {
-  try {
-    const order = await populateSalesOrder(
-      SalesOrder.findById(req.params.id)
+                  1,
+                ],
+              },
+            },
+          },
+        },
+
+        {
+          $sort: {
+            sequence: -1,
+          },
+        },
+
+        {
+          $limit: 1,
+        },
+      ]);
+
+    return cleanNumber(
+      result[0]?.sequence
     );
+  };
 
-    if (!order) {
-      return res.status(404).json({
-        success: false,
-        message: "Sales order not found",
-      });
+const syncSalesOrderCounter =
+  async () => {
+    const highestSequence =
+      await getHighestExistingSequence();
+
+    const counter =
+      await Counter.findOneAndUpdate(
+        {
+          name:
+            "salesOrderNo",
+        },
+
+        {
+          $max: {
+            seq:
+              highestSequence,
+          },
+        },
+
+        {
+          new: true,
+          upsert: true,
+          setDefaultsOnInsert:
+            true,
+        }
+      );
+
+    return cleanNumber(
+      counter.seq
+    );
+  };
+
+const getNextSalesOrderNo =
+  async () => {
+    await syncSalesOrderCounter();
+
+    for (
+      let attempt = 0;
+      attempt < 20;
+      attempt += 1
+    ) {
+      const counter =
+        await Counter.findOneAndUpdate(
+          {
+            name:
+              "salesOrderNo",
+          },
+
+          {
+            $inc: {
+              seq: 1,
+            },
+          },
+
+          {
+            new: true,
+            upsert: true,
+            setDefaultsOnInsert:
+              true,
+          }
+        );
+
+      const salesOrderNo =
+        `SO-${String(
+          counter.seq
+        ).padStart(4, "0")}`;
+
+      const exists =
+        await SalesOrder.exists({
+          salesOrderNo,
+        });
+
+      if (!exists) {
+        return salesOrderNo;
+      }
     }
 
-    res.status(200).json({
-      success: true,
-      data: order,
-    });
-  } catch (error) {
-    console.error("Sales Order Single Load Error:", error);
+    throw new Error(
+      "Unable to generate a unique sales order number"
+    );
+  };
 
-    res.status(500).json({
-      success: false,
-      message: "Sales order load nahi hua",
-      error: error.message,
-    });
-  }
+const peekNextSalesOrderNo =
+  async () => {
+    const currentSequence =
+      await syncSalesOrderCounter();
+
+    return `SO-${String(
+      currentSequence + 1
+    ).padStart(4, "0")}`;
+  };
+
+const buildCustomerSnapshot = (
+  customer
+) => ({
+  customer:
+    customer._id,
+
+  customerName:
+    cleanText(
+      customer.customerName ||
+        customer.name
+    ),
+
+  customerPhone:
+    cleanText(
+      customer.phoneNumber ||
+        customer.phone
+    ),
+
+  customerEmail:
+    cleanText(
+      customer.email
+    ).toLowerCase(),
+
+  customerAddress:
+    cleanText(
+      customer.address
+    ),
+
+  customerCity:
+    cleanText(
+      customer.city
+    ),
 });
 
-router.post("/add", async (req, res) => {
-  try {
-    const {
-      salesOrderNo,
-      customer,
-      orderDate,
-      deliveryDate,
-      poNo,
-      referenceNo,
-      taxType,
-      items,
-      advance,
-      status,
-      remarks,
-    } = req.body;
+const loadCustomer =
+  async (
+    customerId
+  ) => {
+    if (
+      !isValidId(
+        customerId
+      )
+    ) {
+      throw new Error(
+        "A valid customer is required"
+      );
+    }
+
+    const customer =
+      await Customer.findById(
+        customerId
+      );
 
     if (!customer) {
-      return res.status(400).json({
-        success: false,
-        message: "Customer required hai",
-      });
+      throw new Error(
+        "Customer not found"
+      );
     }
 
-    if (!orderDate) {
-      return res.status(400).json({
-        success: false,
-        message: "Order date required hai",
-      });
+    if (
+      customer.status ===
+      "Inactive"
+    ) {
+      throw new Error(
+        "Selected customer is inactive"
+      );
     }
 
-    const selectedCustomer = await Customer.findById(customer);
+    return customer;
+  };
 
-    if (!selectedCustomer) {
-      return res.status(404).json({
-        success: false,
-        message: "Customer not found",
-      });
+const prepareSalesOrderItems =
+  async (
+    rows,
+    existingOrder = null
+  ) => {
+    if (
+      !Array.isArray(
+        rows
+      )
+    ) {
+      throw new Error(
+        "Sales order items must be an array"
+      );
     }
 
-    const totals = calculateOrderTotals(items, taxType, advance);
+    const cleanRows =
+      rows.filter(
+        (row) =>
+          row &&
+          idOf(
+            row.item
+          ) &&
+          cleanNumber(
+            row.quantity
+          ) > 0
+      );
 
-    if (totals.cleanItems.length === 0) {
-      return res.status(400).json({
-        success: false,
-        message: "Please at least one valid item add karein",
-      });
+    if (
+      cleanRows.length === 0
+    ) {
+      throw new Error(
+        "Add at least one Finished Good item"
+      );
     }
 
-    validateDeliveredQuantities(totals.cleanItems);
+    const itemIds =
+      cleanRows.map(
+        (row) =>
+          idOf(
+            row.item
+          )
+      );
 
-    if (totals.advance > totals.grandTotal) {
-      return res.status(400).json({
-        success: false,
-        message: "Advance grand total se zyada nahi ho sakta",
-      });
+    if (
+      itemIds.some(
+        (itemId) =>
+          !isValidId(
+            itemId
+          )
+      )
+    ) {
+      throw new Error(
+        "One or more item IDs are invalid"
+      );
     }
 
-    const finalSalesOrderNo = salesOrderNo
-      ? String(salesOrderNo).trim().toUpperCase()
-      : await getNextSalesOrderNo();
-
-    const customerSnapshot = buildCustomerSnapshot(selectedCustomer);
-
-    const order = new SalesOrder({
-      salesOrderNo: finalSalesOrderNo,
-      ...customerSnapshot,
-
-      orderDate,
-      deliveryDate: deliveryDate || "",
-      poNo: poNo || "",
-      referenceNo: referenceNo || "",
-
-      taxType: totals.taxType,
-      taxRate: totals.taxRate,
-
-      items: totals.cleanItems,
-
-      totalCartons: totals.totalCartons,
-      totalQuantity: totals.totalQuantity,
-      subtotal: totals.subtotal,
-      salesTax: totals.salesTax,
-      grandTotal: totals.grandTotal,
-      advance: totals.advance,
-      balance: totals.balance,
-      paymentStatus: totals.paymentStatus,
-
-      status: allowedStatuses.includes(status) ? status : "Draft",
-      remarks: remarks || "",
-    });
-
-    const savedOrder = await order.save();
-
-    const populatedOrder = await populateSalesOrder(
-      SalesOrder.findById(savedOrder._id)
-    );
-
-    res.status(201).json({
-      success: true,
-      message: "Sales order created successfully",
-      data: populatedOrder,
-    });
-  } catch (error) {
-    console.error("Sales Order Add Error:", error);
-
-    if (error.code === 11000) {
-      return res.status(400).json({
-        success: false,
-        message: "Ye sales order number already used hai",
-      });
+    if (
+      new Set(
+        itemIds
+      ).size !==
+      itemIds.length
+    ) {
+      throw new Error(
+        "The same Finished Good cannot be added more than once"
+      );
     }
 
-    res.status(400).json({
-      success: false,
-      message: "Sales order save nahi hua",
-      error: error.message,
-    });
-  }
-});
+    const warehouse =
+      await getFinishedGoodsWarehouse();
 
-router.put("/update/:id", async (req, res) => {
-  try {
-    const existingOrder = await SalesOrder.findById(req.params.id);
-
-    if (!existingOrder) {
-      return res.status(404).json({
-        success: false,
-        message: "Sales order not found",
-      });
-    }
-
-    if (existingOrder.status === "Cancelled") {
-      return res.status(400).json({
-        success: false,
-        message: "Cancelled sales order update nahi ho sakta",
-      });
-    }
-
-    if (["Delivered", "Invoiced"].includes(existingOrder.status)) {
-      return res.status(400).json({
-        success: false,
-        message: "Delivered/Invoiced sales order update nahi ho sakta",
-      });
-    }
-
-    const selectedCustomer = await Customer.findById(
-      req.body.customer || existingOrder.customer
-    );
-
-    if (!selectedCustomer) {
-      return res.status(404).json({
-        success: false,
-        message: "Customer not found",
-      });
-    }
-
-    const totals = calculateOrderTotals(
-      req.body.items || existingOrder.items,
-      req.body.taxType || existingOrder.taxType,
-      req.body.advance ?? existingOrder.advance
-    );
-
-    if (totals.cleanItems.length === 0) {
-      return res.status(400).json({
-        success: false,
-        message: "Please at least one valid item add karein",
-      });
-    }
-
-    validateDeliveredQuantities(totals.cleanItems);
-
-    if (totals.advance > totals.grandTotal) {
-      return res.status(400).json({
-        success: false,
-        message: "Advance grand total se zyada nahi ho sakta",
-      });
-    }
-
-    const customerSnapshot = buildCustomerSnapshot(selectedCustomer);
-
-    const updatedOrder = await populateSalesOrder(
-      SalesOrder.findByIdAndUpdate(
-        req.params.id,
-        {
-          salesOrderNo: req.body.salesOrderNo
-            ? String(req.body.salesOrderNo).trim().toUpperCase()
-            : existingOrder.salesOrderNo,
-
-          ...customerSnapshot,
-
-          orderDate: req.body.orderDate || existingOrder.orderDate,
-          deliveryDate: req.body.deliveryDate || "",
-          poNo: req.body.poNo || "",
-          referenceNo: req.body.referenceNo || "",
-
-          taxType: totals.taxType,
-          taxRate: totals.taxRate,
-
-          items: totals.cleanItems,
-
-          totalCartons: totals.totalCartons,
-          totalQuantity: totals.totalQuantity,
-          subtotal: totals.subtotal,
-          salesTax: totals.salesTax,
-          grandTotal: totals.grandTotal,
-          advance: totals.advance,
-          balance: totals.balance,
-          paymentStatus: totals.paymentStatus,
-
-          status: allowedStatuses.includes(req.body.status)
-            ? req.body.status
-            : existingOrder.status,
-
-          remarks: req.body.remarks || "",
+    const itemDocuments =
+      await Item.find({
+        _id: {
+          $in:
+            itemIds,
         },
-        {
-          returnDocument: "after",
-          runValidators: true,
+      });
+
+    const itemMap =
+      new Map(
+        itemDocuments.map(
+          (item) => [
+            String(
+              item._id
+            ),
+
+            item,
+          ]
+        )
+      );
+
+    const stockMap =
+      await getCurrentStockMap(
+        itemIds,
+        warehouse
+      );
+
+    const existingByRowId =
+      new Map();
+
+    const existingByItemId =
+      new Map();
+
+    for (
+      const row of
+      existingOrder?.items ||
+      []
+    ) {
+      existingByRowId.set(
+        String(
+          row._id
+        ),
+        row
+      );
+
+      existingByItemId.set(
+        idOf(
+          row.item
+        ),
+        row
+      );
+    }
+
+    return cleanRows.map(
+      (row) => {
+        const item =
+          itemMap.get(
+            idOf(
+              row.item
+            )
+          );
+
+        if (!item) {
+          throw new Error(
+            "A selected Finished Good could not be found"
+          );
         }
-      )
-    );
 
-    res.status(200).json({
-      success: true,
-      message: "Sales order updated successfully",
-      data: updatedOrder,
-    });
-  } catch (error) {
-    console.error("Sales Order Update Error:", error);
-
-    if (error.code === 11000) {
-      return res.status(400).json({
-        success: false,
-        message: "Ye sales order number already used hai",
-      });
-    }
-
-    res.status(400).json({
-      success: false,
-      message: "Sales order update nahi hua",
-      error: error.message,
-    });
-  }
-});
-
-router.patch("/status/:id", async (req, res) => {
-  try {
-    const { status } = req.body;
-
-    if (!allowedStatuses.includes(status)) {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid status",
-      });
-    }
-
-    const order = await populateSalesOrder(
-      SalesOrder.findByIdAndUpdate(
-        req.params.id,
-        { status },
-        {
-          returnDocument: "after",
-          runValidators: true,
+        if (
+          item.itemType !==
+          "Finished Good"
+        ) {
+          throw new Error(
+            `Item "${item.name}" is not a Finished Good`
+          );
         }
-      )
+
+        if (
+          item.stockManaged ===
+          false
+        ) {
+          throw new Error(
+            `Item "${item.name}" is not stock-managed`
+          );
+        }
+
+        if (
+          item.status ===
+          "Inactive"
+        ) {
+          throw new Error(
+            `Finished Good "${item.name}" is inactive`
+          );
+        }
+
+        const existingRow =
+          (
+            row._id &&
+            existingByRowId.get(
+              String(
+                row._id
+              )
+            )
+          ) ||
+          existingByItemId.get(
+            String(
+              item._id
+            )
+          );
+
+        const quantity =
+          cleanNumber(
+            row.quantity
+          );
+
+        const deliveredQty =
+          cleanNumber(
+            existingRow
+              ?.deliveredQty
+          );
+
+        if (
+          quantity <
+          deliveredQty
+        ) {
+          throw new Error(
+            `${item.name}: ordered quantity cannot be less than delivered quantity ${deliveredQty}`
+          );
+        }
+
+        const rawUnitPrice =
+          row.unitPrice ===
+            "" ||
+          row.unitPrice ===
+            undefined ||
+          row.unitPrice ===
+            null
+            ? item.salePrice
+            : row.unitPrice;
+
+        const unitPrice =
+          cleanNumber(
+            rawUnitPrice
+          );
+
+        return {
+          _id:
+            existingRow?._id ||
+            undefined,
+
+          item:
+            item._id,
+
+          warehouseId:
+            warehouse._id,
+
+          warehouse:
+            FINISHED_GOODS_GODOWN,
+
+          itemCode:
+            item.code,
+
+          itemName:
+            item.name,
+
+          availableStock:
+            cleanNumber(
+              stockMap.get(
+                String(
+                  item._id
+                )
+              )
+            ),
+
+          description:
+            cleanText(
+              row.description,
+              item.name
+            ),
+
+          size:
+            cleanText(
+              row.size
+            ),
+
+          textType:
+            [
+              "",
+              "with-text",
+              "without-text",
+            ].includes(
+              row.textType
+            )
+              ? row.textType
+              : "",
+
+          cartons:
+            cleanNumber(
+              row.cartons
+            ),
+
+          quantity,
+
+          deliveredQty,
+
+          pendingQty:
+            Math.max(
+              quantity -
+                deliveredQty,
+              0
+            ),
+
+          unit:
+            cleanText(
+              row.unit,
+              item.unit ||
+                "Pcs"
+            ),
+
+          unitPrice,
+
+          amount:
+            quantity *
+            unitPrice,
+
+          remarks:
+            cleanText(
+              row.remarks
+            ),
+        };
+      }
     );
+  };
 
-    if (!order) {
-      return res.status(404).json({
-        success: false,
-        message: "Sales order not found",
-      });
+const hasDeliveryHistory =
+  async (
+    salesOrderId
+  ) => {
+    return Boolean(
+      await DeliveryChallan.exists({
+        salesOrder:
+          salesOrderId,
+
+        status: {
+          $in: [
+            "Dispatched",
+            "Received",
+          ],
+        },
+      })
+    );
+  };
+
+router.get(
+  "/finished-goods",
+  async (
+    req,
+    res
+  ) => {
+    try {
+      const warehouse =
+        await getFinishedGoodsWarehouse();
+
+      const items =
+        await Item.find({
+          itemType:
+            "Finished Good",
+
+          stockManaged: {
+            $ne: false,
+          },
+
+          status:
+            "Active",
+        })
+          .select(
+            "code name itemType category brand unit purchasePrice salePrice minStock status stockManaged"
+          )
+          .sort({
+            name: 1,
+          });
+
+      const stockMap =
+        await getCurrentStockMap(
+          items.map(
+            (item) =>
+              item._id
+          ),
+          warehouse
+        );
+
+      const output =
+        items.map(
+          (item) => ({
+            _id:
+              item._id,
+
+            code:
+              item.code,
+
+            name:
+              item.name,
+
+            itemType:
+              item.itemType,
+
+            category:
+              item.category ||
+              "",
+
+            brand:
+              item.brand ||
+              "",
+
+            unit:
+              item.unit ||
+              "Pcs",
+
+            purchasePrice:
+              cleanNumber(
+                item.purchasePrice
+              ),
+
+            salePrice:
+              cleanNumber(
+                item.salePrice
+              ),
+
+            minimumStock:
+              cleanNumber(
+                item.minStock
+              ),
+
+            availableStock:
+              cleanNumber(
+                stockMap.get(
+                  String(
+                    item._id
+                  )
+                )
+              ),
+
+            warehouseId:
+              warehouse._id,
+
+            warehouse:
+              FINISHED_GOODS_GODOWN,
+
+            warehouseDisplay:
+              "Finished Goods Warehouse",
+          })
+        );
+
+      return res.json(
+        output
+      );
+    } catch (error) {
+      console.error(
+        "Finished Goods Load Error:",
+        error
+      );
+
+      return res
+        .status(500)
+        .json({
+          success: false,
+
+          message:
+            error.message ||
+            "Unable to load Finished Goods",
+        });
     }
-
-    res.status(200).json({
-      success: true,
-      message: "Status updated successfully",
-      data: order,
-    });
-  } catch (error) {
-    console.error("Sales Order Status Error:", error);
-
-    res.status(400).json({
-      success: false,
-      message: "Status update nahi hua",
-      error: error.message,
-    });
   }
-});
+);
 
-router.delete("/delete/:id", async (req, res) => {
-  try {
-    const order = await SalesOrder.findById(req.params.id);
+router.get(
+  "/next-no",
+  async (
+    req,
+    res
+  ) => {
+    try {
+      const salesOrderNo =
+        await peekNextSalesOrderNo();
 
-    if (!order) {
-      return res.status(404).json({
-        success: false,
-        message: "Sales order not found",
+      return res.json({
+        success: true,
+        salesOrderNo,
       });
-    }
+    } catch (error) {
+      return res
+        .status(500)
+        .json({
+          success: false,
 
-    if (["Partially Delivered", "Delivered", "Invoiced"].includes(order.status)) {
-      return res.status(400).json({
-        success: false,
+          message:
+            error.message ||
+            "Unable to generate sales order number",
+        });
+    }
+  }
+);
+
+router.get(
+  "/all",
+  async (
+    req,
+    res
+  ) => {
+    try {
+      const {
+        search = "",
+        status = "",
+        customer = "",
+      } = req.query;
+
+      const query = {};
+
+      if (
+        status &&
+        status !== "All"
+      ) {
+        query.status =
+          status;
+      }
+
+      if (
+        customer
+      ) {
+        if (
+          !isValidId(
+            customer
+          )
+        ) {
+          return res
+            .status(400)
+            .json({
+              success: false,
+
+              message:
+                "Invalid customer ID",
+            });
+        }
+
+        query.customer =
+          customer;
+      }
+
+      if (search) {
+        query.$or = [
+          {
+            salesOrderNo: {
+              $regex:
+                search,
+
+              $options:
+                "i",
+            },
+          },
+
+          {
+            customerName: {
+              $regex:
+                search,
+
+              $options:
+                "i",
+            },
+          },
+
+          {
+            customerPhone: {
+              $regex:
+                search,
+
+              $options:
+                "i",
+            },
+          },
+
+          {
+            poNo: {
+              $regex:
+                search,
+
+              $options:
+                "i",
+            },
+          },
+
+          {
+            referenceNo: {
+              $regex:
+                search,
+
+              $options:
+                "i",
+            },
+          },
+
+          {
+            "items.itemCode": {
+              $regex:
+                search,
+
+              $options:
+                "i",
+            },
+          },
+
+          {
+            "items.itemName": {
+              $regex:
+                search,
+
+              $options:
+                "i",
+            },
+          },
+
+          {
+            "items.description": {
+              $regex:
+                search,
+
+              $options:
+                "i",
+            },
+          },
+        ];
+      }
+
+      const orders =
+        await populateSalesOrder(
+          SalesOrder.find(
+            query
+          ).sort({
+            orderDate: -1,
+            createdAt: -1,
+          })
+        );
+
+      return res.json(
+        orders
+      );
+    } catch (error) {
+      console.error(
+        "Sales Orders Load Error:",
+        error
+      );
+
+      return res
+        .status(500)
+        .json({
+          success: false,
+
+          message:
+            error.message ||
+            "Unable to load sales orders",
+        });
+    }
+  }
+);
+
+router.get(
+  "/:id",
+  async (
+    req,
+    res
+  ) => {
+    try {
+      if (
+        !isValidId(
+          req.params.id
+        )
+      ) {
+        return res
+          .status(400)
+          .json({
+            success: false,
+
+            message:
+              "Invalid sales order ID",
+          });
+      }
+
+      const order =
+        await populateSalesOrder(
+          SalesOrder.findById(
+            req.params.id
+          )
+        );
+
+      if (!order) {
+        return res
+          .status(404)
+          .json({
+            success: false,
+
+            message:
+              "Sales order not found",
+          });
+      }
+
+      return res.json({
+        success: true,
+        data: order,
+      });
+    } catch (error) {
+      return res
+        .status(500)
+        .json({
+          success: false,
+
+          message:
+            error.message ||
+            "Unable to load sales order",
+        });
+    }
+  }
+);
+
+router.post(
+  "/add",
+  async (
+    req,
+    res
+  ) => {
+    try {
+      const body =
+        req.body ||
+        {};
+
+      const customer =
+        await loadCustomer(
+          body.customer
+        );
+
+      if (
+        !body.orderDate
+      ) {
+        throw new Error(
+          "Order date is required"
+        );
+      }
+
+      const items =
+        await prepareSalesOrderItems(
+          body.items
+        );
+
+      const salesOrderNo =
+        await getNextSalesOrderNo();
+
+      const requestedStatus =
+        [
+          "Draft",
+          "Confirmed",
+        ].includes(
+          body.status
+        )
+          ? body.status
+          : "Draft";
+
+      const order =
+        new SalesOrder({
+          salesOrderNo,
+
+          ...buildCustomerSnapshot(
+            customer
+          ),
+
+          orderDate:
+            cleanText(
+              body.orderDate,
+              todayDate()
+            ),
+
+          deliveryDate:
+            cleanText(
+              body.deliveryDate
+            ),
+
+          poNo:
+            cleanText(
+              body.poNo
+            ),
+
+          referenceNo:
+            cleanText(
+              body.referenceNo
+            ),
+
+          taxType:
+            body.taxType ===
+            "with-tax"
+              ? "with-tax"
+              : "without-tax",
+
+          items,
+
+          advance:
+            cleanNumber(
+              body.advance
+            ),
+
+          status:
+            requestedStatus,
+
+          remarks:
+            cleanText(
+              body.remarks
+            ),
+        });
+
+      await order.save();
+
+      const data =
+        await populateSalesOrder(
+          SalesOrder.findById(
+            order._id
+          )
+        );
+
+      return res
+        .status(201)
+        .json({
+          success: true,
+
+          message:
+            "Sales order created successfully",
+
+          data,
+        });
+    } catch (error) {
+      console.error(
+        "Sales Order Add Error:",
+        error
+      );
+
+      return res
+        .status(400)
+        .json({
+          success: false,
+
+          message:
+            duplicateMessage(
+              error,
+              "Unable to create sales order"
+            ),
+        });
+    }
+  }
+);
+
+router.put(
+  "/update/:id",
+  async (
+    req,
+    res
+  ) => {
+    try {
+      if (
+        !isValidId(
+          req.params.id
+        )
+      ) {
+        return res
+          .status(400)
+          .json({
+            success: false,
+
+            message:
+              "Invalid sales order ID",
+          });
+      }
+
+      const order =
+        await SalesOrder.findById(
+          req.params.id
+        );
+
+      if (!order) {
+        return res
+          .status(404)
+          .json({
+            success: false,
+
+            message:
+              "Sales order not found",
+          });
+      }
+
+      if (
+        ![
+          "Draft",
+          "Confirmed",
+        ].includes(
+          order.status
+        )
+      ) {
+        return res
+          .status(400)
+          .json({
+            success: false,
+
+            message:
+              "Only Draft or Confirmed sales orders can be edited",
+          });
+      }
+
+      if (
+        await hasDeliveryHistory(
+          order._id
+        )
+      ) {
+        return res
+          .status(400)
+          .json({
+            success: false,
+
+            message:
+              "Sales order cannot be edited after delivery has started",
+          });
+      }
+
+      const body =
+        req.body ||
+        {};
+
+      const customer =
+        await loadCustomer(
+          body.customer ||
+            order.customer
+        );
+
+      const items =
+        await prepareSalesOrderItems(
+          body.items ||
+            order.items,
+          order
+        );
+
+      Object.assign(
+        order,
+        buildCustomerSnapshot(
+          customer
+        )
+      );
+
+      order.orderDate =
+        cleanText(
+          body.orderDate,
+          order.orderDate
+        );
+
+      order.deliveryDate =
+        cleanText(
+          body.deliveryDate
+        );
+
+      order.poNo =
+        cleanText(
+          body.poNo
+        );
+
+      order.referenceNo =
+        cleanText(
+          body.referenceNo
+        );
+
+      order.taxType =
+        body.taxType ===
+        "with-tax"
+          ? "with-tax"
+          : "without-tax";
+
+      order.items =
+        items;
+
+      order.advance =
+        cleanNumber(
+          body.advance
+        );
+
+      if (
+        [
+          "Draft",
+          "Confirmed",
+        ].includes(
+          body.status
+        )
+      ) {
+        order.status =
+          body.status;
+      }
+
+      order.remarks =
+        cleanText(
+          body.remarks
+        );
+
+      await order.save();
+
+      const data =
+        await populateSalesOrder(
+          SalesOrder.findById(
+            order._id
+          )
+        );
+
+      return res.json({
+        success: true,
+
         message:
-          "Delivered ya partially delivered sales order delete nahi ho sakta",
+          "Sales order updated successfully",
+
+        data,
       });
+    } catch (error) {
+      console.error(
+        "Sales Order Update Error:",
+        error
+      );
+
+      return res
+        .status(400)
+        .json({
+          success: false,
+
+          message:
+            duplicateMessage(
+              error,
+              "Unable to update sales order"
+            ),
+        });
     }
-
-    await SalesOrder.findByIdAndDelete(req.params.id);
-
-    res.status(200).json({
-      success: true,
-      message: "Sales order deleted successfully",
-    });
-  } catch (error) {
-    console.error("Sales Order Delete Error:", error);
-
-    res.status(500).json({
-      success: false,
-      message: "Sales order delete nahi hua",
-      error: error.message,
-    });
   }
-});
+);
+
+router.patch(
+  "/status/:id",
+  async (
+    req,
+    res
+  ) => {
+    try {
+      if (
+        !isValidId(
+          req.params.id
+        )
+      ) {
+        return res
+          .status(400)
+          .json({
+            success: false,
+
+            message:
+              "Invalid sales order ID",
+          });
+      }
+
+      const order =
+        await SalesOrder.findById(
+          req.params.id
+        );
+
+      if (!order) {
+        return res
+          .status(404)
+          .json({
+            success: false,
+
+            message:
+              "Sales order not found",
+          });
+      }
+
+      const requestedStatus =
+        cleanText(
+          req.body.status
+        );
+
+      const allowedStatuses =
+        MANUAL_STATUS_TRANSITIONS[
+          order.status
+        ] || [];
+
+      if (
+        !allowedStatuses.includes(
+          requestedStatus
+        )
+      ) {
+        return res
+          .status(400)
+          .json({
+            success: false,
+
+            message:
+              `Status cannot be changed from ${order.status} to ${requestedStatus}`,
+          });
+      }
+
+      if (
+        requestedStatus ===
+        "Cancelled" &&
+        await hasDeliveryHistory(
+          order._id
+        )
+      ) {
+        return res
+          .status(400)
+          .json({
+            success: false,
+
+            message:
+              "Cancel the delivery challan before cancelling this sales order",
+          });
+      }
+
+      order.status =
+        requestedStatus;
+
+      await order.save();
+
+      const data =
+        await populateSalesOrder(
+          SalesOrder.findById(
+            order._id
+          )
+        );
+
+      return res.json({
+        success: true,
+
+        message:
+          "Sales order status updated successfully",
+
+        data,
+      });
+    } catch (error) {
+      console.error(
+        "Sales Order Status Error:",
+        error
+      );
+
+      return res
+        .status(400)
+        .json({
+          success: false,
+
+          message:
+            error.message ||
+            "Unable to update sales order status",
+        });
+    }
+  }
+);
+
+router.delete(
+  "/delete/:id",
+  async (
+    req,
+    res
+  ) => {
+    try {
+      if (
+        !isValidId(
+          req.params.id
+        )
+      ) {
+        return res
+          .status(400)
+          .json({
+            success: false,
+
+            message:
+              "Invalid sales order ID",
+          });
+      }
+
+      const order =
+        await SalesOrder.findById(
+          req.params.id
+        );
+
+      if (!order) {
+        return res
+          .status(404)
+          .json({
+            success: false,
+
+            message:
+              "Sales order not found",
+          });
+      }
+
+      if (
+        order.status !==
+        "Draft"
+      ) {
+        return res
+          .status(400)
+          .json({
+            success: false,
+
+            message:
+              "Only a Draft sales order can be deleted",
+          });
+      }
+
+      const challanExists =
+        await DeliveryChallan.exists({
+          salesOrder:
+            order._id,
+        });
+
+      if (
+        challanExists
+      ) {
+        return res
+          .status(400)
+          .json({
+            success: false,
+
+            message:
+              "This sales order has delivery challan history and cannot be deleted",
+          });
+      }
+
+      await SalesOrder.findByIdAndDelete(
+        order._id
+      );
+
+      return res.json({
+        success: true,
+
+        message:
+          "Sales order draft deleted successfully",
+      });
+    } catch (error) {
+      console.error(
+        "Sales Order Delete Error:",
+        error
+      );
+
+      return res
+        .status(500)
+        .json({
+          success: false,
+
+          message:
+            error.message ||
+            "Unable to delete sales order",
+        });
+    }
+  }
+);
 
 module.exports = router;

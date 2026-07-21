@@ -136,16 +136,13 @@ const normalizeArray = (
   keys = []
 ) => {
   if (
-    Array.isArray(
-      data
-    )
+    Array.isArray(data)
   ) {
     return data;
   }
 
   for (
-    const key of
-    keys
+    const key of keys
   ) {
     if (
       Array.isArray(
@@ -219,8 +216,10 @@ const emptyForm = (
   customerAddress: "",
   deliveryAddress: "",
   attentionTo: "",
-  challanDate: todayDate(),
-  dispatchDate: todayDate(),
+  challanDate:
+    todayDate(),
+  dispatchDate:
+    todayDate(),
   vehicleNo: "",
   driverName: "",
   driverPhone: "",
@@ -314,25 +313,21 @@ const DeliveryChallans =
     const fetchData =
       async () => {
         try {
-          setLoading(
-            true
-          );
+          setLoading(true);
 
           const [
             challanData,
             orderData,
           ] =
-            await Promise.all(
-              [
-                apiRequest(
-                  `${API_DELIVERY}/all`
-                ),
+            await Promise.all([
+              apiRequest(
+                `${API_DELIVERY}/all`
+              ),
 
-                apiRequest(
-                  `${API_DELIVERY}/eligible-sales-orders`
-                ),
-              ]
-            );
+              apiRequest(
+                `${API_DELIVERY}/eligible-sales-orders`
+              ),
+            ]);
 
           setChallans(
             normalizeArray(
@@ -364,9 +359,7 @@ const DeliveryChallans =
               "Unable to load delivery challans."
           );
         } finally {
-          setLoading(
-            false
-          );
+          setLoading(false);
         }
       };
 
@@ -381,9 +374,7 @@ const DeliveryChallans =
       useMemo(
         () =>
           salesOrders.find(
-            (
-              order
-            ) =>
+            (order) =>
               String(
                 order._id
               ) ===
@@ -463,27 +454,21 @@ const DeliveryChallans =
 
           draft:
             challans.filter(
-              (
-                row
-              ) =>
+              (row) =>
                 row.status ===
                 "Draft"
             ).length,
 
           dispatched:
             challans.filter(
-              (
-                row
-              ) =>
+              (row) =>
                 row.status ===
                 "Dispatched"
             ).length,
 
           received:
             challans.filter(
-              (
-                row
-              ) =>
+              (row) =>
                 row.status ===
                 "Received"
             ).length,
@@ -491,9 +476,7 @@ const DeliveryChallans =
           quantity:
             challans
               .filter(
-                (
-                  row
-                ) =>
+                (row) =>
                   [
                     "Dispatched",
                     "Received",
@@ -515,9 +498,7 @@ const DeliveryChallans =
 
           uninvoiced:
             challans.filter(
-              (
-                row
-              ) =>
+              (row) =>
                 [
                   "Dispatched",
                   "Received",
@@ -540,9 +521,7 @@ const DeliveryChallans =
               .toLowerCase();
 
           return challans.filter(
-            (
-              challan
-            ) => {
+            (challan) => {
               const searchable =
                 [
                   challan.challanNo,
@@ -555,18 +534,14 @@ const DeliveryChallans =
                     challan.items ||
                     []
                   ).flatMap(
-                    (
-                      item
-                    ) => [
+                    (item) => [
                       item.itemCode,
                       item.itemName,
                       item.description,
                     ]
                   ),
                 ]
-                  .filter(
-                    Boolean
-                  )
+                  .filter(Boolean)
                   .join(" ")
                   .toLowerCase();
 
@@ -575,11 +550,12 @@ const DeliveryChallans =
                   searchable.includes(
                     keyword
                   )) &&
-
-                (statusFilter ===
-                  "All" ||
+                (
+                  statusFilter ===
+                    "All" ||
                   challan.status ===
-                    statusFilter)
+                    statusFilter
+                )
               );
             }
           );
@@ -594,18 +570,14 @@ const DeliveryChallans =
     const openNewForm =
       async () => {
         try {
-          setSaving(
-            true
-          );
+          setSaving(true);
 
           const data =
             await apiRequest(
               `${API_DELIVERY}/next-no`
             );
 
-          setEditId(
-            null
-          );
+          setEditId(null);
 
           setForm(
             emptyForm(
@@ -615,31 +587,21 @@ const DeliveryChallans =
             )
           );
 
-          setShowForm(
-            true
-          );
+          setShowForm(true);
         } catch (error) {
           alert(
             error.message ||
               "Unable to prepare a delivery challan."
           );
         } finally {
-          setSaving(
-            false
-          );
+          setSaving(false);
         }
       };
 
     const closeForm =
       () => {
-        setShowForm(
-          false
-        );
-
-        setEditId(
-          null
-        );
-
+        setShowForm(false);
+        setEditId(null);
         setForm(
           emptyForm()
         );
@@ -650,9 +612,7 @@ const DeliveryChallans =
       value
     ) => {
       setForm(
-        (
-          current
-        ) => ({
+        (current) => ({
           ...current,
 
           [field]:
@@ -667,9 +627,7 @@ const DeliveryChallans =
       value
     ) => {
       setForm(
-        (
-          current
-        ) => {
+        (current) => {
           const items = [
             ...current.items,
           ];
@@ -683,7 +641,6 @@ const DeliveryChallans =
 
           return {
             ...current,
-
             items,
           };
         }
@@ -694,9 +651,7 @@ const DeliveryChallans =
       index
     ) => {
       setForm(
-        (
-          current
-        ) => ({
+        (current) => ({
           ...current,
 
           items:
@@ -717,9 +672,7 @@ const DeliveryChallans =
     ) => {
       const order =
         salesOrders.find(
-          (
-            row
-          ) =>
+          (row) =>
             String(
               row._id
             ) ===
@@ -730,9 +683,7 @@ const DeliveryChallans =
 
       if (!order) {
         setForm(
-          (
-            current
-          ) => ({
+          (current) => ({
             ...emptyForm(
               current.challanNo
             ),
@@ -750,12 +701,9 @@ const DeliveryChallans =
 
       const items =
         (
-          order.items ||
-          []
+          order.items || []
         ).map(
-          (
-            item
-          ) => ({
+          (item) => ({
             salesOrderItemId:
               item.salesOrderItemId,
 
@@ -847,9 +795,7 @@ const DeliveryChallans =
         );
 
       setForm(
-        (
-          current
-        ) => ({
+        (current) => ({
           ...current,
 
           salesOrder:
@@ -993,9 +939,7 @@ const DeliveryChallans =
             challan.items ||
             []
           ).map(
-            (
-              item
-            ) => ({
+            (item) => ({
               salesOrderItemId:
                 idOf(
                   item.salesOrderItemId
@@ -1093,9 +1037,7 @@ const DeliveryChallans =
           ),
       });
 
-      setShowForm(
-        true
-      );
+      setShowForm(true);
     };
 
     const validateForm =
@@ -1132,9 +1074,7 @@ const DeliveryChallans =
 
         const validItems =
           form.items.filter(
-            (
-              item
-            ) =>
+            (item) =>
               item.item &&
               numberValue(
                 item.quantity
@@ -1165,21 +1105,6 @@ const DeliveryChallans =
           ) {
             alert(
               `${item.itemName}: delivery quantity cannot exceed pending quantity.`
-            );
-
-            return false;
-          }
-
-          if (
-            numberValue(
-              item.quantity
-            ) >
-            numberValue(
-              item.availableStock
-            )
-          ) {
-            alert(
-              `${item.itemName}: delivery quantity cannot exceed available stock.`
             );
 
             return false;
@@ -1263,18 +1188,14 @@ const DeliveryChallans =
         items:
           form.items
             .filter(
-              (
-                item
-              ) =>
+              (item) =>
                 item.item &&
                 numberValue(
                   item.quantity
                 ) > 0
             )
             .map(
-              (
-                item
-              ) => ({
+              (item) => ({
                 salesOrderItemId:
                   item.salesOrderItemId,
 
@@ -1330,9 +1251,7 @@ const DeliveryChallans =
         }
 
         try {
-          setSaving(
-            true
-          );
+          setSaving(true);
 
           await apiRequest(
             editId
@@ -1360,9 +1279,7 @@ const DeliveryChallans =
               "Unable to save the delivery challan draft."
           );
         } finally {
-          setSaving(
-            false
-          );
+          setSaving(false);
         }
       };
 
@@ -1421,9 +1338,7 @@ const DeliveryChallans =
               "Unable to dispatch the delivery challan."
           );
         } finally {
-          setActionId(
-            ""
-          );
+          setActionId("");
         }
       };
 
@@ -1438,8 +1353,7 @@ const DeliveryChallans =
           );
 
         if (
-          receivedBy ===
-          null
+          receivedBy === null
         ) {
           return;
         }
@@ -1473,9 +1387,7 @@ const DeliveryChallans =
               "Unable to mark the challan as received."
           );
         } finally {
-          setActionId(
-            ""
-          );
+          setActionId("");
         }
       };
 
@@ -1490,8 +1402,7 @@ const DeliveryChallans =
           );
 
         if (
-          cancelReason ===
-          null
+          cancelReason === null
         ) {
           return;
         }
@@ -1523,9 +1434,7 @@ const DeliveryChallans =
               "Unable to cancel the delivery challan."
           );
         } finally {
-          setActionId(
-            ""
-          );
+          setActionId("");
         }
       };
 
@@ -1561,9 +1470,7 @@ const DeliveryChallans =
               "Unable to delete the delivery challan draft."
           );
         } finally {
-          setActionId(
-            ""
-          );
+          setActionId("");
         }
       };
 
@@ -1578,9 +1485,7 @@ const DeliveryChallans =
             "width=1100,height=850"
           );
 
-        if (
-          !printWindow
-        ) {
+        if (!printWindow) {
           alert(
             "Allow pop-ups and try again."
           );
@@ -1590,8 +1495,7 @@ const DeliveryChallans =
 
         const rows =
           (
-            challan.items ||
-            []
+            challan.items || []
           )
             .map(
               (
@@ -1875,9 +1779,7 @@ const DeliveryChallans =
                 className="rounded-lg p-1 hover:bg-blue-700"
               >
                 <ArrowLeft
-                  size={
-                    20
-                  }
+                  size={20}
                 />
               </button>
 
@@ -1895,11 +1797,7 @@ const DeliveryChallans =
               }
               className="rounded-lg p-2 hover:bg-blue-700"
             >
-              <X
-                size={
-                  18
-                }
-              />
+              <X size={18} />
             </button>
           </div>
 
@@ -1929,9 +1827,7 @@ const DeliveryChallans =
                       event
                     ) =>
                       handleSalesOrderChange(
-                        event
-                          .target
-                          .value
+                        event.target.value
                       )
                     }
                     disabled={
@@ -1948,9 +1844,7 @@ const DeliveryChallans =
                     </option>
 
                     {salesOrders.map(
-                      (
-                        order
-                      ) => (
+                      (order) => (
                         <option
                           key={
                             order._id
@@ -1969,23 +1863,6 @@ const DeliveryChallans =
                         </option>
                       )
                     )}
-
-                    {editId &&
-                      selectedOrder && (
-                        <option
-                          value={
-                            selectedOrder._id
-                          }
-                        >
-                          {
-                            selectedOrder.salesOrderNo
-                          }{" "}
-                          —{" "}
-                          {
-                            selectedOrder.customerName
-                          }
-                        </option>
-                      )}
                   </select>
                 </Field>
 
@@ -2003,9 +1880,7 @@ const DeliveryChallans =
                     ) =>
                       updateField(
                         "challanDate",
-                        event
-                          .target
-                          .value
+                        event.target.value
                       )
                     }
                     className={
@@ -2025,9 +1900,7 @@ const DeliveryChallans =
                     ) =>
                       updateField(
                         "dispatchDate",
-                        event
-                          .target
-                          .value
+                        event.target.value
                       )
                     }
                     className={
@@ -2058,9 +1931,7 @@ const DeliveryChallans =
                     ) =>
                       updateField(
                         "poNo",
-                        event
-                          .target
-                          .value
+                        event.target.value
                       )
                     }
                     className={
@@ -2079,9 +1950,7 @@ const DeliveryChallans =
                     ) =>
                       updateField(
                         "attentionTo",
-                        event
-                          .target
-                          .value
+                        event.target.value
                       )
                     }
                     className={
@@ -2100,9 +1969,7 @@ const DeliveryChallans =
                     ) =>
                       updateField(
                         "referenceNo",
-                        event
-                          .target
-                          .value
+                        event.target.value
                       )
                     }
                     className={
@@ -2124,9 +1991,7 @@ const DeliveryChallans =
                     ) =>
                       updateField(
                         "deliveryAddress",
-                        event
-                          .target
-                          .value
+                        event.target.value
                       )
                     }
                     className={
@@ -2284,13 +2149,8 @@ const DeliveryChallans =
                                 type="number"
                                 min="0"
                                 step="any"
-                                max={Math.min(
-                                  numberValue(
-                                    item.pendingQty
-                                  ),
-                                  numberValue(
-                                    item.availableStock
-                                  )
+                                max={numberValue(
+                                  item.pendingQty
                                 )}
                                 value={
                                   item.quantity
@@ -2301,9 +2161,7 @@ const DeliveryChallans =
                                   updateItem(
                                     index,
                                     "quantity",
-                                    event
-                                      .target
-                                      .value
+                                    event.target.value
                                   )
                                 }
                                 className={
@@ -2332,9 +2190,7 @@ const DeliveryChallans =
                                   updateItem(
                                     index,
                                     "cartons",
-                                    event
-                                      .target
-                                      .value
+                                    event.target.value
                                   )
                                 }
                                 className={
@@ -2357,9 +2213,7 @@ const DeliveryChallans =
                                   updateItem(
                                     index,
                                     "grossWeight",
-                                    event
-                                      .target
-                                      .value
+                                    event.target.value
                                   )
                                 }
                                 className={
@@ -2382,9 +2236,7 @@ const DeliveryChallans =
                                   updateItem(
                                     index,
                                     "netWeight",
-                                    event
-                                      .target
-                                      .value
+                                    event.target.value
                                   )
                                 }
                                 className={
@@ -2404,9 +2256,7 @@ const DeliveryChallans =
                                 className="rounded-lg p-2 text-red-600 hover:bg-red-50"
                               >
                                 <Trash2
-                                  size={
-                                    15
-                                  }
+                                  size={15}
                                 />
                               </button>
                             </td>
@@ -2461,9 +2311,7 @@ const DeliveryChallans =
                     ) =>
                       updateField(
                         "vehicleNo",
-                        event
-                          .target
-                          .value
+                        event.target.value
                       )
                     }
                     className={
@@ -2482,9 +2330,7 @@ const DeliveryChallans =
                     ) =>
                       updateField(
                         "driverName",
-                        event
-                          .target
-                          .value
+                        event.target.value
                       )
                     }
                     className={
@@ -2503,9 +2349,7 @@ const DeliveryChallans =
                     ) =>
                       updateField(
                         "driverPhone",
-                        event
-                          .target
-                          .value
+                        event.target.value
                       )
                     }
                     className={
@@ -2524,9 +2368,7 @@ const DeliveryChallans =
                     ) =>
                       updateField(
                         "preparedBy",
-                        event
-                          .target
-                          .value
+                        event.target.value
                       )
                     }
                     className={
@@ -2545,9 +2387,7 @@ const DeliveryChallans =
                     ) =>
                       updateField(
                         "dispatchedBy",
-                        event
-                          .target
-                          .value
+                        event.target.value
                       )
                     }
                     className={
@@ -2568,9 +2408,7 @@ const DeliveryChallans =
                       ) =>
                         updateField(
                           "remarks",
-                          event
-                            .target
-                            .value
+                          event.target.value
                         )
                       }
                       className={`${inputClass} min-h-[90px]`}
@@ -2603,16 +2441,12 @@ const DeliveryChallans =
               >
                 {saving ? (
                   <Loader2
-                    size={
-                      17
-                    }
+                    size={17}
                     className="animate-spin"
                   />
                 ) : (
                   <FileText
-                    size={
-                      17
-                    }
+                    size={17}
                   />
                 )}
 
@@ -2638,9 +2472,7 @@ const DeliveryChallans =
               className="rounded-lg p-1 hover:bg-blue-700"
             >
               <ArrowLeft
-                size={
-                  20
-                }
+                size={20}
               />
             </button>
 
@@ -2661,9 +2493,7 @@ const DeliveryChallans =
               className="flex items-center gap-2 rounded-lg bg-white/10 px-4 py-2 text-sm font-semibold hover:bg-white/20 disabled:opacity-60"
             >
               <RefreshCcw
-                size={
-                  16
-                }
+                size={16}
                 className={
                   loading
                     ? "animate-spin"
@@ -2681,11 +2511,7 @@ const DeliveryChallans =
               }
               className="flex items-center gap-2 rounded-lg bg-white px-4 py-2 text-sm font-bold text-blue-700"
             >
-              <Plus
-                size={
-                  16
-                }
-              />
+              <Plus size={16} />
 
               New Challan
             </button>
@@ -2763,9 +2589,7 @@ const DeliveryChallans =
             <div className="flex flex-col gap-2 sm:flex-row">
               <div className="relative">
                 <Search
-                  size={
-                    15
-                  }
+                  size={15}
                   className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
                 />
 
@@ -2777,9 +2601,7 @@ const DeliveryChallans =
                     event
                   ) =>
                     setSearch(
-                      event
-                        .target
-                        .value
+                      event.target.value
                     )
                   }
                   className="w-full rounded-lg border py-2 pl-9 pr-3 text-xs sm:w-72"
@@ -2795,9 +2617,7 @@ const DeliveryChallans =
                   event
                 ) =>
                   setStatusFilter(
-                    event
-                      .target
-                      .value
+                    event.target.value
                   )
                 }
                 className="rounded-lg border px-3 py-2 text-xs"
@@ -2893,9 +2713,7 @@ const DeliveryChallans =
                   </tr>
                 ) : (
                   filteredChallans.map(
-                    (
-                      challan
-                    ) => {
+                    (challan) => {
                       const busy =
                         actionId ===
                         challan._id;
@@ -2958,9 +2776,7 @@ const DeliveryChallans =
                                 2
                               )
                               .map(
-                                (
-                                  item
-                                ) => (
+                                (item) => (
                                   <div
                                     key={
                                       item._id
@@ -2988,9 +2804,7 @@ const DeliveryChallans =
                               2 && (
                               <div className="text-[10px] text-slate-500">
                                 +
-                                {challan
-                                  .items
-                                  .length -
+                                {challan.items.length -
                                   2}{" "}
                                 more
                               </div>
@@ -3058,9 +2872,7 @@ const DeliveryChallans =
                                 color="slate"
                               >
                                 <Printer
-                                  size={
-                                    15
-                                  }
+                                  size={15}
                                 />
                               </ActionButton>
 
@@ -3080,9 +2892,7 @@ const DeliveryChallans =
                                     color="blue"
                                   >
                                     <Edit3
-                                      size={
-                                        15
-                                      }
+                                      size={15}
                                     />
                                   </ActionButton>
 
@@ -3099,9 +2909,7 @@ const DeliveryChallans =
                                     color="emerald"
                                   >
                                     <Truck
-                                      size={
-                                        15
-                                      }
+                                      size={15}
                                     />
                                   </ActionButton>
 
@@ -3118,9 +2926,7 @@ const DeliveryChallans =
                                     color="red"
                                   >
                                     <Trash2
-                                      size={
-                                        15
-                                      }
+                                      size={15}
                                     />
                                   </ActionButton>
                                 </>
@@ -3141,9 +2947,7 @@ const DeliveryChallans =
                                   color="emerald"
                                 >
                                   <CheckCircle2
-                                    size={
-                                      15
-                                    }
+                                    size={15}
                                   />
                                 </ActionButton>
                               )}
@@ -3170,18 +2974,14 @@ const DeliveryChallans =
                                     color="orange"
                                   >
                                     <XCircle
-                                      size={
-                                        15
-                                      }
+                                      size={15}
                                     />
                                   </ActionButton>
                                 )}
 
                               {busy && (
                                 <Loader2
-                                  size={
-                                    15
-                                  }
+                                  size={15}
                                   className="animate-spin text-blue-600"
                                 />
                               )}
@@ -3274,11 +3074,7 @@ const StatCard = ({
       </div>
 
       <div className="rounded-lg bg-blue-50 p-2 text-blue-700">
-        <Icon
-          size={
-            18
-          }
-        />
+        <Icon size={18} />
       </div>
     </div>
   </div>

@@ -1,295 +1,770 @@
 const mongoose = require("mongoose");
 
-const salesOrderItemSchema = new mongoose.Schema(
-  {
-    item: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "Item",
-      default: null,
-    },
+const FINISHED_GOODS_GODOWN =
+  "Finished Goods Godown";
 
-    warehouse: {
-      type: String,
-      trim: true,
-      default: "Main Godown",
-    },
+const SALES_ORDER_STATUSES = [
+  "Draft",
+  "Confirmed",
+  "In Production",
+  "Ready",
+  "Partially Delivered",
+  "Delivered",
+  "Invoiced",
+  "Cancelled",
+];
 
-    availableStock: {
-      type: Number,
-      default: 0,
-      min: 0,
-    },
+const TAX_TYPES = [
+  "without-tax",
+  "with-tax",
+];
 
-    description: {
-      type: String,
-      required: [true, "Item description is required"],
-      trim: true,
-    },
+const TEXT_TYPES = [
+  "",
+  "with-text",
+  "without-text",
+];
 
-    size: {
-      type: String,
-      trim: true,
-      default: "",
-    },
+const todayDate = () =>
+  new Date()
+    .toISOString()
+    .slice(0, 10);
 
-    textType: {
-      type: String,
-      enum: ["", "with-text", "without-text"],
-      default: "",
-    },
+const cleanText = (
+  value,
+  fallback = ""
+) => {
+  const text = String(
+    value ?? ""
+  ).trim();
 
-    cartons: {
-      type: Number,
-      default: 0,
-      min: 0,
-    },
+  return text || fallback;
+};
 
-    quantity: {
-      type: Number,
-      required: [true, "Quantity is required"],
-      min: 0,
-    },
+const cleanNumber = (
+  value
+) => {
+  const number = Number(value);
 
-    deliveredQty: {
-      type: Number,
-      default: 0,
-      min: 0,
-    },
+  return Number.isFinite(number)
+    ? Math.max(number, 0)
+    : 0;
+};
 
-    pendingQty: {
-      type: Number,
-      default: 0,
-      min: 0,
-    },
+const salesOrderItemSchema =
+  new mongoose.Schema(
+    {
+      item: {
+        type:
+          mongoose.Schema.Types
+            .ObjectId,
 
-    unit: {
-      type: String,
-      default: "Rolls",
-      trim: true,
-    },
+        ref: "Item",
 
-    unitPrice: {
-      type: Number,
-      required: [true, "Unit price is required"],
-      min: 0,
-    },
+        required: [
+          true,
+          "Finished good item is required",
+        ],
 
-    amount: {
-      type: Number,
-      default: 0,
-      min: 0,
-    },
+        index: true,
+      },
 
-    remarks: {
-      type: String,
-      trim: true,
-      default: "",
-    },
-  }
-);
+      warehouseId: {
+        type:
+          mongoose.Schema.Types
+            .ObjectId,
 
-const salesOrderSchema = new mongoose.Schema(
-  {
-    salesOrderNo: {
-      type: String,
-      required: true,
-      unique: true,
-      trim: true,
-      uppercase: true,
-    },
+        ref: "Warehouse",
 
-    customer: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "Customer",
-      required: [true, "Customer is required"],
-    },
+        default: null,
+      },
 
-    customerName: {
-      type: String,
-      required: true,
-      trim: true,
-    },
+      warehouse: {
+        type: String,
+        trim: true,
 
-    customerPhone: {
-      type: String,
-      trim: true,
-      default: "",
-    },
+        default:
+          FINISHED_GOODS_GODOWN,
+      },
 
-    customerEmail: {
-      type: String,
-      trim: true,
-      default: "",
-    },
+      itemCode: {
+        type: String,
+        trim: true,
+        uppercase: true,
+        default: "",
+      },
 
-    customerAddress: {
-      type: String,
-      trim: true,
-      default: "",
-    },
+      itemName: {
+        type: String,
+        trim: true,
+        default: "",
+      },
 
-    customerCity: {
-      type: String,
-      trim: true,
-      default: "",
-    },
+      availableStock: {
+        type: Number,
+        default: 0,
+        min: [
+          0,
+          "Available stock cannot be negative",
+        ],
+      },
 
-    orderDate: {
-      type: String,
-      required: [true, "Order date is required"],
-    },
+      description: {
+        type: String,
 
-    deliveryDate: {
-      type: String,
-      default: "",
-    },
+        required: [
+          true,
+          "Item description is required",
+        ],
 
-    poNo: {
-      type: String,
-      trim: true,
-      default: "",
-    },
+        trim: true,
+      },
 
-    referenceNo: {
-      type: String,
-      trim: true,
-      default: "",
-    },
+      size: {
+        type: String,
+        trim: true,
+        default: "",
+      },
 
-    taxType: {
-      type: String,
-      enum: ["without-tax", "with-tax"],
-      default: "without-tax",
-    },
+      textType: {
+        type: String,
 
-    taxRate: {
-      type: Number,
-      default: 0,
-      min: 0,
-    },
+        enum: {
+          values:
+            TEXT_TYPES,
 
-    items: {
-      type: [salesOrderItemSchema],
-      validate: {
-        validator: function (items) {
-          return items && items.length > 0;
+          message:
+            "Invalid text type",
         },
-        message: "At least one item is required",
+
+        default: "",
+      },
+
+      cartons: {
+        type: Number,
+        default: 0,
+
+        min: [
+          0,
+          "Cartons cannot be negative",
+        ],
+      },
+
+      quantity: {
+        type: Number,
+
+        required: [
+          true,
+          "Quantity is required",
+        ],
+
+        min: [
+          0.000001,
+          "Quantity must be greater than zero",
+        ],
+      },
+
+      deliveredQty: {
+        type: Number,
+        default: 0,
+
+        min: [
+          0,
+          "Delivered quantity cannot be negative",
+        ],
+      },
+
+      pendingQty: {
+        type: Number,
+        default: 0,
+
+        min: [
+          0,
+          "Pending quantity cannot be negative",
+        ],
+      },
+
+      unit: {
+        type: String,
+        trim: true,
+        default: "Pcs",
+      },
+
+      unitPrice: {
+        type: Number,
+
+        required: [
+          true,
+          "Unit price is required",
+        ],
+
+        min: [
+          0,
+          "Unit price cannot be negative",
+        ],
+      },
+
+      amount: {
+        type: Number,
+        default: 0,
+
+        min: [
+          0,
+          "Amount cannot be negative",
+        ],
+      },
+
+      remarks: {
+        type: String,
+        trim: true,
+        default: "",
+
+        maxlength: [
+          1000,
+          "Item remarks cannot exceed 1000 characters",
+        ],
       },
     },
+    {
+      _id: true,
+      versionKey: false,
+    }
+  );
 
-    totalCartons: {
-      type: Number,
-      default: 0,
-      min: 0,
-    },
+const salesOrderSchema =
+  new mongoose.Schema(
+    {
+      salesOrderNo: {
+        type: String,
 
-    totalQuantity: {
-      type: Number,
-      default: 0,
-      min: 0,
-    },
+        required: [
+          true,
+          "Sales order number is required",
+        ],
 
-    subtotal: {
-      type: Number,
-      default: 0,
-      min: 0,
-    },
+        unique: true,
+        trim: true,
+        uppercase: true,
+      },
 
-    salesTax: {
-      type: Number,
-      default: 0,
-      min: 0,
-    },
+      customer: {
+        type:
+          mongoose.Schema.Types
+            .ObjectId,
 
-    grandTotal: {
-      type: Number,
-      default: 0,
-      min: 0,
-    },
+        ref: "Customer",
 
-    advance: {
-      type: Number,
-      default: 0,
-      min: 0,
-    },
+        required: [
+          true,
+          "Customer is required",
+        ],
 
-    balance: {
-      type: Number,
-      default: 0,
-    },
+        index: true,
+      },
 
-    paymentStatus: {
-      type: String,
-      enum: ["Unpaid", "Partially Paid", "Paid"],
-      default: "Unpaid",
-    },
+      customerName: {
+        type: String,
 
-    status: {
-      type: String,
-      enum: [
-        "Draft",
-        "Confirmed",
-        "In Production",
-        "Ready",
-        "Partially Delivered",
-        "Delivered",
-        "Invoiced",
-        "Cancelled",
-      ],
-      default: "Draft",
-    },
+        required: [
+          true,
+          "Customer name is required",
+        ],
 
-    remarks: {
-      type: String,
-      trim: true,
-      default: "",
+        trim: true,
+      },
+
+      customerPhone: {
+        type: String,
+        trim: true,
+        default: "",
+      },
+
+      customerEmail: {
+        type: String,
+        trim: true,
+        lowercase: true,
+        default: "",
+      },
+
+      customerAddress: {
+        type: String,
+        trim: true,
+        default: "",
+      },
+
+      customerCity: {
+        type: String,
+        trim: true,
+        default: "",
+      },
+
+      orderDate: {
+        type: String,
+
+        required: [
+          true,
+          "Order date is required",
+        ],
+
+        default: todayDate,
+
+        validate: {
+          validator(value) {
+            return /^\d{4}-\d{2}-\d{2}$/.test(
+              value
+            );
+          },
+
+          message:
+            "Order date format must be YYYY-MM-DD",
+        },
+
+        index: true,
+      },
+
+      deliveryDate: {
+        type: String,
+        trim: true,
+        default: "",
+
+        validate: {
+          validator(value) {
+            return (
+              !value ||
+              /^\d{4}-\d{2}-\d{2}$/.test(
+                value
+              )
+            );
+          },
+
+          message:
+            "Delivery date format must be YYYY-MM-DD",
+        },
+      },
+
+      poNo: {
+        type: String,
+        trim: true,
+        default: "",
+      },
+
+      referenceNo: {
+        type: String,
+        trim: true,
+        default: "",
+      },
+
+      taxType: {
+        type: String,
+
+        enum: {
+          values:
+            TAX_TYPES,
+
+          message:
+            "Invalid tax type",
+        },
+
+        default:
+          "without-tax",
+      },
+
+      taxRate: {
+        type: Number,
+        default: 0,
+        min: 0,
+      },
+
+      items: {
+        type: [
+          salesOrderItemSchema,
+        ],
+
+        validate: {
+          validator(items) {
+            return (
+              Array.isArray(items) &&
+              items.length > 0
+            );
+          },
+
+          message:
+            "At least one finished good item is required",
+        },
+      },
+
+      totalCartons: {
+        type: Number,
+        default: 0,
+        min: 0,
+      },
+
+      totalQuantity: {
+        type: Number,
+        default: 0,
+        min: 0,
+      },
+
+      subtotal: {
+        type: Number,
+        default: 0,
+        min: 0,
+      },
+
+      salesTax: {
+        type: Number,
+        default: 0,
+        min: 0,
+      },
+
+      grandTotal: {
+        type: Number,
+        default: 0,
+        min: 0,
+      },
+
+      advance: {
+        type: Number,
+        default: 0,
+        min: 0,
+      },
+
+      balance: {
+        type: Number,
+        default: 0,
+      },
+
+      paymentStatus: {
+        type: String,
+
+        enum: [
+          "Unpaid",
+          "Partially Paid",
+          "Paid",
+        ],
+
+        default:
+          "Unpaid",
+
+        index: true,
+      },
+
+      status: {
+        type: String,
+
+        enum: {
+          values:
+            SALES_ORDER_STATUSES,
+
+          message:
+            "Invalid sales order status",
+        },
+
+        default: "Draft",
+        index: true,
+      },
+
+      remarks: {
+        type: String,
+        trim: true,
+        default: "",
+
+        maxlength: [
+          2000,
+          "Remarks cannot exceed 2000 characters",
+        ],
+      },
     },
-  },
-  { timestamps: true }
+    {
+      timestamps: true,
+      versionKey: false,
+
+      toJSON: {
+        virtuals: true,
+      },
+
+      toObject: {
+        virtuals: true,
+      },
+    }
+  );
+
+salesOrderSchema.index({
+  customer: 1,
+  orderDate: -1,
+});
+
+salesOrderSchema.index({
+  status: 1,
+  orderDate: -1,
+});
+
+salesOrderSchema.index({
+  "items.item": 1,
+  status: 1,
+});
+
+salesOrderSchema.pre(
+  "validate",
+  function () {
+    this.salesOrderNo =
+      cleanText(
+        this.salesOrderNo
+      ).toUpperCase();
+
+    this.customerName =
+      cleanText(
+        this.customerName
+      );
+
+    this.customerPhone =
+      cleanText(
+        this.customerPhone
+      );
+
+    this.customerEmail =
+      cleanText(
+        this.customerEmail
+      ).toLowerCase();
+
+    this.customerAddress =
+      cleanText(
+        this.customerAddress
+      );
+
+    this.customerCity =
+      cleanText(
+        this.customerCity
+      );
+
+    this.orderDate =
+      cleanText(
+        this.orderDate,
+        todayDate()
+      );
+
+    this.deliveryDate =
+      cleanText(
+        this.deliveryDate
+      );
+
+    this.poNo =
+      cleanText(
+        this.poNo
+      );
+
+    this.referenceNo =
+      cleanText(
+        this.referenceNo
+      );
+
+    this.taxType =
+      TAX_TYPES.includes(
+        this.taxType
+      )
+        ? this.taxType
+        : "without-tax";
+
+    this.remarks =
+      cleanText(
+        this.remarks
+      );
+
+    this.items = (
+      Array.isArray(
+        this.items
+      )
+        ? this.items
+        : []
+    ).map(
+      (item) => {
+        item.warehouse =
+          FINISHED_GOODS_GODOWN;
+
+        item.itemCode =
+          cleanText(
+            item.itemCode
+          ).toUpperCase();
+
+        item.itemName =
+          cleanText(
+            item.itemName
+          );
+
+        item.availableStock =
+          cleanNumber(
+            item.availableStock
+          );
+
+        item.description =
+          cleanText(
+            item.description,
+            item.itemName
+          );
+
+        item.size =
+          cleanText(
+            item.size
+          );
+
+        item.textType =
+          TEXT_TYPES.includes(
+            item.textType
+          )
+            ? item.textType
+            : "";
+
+        item.cartons =
+          cleanNumber(
+            item.cartons
+          );
+
+        item.quantity =
+          cleanNumber(
+            item.quantity
+          );
+
+        item.deliveredQty =
+          cleanNumber(
+            item.deliveredQty
+          );
+
+        if (
+          item.deliveredQty >
+          item.quantity
+        ) {
+          this.invalidate(
+            "items",
+            `Delivered quantity cannot exceed ordered quantity for ${item.description}`
+          );
+        }
+
+        item.pendingQty =
+          Math.max(
+            item.quantity -
+              item.deliveredQty,
+            0
+          );
+
+        item.unit =
+          cleanText(
+            item.unit,
+            "Pcs"
+          );
+
+        item.unitPrice =
+          cleanNumber(
+            item.unitPrice
+          );
+
+        item.amount =
+          item.quantity *
+          item.unitPrice;
+
+        item.remarks =
+          cleanText(
+            item.remarks
+          );
+
+        return item;
+      }
+    );
+
+    this.totalCartons =
+      this.items.reduce(
+        (
+          sum,
+          item
+        ) =>
+          sum +
+          cleanNumber(
+            item.cartons
+          ),
+        0
+      );
+
+    this.totalQuantity =
+      this.items.reduce(
+        (
+          sum,
+          item
+        ) =>
+          sum +
+          cleanNumber(
+            item.quantity
+          ),
+        0
+      );
+
+    this.subtotal =
+      this.items.reduce(
+        (
+          sum,
+          item
+        ) =>
+          sum +
+          cleanNumber(
+            item.amount
+          ),
+        0
+      );
+
+    this.taxRate =
+      this.taxType ===
+      "with-tax"
+        ? 18
+        : 0;
+
+    this.salesTax =
+      this.taxType ===
+      "with-tax"
+        ? this.subtotal *
+          0.18
+        : 0;
+
+    this.grandTotal =
+      this.subtotal +
+      this.salesTax;
+
+    this.advance =
+      cleanNumber(
+        this.advance
+      );
+
+    if (
+      this.advance >
+      this.grandTotal
+    ) {
+      this.invalidate(
+        "advance",
+        "Advance cannot exceed grand total"
+      );
+    }
+
+    this.balance =
+      this.grandTotal -
+      this.advance;
+
+    if (
+      this.advance <= 0
+    ) {
+      this.paymentStatus =
+        "Unpaid";
+    } else if (
+      this.advance >=
+      this.grandTotal
+    ) {
+      this.paymentStatus =
+        "Paid";
+    } else {
+      this.paymentStatus =
+        "Partially Paid";
+    }
+  }
 );
 
-salesOrderSchema.pre("save", function () {
-  this.items = (this.items || []).map((item) => {
-    const quantity = Number(item.quantity || 0);
-    const deliveredQty = Number(item.deliveredQty || 0);
-    const unitPrice = Number(item.unitPrice || 0);
-
-    item.cartons = Number(item.cartons || 0);
-    item.quantity = quantity;
-    item.deliveredQty = deliveredQty;
-    item.pendingQty = Math.max(quantity - deliveredQty, 0);
-    item.unitPrice = unitPrice;
-    item.amount = quantity * unitPrice;
-    item.availableStock = Number(item.availableStock || 0);
-
-    return item;
-  });
-});
-
-salesOrderSchema.pre("findOneAndUpdate", function () {
-  const update = this.getUpdate() || {};
-
-  if (Array.isArray(update.items)) {
-    update.items = update.items.map((item) => {
-      const quantity = Number(item.quantity || 0);
-      const deliveredQty = Number(item.deliveredQty || 0);
-      const unitPrice = Number(item.unitPrice || 0);
-
-      return {
-        ...item,
-        cartons: Number(item.cartons || 0),
-        quantity,
-        deliveredQty,
-        pendingQty: Math.max(quantity - deliveredQty, 0),
-        unitPrice,
-        amount: quantity * unitPrice,
-        availableStock: Number(item.availableStock || 0),
-      };
-    });
-  }
-
-  this.setUpdate(update);
-});
-
-module.exports = mongoose.model("SalesOrder", salesOrderSchema);
+module.exports =
+  mongoose.model(
+    "SalesOrder",
+    salesOrderSchema
+  );
