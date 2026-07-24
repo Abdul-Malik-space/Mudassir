@@ -10,12 +10,24 @@ const PurchaseOrder = require("../models/PurchaseOrder");
 const Counter = require("../models/Counter");
 const StockLedger = require("../models/StockLedger");
 
+const stockService = require("../utils/stockService");
+
 const {
-  RAW_MATERIAL_GODOWN,
   ensureDefaultWarehouses,
   getItemStock,
   postStockMovement,
-} = require("../utils/stockService");
+} = stockService;
+
+const RAW_MATERIAL_GODOWN =
+  stockService.RAW_MATERIAL_GODOWN ||
+  "Raw Material Godown";
+
+const FINISHED_GOODS_GODOWN =
+  stockService.FINISHED_GOODS_GODOWN ||
+  "Finished Goods Godown";
+
+const MULTIPLE_WAREHOUSES =
+  "Multiple Warehouses";
 
 const GRN_STATUSES = [
   "Draft",
@@ -45,52 +57,82 @@ const GRN_ALLOWED_PO_STATUSES = [
   "Partially Received",
 ];
 
-const RAW_MATERIAL_ITEM_TYPES = [
+const SUPPORTED_ITEM_TYPES = [
   "Raw Material",
   "Packing Material",
   "Consumable",
+  "Finished Good",
 ];
 
 const todayDate = () =>
-  new Date().toISOString().slice(0, 10);
+  new Date()
+    .toISOString()
+    .slice(0, 10);
 
-const normalizeText = (
+const cleanText = (
   value,
   fallback = ""
 ) => {
-  const cleanedValue = String(
-    value || ""
+  const text = String(
+    value ?? ""
   ).trim();
 
-  return cleanedValue || fallback;
+  return text || fallback;
 };
 
-const normalizeNumber = (
-  value,
-  fallback = 0
-) => {
+const cleanNumber = (value) => {
   const number = Number(value);
 
   return Number.isFinite(number)
-    ? number
-    : fallback;
+    ? Math.max(number, 0)
+    : 0;
 };
 
+const idOf = (value) => {
+  if (!value) {
+    return "";
+  }
+
+  if (
+    typeof value ===
+    "object"
+  ) {
+    return String(
+      value._id ||
+        value.id ||
+        ""
+    );
+  }
+
+  return String(value);
+};
+
+const isValidId = (value) =>
+  mongoose.isValidObjectId(
+    value
+  );
+
 const normalizeStatus = (value) => {
-  const status = normalizeText(
+  const status = cleanText(
     value,
     "Draft"
   );
 
-  if (status === "Partial") {
+  if (
+    status === "Partial"
+  ) {
     return "Partially Received";
   }
 
-  if (status === "Complete") {
+  if (
+    status === "Complete"
+  ) {
     return "Completed";
   }
 
-  return GRN_STATUSES.includes(status)
+  return GRN_STATUSES.includes(
+    status
+  )
     ? status
     : "Draft";
 };
@@ -98,16 +140,20 @@ const normalizeStatus = (value) => {
 const normalizeInspectionStatus = (
   value
 ) => {
-  const status = normalizeText(
+  const status = cleanText(
     value,
     "Pending"
   );
 
-  if (status === "Partial") {
+  if (
+    status === "Partial"
+  ) {
     return "Partially Accepted";
   }
 
-  if (status === "Failed") {
+  if (
+    status === "Failed"
+  ) {
     return "Rejected";
   }
 
@@ -118,69 +164,143 @@ const normalizeInspectionStatus = (
     : "Pending";
 };
 
-const shouldPostStock = (status) => {
-  return STOCK_POSTING_STATUSES.includes(
+const shouldPostStock = (status) =>
+  STOCK_POSTING_STATUSES.includes(
     status
   );
-};
 
-const isValidObjectId = (value) => {
-  return mongoose.isValidObjectId(value);
-};
-
-const getId = (value) => {
-  if (!value) return "";
-
+const duplicateMessage = (
+  error,
+  fallback
+) => {
   if (
-    typeof value === "object"
+    error.code !==
+    11000
   ) {
-    return String(
-      value._id || value.id || ""
+    return (
+      error.message ||
+      fallback
     );
   }
 
-  return String(value);
+  const field =
+    Object.keys(
+      error.keyPattern || {}
+    )[0] || "value";
+
+  const value =
+    error.keyValue?.[field];
+
+  return `Duplicate ${field}: ${String(
+    value
+  )}`;
 };
 
-const makeItemKey = (item = {}) => {
-  const purchaseOrderItemId = getId(
-    item.purchaseOrderItemId ||
-      item._id
+const makeFallbackItemKey = (
+  item = {}
+) => {
+  const itemId = idOf(
+    item.item
   );
 
-  if (purchaseOrderItemId) {
-    return `po-row:${purchaseOrderItemId}`;
-  }
+  const description =
+    cleanText(
+      item.description ||
+        item.itemName ||
+        item.item?.name
+    ).toLowerCase();
 
-  const itemId = getId(item.item);
+  const size = cleanText(
+    item.size
+  ).toLowerCase();
 
-  if (itemId) {
-    return [
-      `item:${itemId}`,
-      normalizeText(
-        item.size
-      ).toLowerCase(),
-      normalizeText(
-        item.unit,
-        "Pcs"
-      ).toLowerCase(),
-    ].join("|");
-  }
+  const unit = cleanText(
+    item.unit ||
+      item.item?.unit,
+    "Pcs"
+  ).toLowerCase();
 
   return [
-    normalizeText(
-      item.description
-    ).toLowerCase(),
+    itemId
+      ? `item:${itemId}`
+      : `description:${description}`,
 
-    normalizeText(
-      item.size
-    ).toLowerCase(),
-
-    normalizeText(
-      item.unit,
-      "Pcs"
-    ).toLowerCase(),
+    `description:${description}`,
+    `size:${size}`,
+    `unit:${unit}`,
   ].join("|");
+};
+
+const getItemKeys = (
+  item = {},
+  {
+    useDocumentIdAsPurchaseOrderRowId =
+      false,
+  } = {}
+) => {
+  const keys = [];
+
+  const explicitPurchaseOrderItemId =
+    idOf(
+      item.purchaseOrderItemId
+    );
+
+  if (
+    explicitPurchaseOrderItemId
+  ) {
+    keys.push(
+      `po-row:${explicitPurchaseOrderItemId}`
+    );
+  }
+
+  if (
+    useDocumentIdAsPurchaseOrderRowId
+  ) {
+    const purchaseOrderRowId =
+      idOf(
+        item._id
+      );
+
+    if (
+      purchaseOrderRowId
+    ) {
+      keys.push(
+        `po-row:${purchaseOrderRowId}`
+      );
+    }
+  }
+
+  keys.push(
+    makeFallbackItemKey(
+      item
+    )
+  );
+
+  return [
+    ...new Set(
+      keys.filter(Boolean)
+    ),
+  ];
+};
+
+const getMapNumberByKeys = (
+  map,
+  keys = []
+) => {
+  for (
+    const key of
+    keys
+  ) {
+    if (
+      map.has(key)
+    ) {
+      return cleanNumber(
+        map.get(key)
+      );
+    }
+  }
+
+  return 0;
 };
 
 const getVendorSnapshot = (
@@ -193,471 +313,876 @@ const getVendorSnapshot = (
       ? purchaseOrder.vendor
       : null;
 
-  const vendorId = getId(
-    purchaseOrder.vendor
-  );
-
   return {
-    vendor: vendorId || null,
+    vendor:
+      idOf(
+        purchaseOrder.vendor
+      ) || null,
 
     vendorName:
-      normalizeText(
+      cleanText(
         purchaseOrder.vendorName
       ) ||
-      normalizeText(
+      cleanText(
         vendorDocument?.vendorName
       ) ||
-      normalizeText(
+      cleanText(
         vendorDocument?.name
       ),
 
     vendorPhone:
-      normalizeText(
+      cleanText(
         purchaseOrder.vendorPhone
       ) ||
-      normalizeText(
+      cleanText(
         vendorDocument?.phoneNumber
       ) ||
-      normalizeText(
+      cleanText(
         vendorDocument?.phone
       ),
 
     vendorEmail:
-      normalizeText(
+      cleanText(
         purchaseOrder.vendorEmail
       ) ||
-      normalizeText(
+      cleanText(
         vendorDocument?.email
       ),
 
     vendorAddress:
-      normalizeText(
+      cleanText(
         purchaseOrder.vendorAddress
       ) ||
-      normalizeText(
+      cleanText(
         vendorDocument?.address
       ),
   };
 };
 
-const getNextGRNNo = async () => {
-  for (
-    let attempt = 0;
-    attempt < 10;
-    attempt += 1
-  ) {
+const getHighestExistingSequence =
+  async () => {
+    const rows =
+      await GRN.find({})
+        .select("grnNo")
+        .lean();
+
+    return rows.reduce(
+      (
+        highest,
+        row
+      ) => {
+        const match =
+          String(
+            row.grnNo || ""
+          ).match(
+            /(\d+)(?!.*\d)/
+          );
+
+        return Math.max(
+          highest,
+          match
+            ? Number(match[1])
+            : 0
+        );
+      },
+      0
+    );
+  };
+
+const syncGRNCounter =
+  async () => {
+    const highest =
+      await getHighestExistingSequence();
+
     const counter =
       await Counter.findOneAndUpdate(
         {
           name: "grnNo",
         },
         {
-          $inc: {
-            seq: 1,
+          $max: {
+            seq: highest,
           },
         },
         {
           new: true,
           upsert: true,
-          setDefaultsOnInsert: true,
+          setDefaultsOnInsert:
+            true,
         }
       );
 
-    const grnNo = `GRN-${String(
+    return cleanNumber(
       counter.seq
-    ).padStart(4, "0")}`;
+    );
+  };
 
-    const exists = await GRN.exists({
-      grnNo,
-    });
+const getNextGRNNo =
+  async () => {
+    await syncGRNCounter();
 
-    if (!exists) {
-      return grnNo;
+    for (
+      let attempt = 0;
+      attempt < 20;
+      attempt += 1
+    ) {
+      const counter =
+        await Counter.findOneAndUpdate(
+          {
+            name: "grnNo",
+          },
+          {
+            $inc: {
+              seq: 1,
+            },
+          },
+          {
+            new: true,
+            upsert: true,
+            setDefaultsOnInsert:
+              true,
+          }
+        );
+
+      const grnNo =
+        `GRN-${String(
+          counter.seq
+        ).padStart(
+          4,
+          "0"
+        )}`;
+
+      const exists =
+        await GRN.exists({
+          grnNo,
+        });
+
+      if (!exists) {
+        return grnNo;
+      }
     }
-  }
 
-  throw new Error(
-    "Unable to generate unique GRN number"
-  );
-};
+    throw new Error(
+      "Unable to generate a unique GRN number"
+    );
+  };
 
-const peekNextGRNNo = async () => {
-  const counter = await Counter.findOne({
-    name: "grnNo",
-  });
+const peekNextGRNNo =
+  async () => {
+    const current =
+      await syncGRNCounter();
 
-  const nextSequence = counter
-    ? Number(counter.seq || 0) + 1
-    : 1;
+    return `GRN-${String(
+      current + 1
+    ).padStart(
+      4,
+      "0"
+    )}`;
+  };
 
-  return `GRN-${String(
-    nextSequence
-  ).padStart(4, "0")}`;
-};
+const getWarehouses =
+  async () => {
+    if (
+      typeof ensureDefaultWarehouses !==
+      "function"
+    ) {
+      throw new Error(
+        "ensureDefaultWarehouses is not exported from stockService"
+      );
+    }
+
+    await ensureDefaultWarehouses();
+
+    const warehouses =
+      await Warehouse.find({
+        $or: [
+          {
+            code: {
+              $in: [
+                "WH-RM",
+                "WH-FG",
+              ],
+            },
+          },
+          {
+            name: {
+              $in: [
+                RAW_MATERIAL_GODOWN,
+                FINISHED_GOODS_GODOWN,
+                "Raw Material Warehouse",
+                "Finished Goods Warehouse",
+              ],
+            },
+          },
+        ],
+      });
+
+    const rawWarehouse =
+      warehouses.find(
+        (warehouse) =>
+          warehouse.code ===
+            "WH-RM" ||
+          [
+            RAW_MATERIAL_GODOWN,
+            "Raw Material Warehouse",
+          ].includes(
+            warehouse.name
+          )
+      );
+
+    const finishedWarehouse =
+      warehouses.find(
+        (warehouse) =>
+          warehouse.code ===
+            "WH-FG" ||
+          [
+            FINISHED_GOODS_GODOWN,
+            "Finished Goods Warehouse",
+          ].includes(
+            warehouse.name
+          )
+      );
+
+    if (!rawWarehouse) {
+      throw new Error(
+        "Raw Material Godown not found"
+      );
+    }
+
+    if (
+      !finishedWarehouse
+    ) {
+      throw new Error(
+        "Finished Goods Godown not found"
+      );
+    }
+
+    if (
+      rawWarehouse.status ===
+      "Inactive"
+    ) {
+      throw new Error(
+        "Raw Material Godown is inactive"
+      );
+    }
+
+    if (
+      finishedWarehouse.status ===
+      "Inactive"
+    ) {
+      throw new Error(
+        "Finished Goods Godown is inactive"
+      );
+    }
+
+    return {
+      rawWarehouse,
+      finishedWarehouse,
+    };
+  };
+
+const warehouseForItemType = (
+  itemType,
+  warehouses
+) =>
+  itemType ===
+  "Finished Good"
+    ? warehouses.finishedWarehouse
+    : warehouses.rawWarehouse;
 
 const getPOItemsMap = (
-  purchaseOrderItems = []
+  items = []
 ) => {
   const map = new Map();
 
-  purchaseOrderItems.forEach((row) => {
-    const key = makeItemKey(row);
-
-    map.set(key, {
+  for (
+    const row of
+    items
+  ) {
+    const data = {
       purchaseOrderItemId:
         row._id || null,
 
       item:
-        getId(row.item) || null,
+        idOf(
+          row.item
+        ) || null,
 
-      description: normalizeText(
-        row.description ||
-          row.itemName ||
-          row.item?.name
-      ),
+      description:
+        cleanText(
+          row.description ||
+            row.itemName ||
+            row.item?.name
+        ),
 
-      size: normalizeText(row.size),
+      size:
+        cleanText(
+          row.size
+        ),
 
-      orderedQty: normalizeNumber(
-        row.quantity ?? row.qty
-      ),
+      orderedQty:
+        cleanNumber(
+          row.quantity ??
+            row.qty
+        ),
 
-      unit: normalizeText(
-        row.unit ||
-          row.item?.unit,
-        "Pcs"
-      ),
+      unit:
+        cleanText(
+          row.unit ||
+            row.item?.unit,
+          "Pcs"
+        ),
 
-      unitPrice: normalizeNumber(
-        row.unitPrice
-      ),
-    });
-  });
+      unitPrice:
+        cleanNumber(
+          row.unitPrice
+        ),
+    };
+
+    const keys =
+      getItemKeys(
+        row,
+        {
+          useDocumentIdAsPurchaseOrderRowId:
+            true,
+        }
+      );
+
+    for (
+      const key of
+      keys
+    ) {
+      map.set(
+        key,
+        data
+      );
+    }
+  }
 
   return map;
 };
 
-const getReceivedQtyMap = async (
-  purchaseOrderId,
-  excludeGRNId = null
-) => {
-  const query = {
-    purchaseOrder: purchaseOrderId,
+const getReceivedQtyMap =
+  async (
+    purchaseOrderId,
+    excludeGRNId = null
+  ) => {
+    const query = {
+      purchaseOrder:
+        purchaseOrderId,
 
-    status: {
-      $in: STOCK_POSTING_STATUSES,
-    },
+      status: {
+        $in:
+          STOCK_POSTING_STATUSES,
+      },
 
-    stockPosted: true,
+      stockPosted:
+        true,
+    };
+
+    if (
+      excludeGRNId
+    ) {
+      query._id = {
+        $ne:
+          excludeGRNId,
+      };
+    }
+
+    const postedGRNs =
+      await GRN.find(
+        query
+      )
+        .select(
+          "items.purchaseOrderItemId items.item items.description items.size items.unit items.acceptedQty"
+        )
+        .lean();
+
+    const map = new Map();
+
+    for (
+      const grn of
+      postedGRNs
+    ) {
+      for (
+        const item of
+        grn.items || []
+      ) {
+        const keys =
+          getItemKeys(
+            item
+          );
+
+        for (
+          const key of
+          keys
+        ) {
+          map.set(
+            key,
+            cleanNumber(
+              map.get(key)
+            ) +
+              cleanNumber(
+                item.acceptedQty
+              )
+          );
+        }
+      }
+    }
+
+    return map;
   };
 
-  if (excludeGRNId) {
-    query._id = {
-      $ne: excludeGRNId,
-    };
-  }
-
-  const postedGRNs = await GRN.find(
-    query
-  ).select(
-    "items.purchaseOrderItemId items.item items.description items.size items.unit items.acceptedQty"
-  );
-
-  const map = new Map();
-
-  postedGRNs.forEach((grn) => {
-    (grn.items || []).forEach(
-      (item) => {
-        const key = makeItemKey(item);
-
-        const previousQuantity =
-          map.get(key) || 0;
-
-        map.set(
-          key,
-          previousQuantity +
-            normalizeNumber(
-              item.acceptedQty
-            )
-        );
-      }
-    );
-  });
-
-  return map;
-};
-
-const cleanGRNItems = async ({
-  items = [],
-  purchaseOrder,
-  excludeGRNId = null,
-}) => {
-  if (!Array.isArray(items)) {
-    throw new Error(
-      "GRN items array required hai"
-    );
-  }
-
-  const poItemsMap = getPOItemsMap(
-    purchaseOrder.items || []
-  );
-
-  const receivedQtyMap =
-    await getReceivedQtyMap(
-      purchaseOrder._id,
-      excludeGRNId
-    );
-
-  const itemDocumentCache =
-    new Map();
-
-  const cleanItems = [];
-
-  for (const incomingItem of items) {
-    if (!incomingItem) continue;
-
-    const receivedQty =
-      normalizeNumber(
-        incomingItem.receivedQty
-      );
-
-    const rejectedQty =
-      normalizeNumber(
-        incomingItem.rejectedQty
-      );
-
-    if (receivedQty <= 0) {
-      continue;
-    }
-
+const loadPurchaseOrder =
+  async (
+    purchaseOrderId
+  ) => {
     if (
-      rejectedQty < 0 ||
-      receivedQty < 0
-    ) {
-      throw new Error(
-        "Received aur rejected quantity negative nahi ho sakti"
-      );
-    }
-
-    if (
-      rejectedQty > receivedQty
-    ) {
-      throw new Error(
-        `Rejected qty item "${normalizeText(
-          incomingItem.description,
-          "Unknown item"
-        )}" mein received qty se zyada nahi ho sakti`
-      );
-    }
-
-    const key =
-      makeItemKey(incomingItem);
-
-    const poItem =
-      poItemsMap.get(key);
-
-    if (!poItem) {
-      throw new Error(
-        `Item "${normalizeText(
-          incomingItem.description,
-          "Unknown item"
-        )}" selected Purchase Order mein nahi mila`
-      );
-    }
-
-    const purchaseOrderItemId =
-      incomingItem.purchaseOrderItemId ||
-      poItem.purchaseOrderItemId ||
-      null;
-
-    const itemId = getId(
-      poItem.item ||
-        incomingItem.item
-    );
-
-    if (
-      !itemId ||
-      !isValidObjectId(itemId)
-    ) {
-      throw new Error(
-        `Item "${poItem.description}" ka Item Master link missing hai. Purchase Order mein Item Master dropdown se item select karein.`
-      );
-    }
-
-    let itemDocument =
-      itemDocumentCache.get(itemId);
-
-    if (!itemDocument) {
-      itemDocument =
-        await Item.findById(itemId);
-
-      itemDocumentCache.set(
-        itemId,
-        itemDocument || null
-      );
-    }
-
-    if (!itemDocument) {
-      throw new Error(
-        `Item Master record not found: ${poItem.description}`
-      );
-    }
-
-    if (
-      itemDocument.status ===
-      "Inactive"
-    ) {
-      throw new Error(
-        `Item "${itemDocument.name}" inactive hai`
-      );
-    }
-
-    if (
-      itemDocument.stockManaged ===
-        false ||
-      itemDocument.itemType ===
-        "Service"
-    ) {
-      throw new Error(
-        `Service item "${itemDocument.name}" ka GRN stock receive nahi ho sakta`
-      );
-    }
-
-    if (
-      !RAW_MATERIAL_ITEM_TYPES.includes(
-        itemDocument.itemType
+      !isValidId(
+        purchaseOrderId
       )
     ) {
       throw new Error(
-        `Item "${itemDocument.name}" ${itemDocument.itemType} hai. GRN sirf Raw Material, Packing Material ya Consumable ke liye hai.`
+        "A valid Purchase Order is required"
       );
     }
 
-    const acceptedQty = Math.max(
-      receivedQty - rejectedQty,
-      0
-    );
-
-    const alreadyAcceptedQty =
-      normalizeNumber(
-        receivedQtyMap.get(key)
-      );
-
-    const orderedQty =
-      normalizeNumber(
-        poItem.orderedQty
-      );
-
-    const pendingBeforeThisGRN =
-      Math.max(
-        orderedQty -
-          alreadyAcceptedQty,
-        0
-      );
+    const purchaseOrder =
+      await PurchaseOrder.findById(
+        purchaseOrderId
+      )
+        .populate(
+          "vendor",
+          "vendorName name phoneNumber phone email address city ntn strn status"
+        )
+        .populate(
+          "items.item",
+          "code name itemType unit status stockManaged purchasePrice salePrice"
+        );
 
     if (
-      acceptedQty >
-      pendingBeforeThisGRN
+      !purchaseOrder
     ) {
       throw new Error(
-        `Item "${itemDocument.name}" ki accepted qty zyada hai. Pending qty sirf ${pendingBeforeThisGRN} ${poItem.unit} hai.`
+        "Purchase Order not found"
       );
     }
 
-    const pendingQty = Math.max(
-      pendingBeforeThisGRN -
-        acceptedQty,
-      0
-    );
+    if (
+      !GRN_ALLOWED_PO_STATUSES.includes(
+        purchaseOrder.status
+      )
+    ) {
+      throw new Error(
+        `GRN cannot be created for a Purchase Order with status ${purchaseOrder.status}`
+      );
+    }
 
-    const unitPrice =
-      normalizeNumber(
-        incomingItem.unitPrice ??
-          poItem.unitPrice
+    return purchaseOrder;
+  };
+
+const cleanGRNItems =
+  async ({
+    items = [],
+    purchaseOrder,
+    excludeGRNId = null,
+  }) => {
+    if (
+      !Array.isArray(items)
+    ) {
+      throw new Error(
+        "GRN items must be an array"
+      );
+    }
+
+    const poItemsMap =
+      getPOItemsMap(
+        purchaseOrder.items ||
+          []
       );
 
-    cleanItems.push({
-      purchaseOrderItemId,
+    const receivedMap =
+      await getReceivedQtyMap(
+        purchaseOrder._id,
+        excludeGRNId
+      );
 
-      item: itemDocument._id,
+    const warehouses =
+      await getWarehouses();
 
-      description: normalizeText(
-        incomingItem.description ||
-          poItem.description,
-        itemDocument.name
-      ),
+    const itemCache =
+      new Map();
 
-      size: normalizeText(
-        incomingItem.size ||
-          poItem.size
-      ),
+    const usedRows =
+      new Set();
 
-      orderedQty,
+    const cleanItems = [];
 
-      previousReceivedQty:
-        alreadyAcceptedQty,
+    for (
+      const incoming of
+      items
+    ) {
+      if (!incoming) {
+        continue;
+      }
 
-      receivedQty,
+      const receivedQty =
+        cleanNumber(
+          incoming.receivedQty
+        );
 
-      rejectedQty,
+      const rejectedQty =
+        cleanNumber(
+          incoming.rejectedQty
+        );
 
-      acceptedQty,
+      if (
+        receivedQty <= 0
+      ) {
+        continue;
+      }
 
-      pendingQty,
+      if (
+        rejectedQty >
+        receivedQty
+      ) {
+        throw new Error(
+          `${cleanText(
+            incoming.itemName ||
+              incoming.description,
+            "Item"
+          )}: rejected quantity cannot exceed received quantity`
+        );
+      }
 
-      unit: normalizeText(
-        incomingItem.unit ||
-          poItem.unit ||
-          itemDocument.unit,
-        "Pcs"
-      ),
+      const incomingKeys =
+        getItemKeys(
+          incoming
+        );
 
-      unitPrice,
+      let matchedKey = "";
+      let poItem = null;
 
-      amount:
-        acceptedQty * unitPrice,
+      for (
+        const key of
+        incomingKeys
+      ) {
+        if (
+          poItemsMap.has(key)
+        ) {
+          matchedKey = key;
 
-      remarks: normalizeText(
-        incomingItem.remarks
-      ),
-    });
-  }
+          poItem =
+            poItemsMap.get(
+              key
+            );
 
-  return cleanItems;
-};
+          break;
+        }
+      }
+
+      if (!poItem) {
+        throw new Error(
+          `Item "${cleanText(
+            incoming.itemName ||
+              incoming.description,
+            "Unknown item"
+          )}" with size "${cleanText(
+            incoming.size,
+            "-"
+          )}" was not found in the selected Purchase Order`
+        );
+      }
+
+      const poRowId =
+        idOf(
+          poItem.purchaseOrderItemId
+        );
+
+      const poItemKeys =
+        getItemKeys({
+          purchaseOrderItemId:
+            poItem.purchaseOrderItemId,
+
+          item:
+            poItem.item,
+
+          description:
+            poItem.description,
+
+          size:
+            poItem.size,
+
+          unit:
+            poItem.unit,
+        });
+
+      const uniqueRowKey =
+        poRowId
+          ? `po-row:${poRowId}`
+          : poItemKeys[0] ||
+            matchedKey;
+
+      if (
+        usedRows.has(
+          uniqueRowKey
+        )
+      ) {
+        throw new Error(
+          `The Purchase Order row for "${poItem.description}" with size "${poItem.size || "-"}" has been added twice`
+        );
+      }
+
+      usedRows.add(
+        uniqueRowKey
+      );
+
+      const itemId =
+        idOf(
+          poItem.item ||
+            incoming.item
+        );
+
+      if (
+        !itemId ||
+        !isValidId(
+          itemId
+        )
+      ) {
+        throw new Error(
+          `Item "${poItem.description}" is not linked with Item Master`
+        );
+      }
+
+      let itemDocument =
+        itemCache.get(
+          itemId
+        );
+
+      if (
+        !itemDocument
+      ) {
+        itemDocument =
+          await Item.findById(
+            itemId
+          );
+
+        itemCache.set(
+          itemId,
+          itemDocument ||
+            null
+        );
+      }
+
+      if (
+        !itemDocument
+      ) {
+        throw new Error(
+          `Item Master record not found: ${poItem.description}`
+        );
+      }
+
+      if (
+        itemDocument.status ===
+        "Inactive"
+      ) {
+        throw new Error(
+          `Item "${itemDocument.name}" is inactive`
+        );
+      }
+
+      if (
+        itemDocument.stockManaged ===
+          false ||
+        itemDocument.itemType ===
+          "Service"
+      ) {
+        throw new Error(
+          `Service or non-stock item "${itemDocument.name}" cannot be received through GRN`
+        );
+      }
+
+      if (
+        !SUPPORTED_ITEM_TYPES.includes(
+          itemDocument.itemType
+        )
+      ) {
+        throw new Error(
+          `Item "${itemDocument.name}" has unsupported item type ${itemDocument.itemType}`
+        );
+      }
+
+      const acceptedQty =
+        Math.max(
+          receivedQty -
+            rejectedQty,
+          0
+        );
+
+      const previouslyAccepted =
+        getMapNumberByKeys(
+          receivedMap,
+          poItemKeys
+        );
+
+      const orderedQty =
+        cleanNumber(
+          poItem.orderedQty
+        );
+
+      const pendingBefore =
+        Math.max(
+          orderedQty -
+            previouslyAccepted,
+          0
+        );
+
+      if (
+        acceptedQty >
+        pendingBefore
+      ) {
+        throw new Error(
+          `${itemDocument.name}: accepted quantity cannot exceed pending quantity ${pendingBefore} ${poItem.unit}`
+        );
+      }
+
+      const warehouse =
+        warehouseForItemType(
+          itemDocument.itemType,
+          warehouses
+        );
+
+      const unitPrice =
+        cleanNumber(
+          incoming.unitPrice ??
+            poItem.unitPrice
+        );
+
+      cleanItems.push({
+        purchaseOrderItemId:
+          poItem.purchaseOrderItemId ||
+          null,
+
+        item:
+          itemDocument._id,
+
+        itemCode:
+          cleanText(
+            itemDocument.code
+          ).toUpperCase(),
+
+        itemName:
+          cleanText(
+            itemDocument.name
+          ),
+
+        itemType:
+          itemDocument.itemType,
+
+        warehouseId:
+          warehouse._id,
+
+        warehouse:
+          warehouse.name,
+
+        description:
+          cleanText(
+            incoming.description ||
+              poItem.description,
+            itemDocument.name
+          ),
+
+        size:
+          cleanText(
+            incoming.size ||
+              poItem.size
+          ),
+
+        orderedQty,
+
+        previousReceivedQty:
+          previouslyAccepted,
+
+        receivedQty,
+
+        rejectedQty,
+
+        acceptedQty,
+
+        pendingQty:
+          Math.max(
+            pendingBefore -
+              acceptedQty,
+            0
+          ),
+
+        unit:
+          cleanText(
+            incoming.unit ||
+              poItem.unit ||
+              itemDocument.unit,
+            "Pcs"
+          ),
+
+        unitPrice,
+
+        amount:
+          acceptedQty *
+          unitPrice,
+
+        remarks:
+          cleanText(
+            incoming.remarks
+          ),
+      });
+    }
+
+    if (
+      !cleanItems.length
+    ) {
+      throw new Error(
+        "Receive at least one valid item"
+      );
+    }
+
+    return cleanItems;
+  };
 
 const calculateTotals = (
   items = []
-) => {
-  return items.reduce(
-    (totals, item) => {
+) =>
+  items.reduce(
+    (
+      totals,
+      item
+    ) => {
       totals.totalOrderedQty +=
-        normalizeNumber(
+        cleanNumber(
           item.orderedQty
         );
 
       totals.totalReceivedQty +=
-        normalizeNumber(
+        cleanNumber(
           item.receivedQty
         );
 
       totals.totalRejectedQty +=
-        normalizeNumber(
+        cleanNumber(
           item.rejectedQty
         );
 
       totals.totalAcceptedQty +=
-        normalizeNumber(
+        cleanNumber(
           item.acceptedQty
         );
 
       totals.totalPendingQty +=
-        normalizeNumber(
+        cleanNumber(
           item.pendingQty
         );
 
       totals.subtotal +=
-        normalizeNumber(
+        cleanNumber(
           item.amount
         );
 
@@ -672,6 +1197,70 @@ const calculateTotals = (
       subtotal: 0,
     }
   );
+
+const getWarehouseSummary = (
+  items = []
+) => {
+  const warehouseMap =
+    new Map();
+
+  for (
+    const item of
+    items
+  ) {
+    warehouseMap.set(
+      String(
+        item.warehouseId
+      ),
+      {
+        _id:
+          item.warehouseId,
+
+        name:
+          item.warehouse,
+      }
+    );
+  }
+
+  const warehouses = [
+    ...warehouseMap.values(),
+  ];
+
+  const containsFinishedGood =
+    items.some(
+      (item) =>
+        item.itemType ===
+        "Finished Good"
+    );
+
+  const containsOther =
+    items.some(
+      (item) =>
+        item.itemType !==
+        "Finished Good"
+    );
+
+  return {
+    receiptType:
+      containsFinishedGood &&
+      containsOther
+        ? "Mixed"
+        : containsFinishedGood
+          ? "Finished Good"
+          : "Raw Material",
+
+    warehouseId:
+      warehouses.length ===
+      1
+        ? warehouses[0]._id
+        : null,
+
+    warehouse:
+      warehouses.length ===
+      1
+        ? warehouses[0].name
+        : MULTIPLE_WAREHOUSES,
+  };
 };
 
 const validatePostingState = ({
@@ -679,379 +1268,443 @@ const validatePostingState = ({
   inspectionStatus,
   totals,
 }) => {
-  if (!shouldPostStock(status)) {
+  if (
+    !shouldPostStock(
+      status
+    )
+  ) {
     return;
   }
 
   if (
-    inspectionStatus === "Pending"
+    inspectionStatus ===
+    "Pending"
   ) {
     throw new Error(
-      "Stock post karne se pehle inspection Passed ya Partially Accepted honi chahiye"
+      "Complete inspection before posting GRN stock"
     );
   }
 
   if (
-    inspectionStatus === "Rejected"
+    inspectionStatus ===
+    "Rejected"
   ) {
     throw new Error(
-      "Rejected GRN ka stock post nahi ho sakta"
+      "A rejected GRN cannot post stock"
     );
   }
 
   if (
-    normalizeNumber(
+    cleanNumber(
       totals.totalAcceptedQty
     ) <= 0
   ) {
     throw new Error(
-      "Stock post karne ke liye accepted quantity required hai"
+      "Accepted quantity is required to post stock"
     );
   }
 };
 
-const getRawMaterialWarehouse =
-  async () => {
-    await ensureDefaultWarehouses();
+const hasGRNStockEntries =
+  async (
+    grnId
+  ) =>
+    StockLedger.exists({
+      sourceModule:
+        "GRN",
 
-    const warehouse =
-      await Warehouse.findOne({
-        name: RAW_MATERIAL_GODOWN,
-      });
+      referenceModel:
+        "GRN",
 
-    if (!warehouse) {
-      throw new Error(
-        "Raw Material Godown not found"
-      );
-    }
+      referenceId:
+        grnId,
 
-    if (
-      warehouse.status ===
-      "Inactive"
-    ) {
-      throw new Error(
-        "Raw Material Godown inactive hai"
-      );
-    }
+      movementType:
+        "GRN In",
 
-    if (
-      warehouse.status === "Full"
-    ) {
-      throw new Error(
-        "Raw Material Godown full hai. GRN stock receive nahi ho sakta"
-      );
-    }
-
-    return warehouse;
-  };
-
-const hasGRNStockEntries = async (
-  grnId
-) => {
-  return StockLedger.exists({
-    sourceModule: "GRN",
-    referenceModel: "GRN",
-    referenceId: grnId,
-    movementType: "GRN In",
-    isReversal: {
-      $ne: true,
-    },
-  });
-};
+      isReversal: {
+        $ne: true,
+      },
+    });
 
 const removeFailedGRNStockEntries =
-  async (grnId) => {
+  async (
+    grnId
+  ) => {
     await StockLedger.deleteMany({
-      sourceModule: "GRN",
-      referenceModel: "GRN",
-      referenceId: grnId,
-      movementType: "GRN In",
+      sourceModule:
+        "GRN",
+
+      referenceModel:
+        "GRN",
+
+      referenceId:
+        grnId,
+
+      movementType:
+        "GRN In",
+
       isReversal: {
         $ne: true,
       },
     });
   };
 
-const postGRNStock = async (grn) => {
-  if (
-    !shouldPostStock(grn.status)
-  ) {
-    return grn;
-  }
-
-  if (
-    grn.status === "Cancelled"
-  ) {
-    return grn;
-  }
-
-  if (
-    grn.inspectionStatus ===
-    "Rejected"
-  ) {
-    return grn;
-  }
-
-  validatePostingState({
-    status: grn.status,
-
-    inspectionStatus:
-      grn.inspectionStatus,
-
-    totals: {
-      totalAcceptedQty:
-        grn.totalAcceptedQty,
-    },
-  });
-
-  const warehouse =
-    await getRawMaterialWarehouse();
-
-  for (
-    let index = 0;
-    index <
-    (grn.items || []).length;
-    index += 1
-  ) {
-    const row = grn.items[index];
-
-    const acceptedQty =
-      normalizeNumber(
-        row.acceptedQty
-      );
-
-    if (acceptedQty <= 0) {
-      continue;
+const postGRNStock =
+  async (
+    grn
+  ) => {
+    if (
+      !shouldPostStock(
+        grn.status
+      ) ||
+      grn.status ===
+        "Cancelled" ||
+      grn.inspectionStatus ===
+        "Rejected"
+    ) {
+      return grn;
     }
 
-    if (!row.item) {
+    if (
+      grn.stockPosted ||
+      await hasGRNStockEntries(
+        grn._id
+      )
+    ) {
       throw new Error(
-        `Item "${row.description}" ka Item Master ID missing hai`
+        "GRN stock has already been posted"
       );
     }
 
-    await postStockMovement({
-      item: row.item,
+    validatePostingState({
+      status:
+        grn.status,
 
-      warehouse: warehouse._id,
+      inspectionStatus:
+        grn.inspectionStatus,
 
-      date: grn.receivedDate,
-
-      movementType: "GRN In",
-
-      sourceModule: "GRN",
-
-      referenceModel: "GRN",
-
-      referenceId: grn._id,
-
-      referenceLineId: String(
-        row._id ||
-          row.purchaseOrderItemId ||
-          index
-      ),
-
-      referenceNo: grn.grnNo,
-
-      qtyIn: acceptedQty,
-
-      qtyOut: 0,
-
-      rate: normalizeNumber(
-        row.unitPrice
-      ),
-
-      remarks: `GRN ${grn.grnNo} against PO ${grn.purchaseOrderNo}`,
-
-      allowNegativeStock: false,
-
-      allowDuplicate: false,
-    });
-  }
-
-  await GRN.findByIdAndUpdate(
-    grn._id,
-    {
-      warehouseId: warehouse._id,
-
-      warehouse: warehouse.name,
-
-      stockPosted: true,
-
-      stockPostedAt: new Date(),
-    },
-    {
-      new: true,
-      runValidators: true,
-    }
-  );
-
-  return GRN.findById(grn._id);
-};
-
-const reverseGRNStock = async (
-  grn
-) => {
-  const originalEntries =
-    await StockLedger.find({
-      sourceModule: "GRN",
-
-      referenceModel: "GRN",
-
-      referenceId: grn._id,
-
-      movementType: "GRN In",
-
-      isReversal: {
-        $ne: true,
+      totals: {
+        totalAcceptedQty:
+          grn.totalAcceptedQty,
       },
-    }).sort({
-      createdAt: 1,
     });
 
-  if (
-    originalEntries.length === 0
-  ) {
-    await GRN.findByIdAndUpdate(
-      grn._id,
-      {
-        stockPosted: false,
+    const warehouses =
+      await getWarehouses();
+
+    for (
+      let index = 0;
+      index <
+      (
+        grn.items ||
+        []
+      ).length;
+      index += 1
+    ) {
+      const row =
+        grn.items[index];
+
+      const acceptedQty =
+        cleanNumber(
+          row.acceptedQty
+        );
+
+      if (
+        acceptedQty <= 0
+      ) {
+        continue;
       }
-    );
 
-    return;
-  }
+      const expectedWarehouse =
+        warehouseForItemType(
+          row.itemType,
+          warehouses
+        );
 
-  const requiredStockMap =
-    new Map();
+      await postStockMovement({
+        item:
+          row.item,
 
-  originalEntries.forEach(
-    (entry) => {
+        warehouse:
+          expectedWarehouse._id,
+
+        date:
+          grn.receivedDate,
+
+        movementType:
+          "GRN In",
+
+        sourceModule:
+          "GRN",
+
+        referenceModel:
+          "GRN",
+
+        referenceId:
+          grn._id,
+
+        referenceLineId:
+          String(
+            row._id ||
+              row.purchaseOrderItemId ||
+              index
+          ),
+
+        referenceNo:
+          grn.grnNo,
+
+        postingKey:
+          `GRN:${grn._id}:${row._id || row.purchaseOrderItemId || index}:IN`,
+
+        qtyIn:
+          acceptedQty,
+
+        qtyOut: 0,
+
+        rate:
+          cleanNumber(
+            row.unitPrice
+          ),
+
+        remarks:
+          `GRN ${grn.grnNo} against PO ${grn.purchaseOrderNo} - ${row.itemType}`,
+
+        allowNegativeStock:
+          false,
+
+        allowDuplicate:
+          false,
+      });
+    }
+
+    grn.stockPosted =
+      true;
+
+    grn.stockPostedAt =
+      new Date();
+
+    grn.reversalPosted =
+      false;
+
+    await grn.save();
+
+    return grn;
+  };
+
+const reverseGRNStock =
+  async (
+    grn
+  ) => {
+    if (
+      typeof getItemStock !==
+      "function"
+    ) {
+      throw new Error(
+        "getItemStock is not exported from stockService"
+      );
+    }
+
+    const originalEntries =
+      await StockLedger.find({
+        sourceModule:
+          "GRN",
+
+        referenceModel:
+          "GRN",
+
+        referenceId:
+          grn._id,
+
+        movementType:
+          "GRN In",
+
+        isReversal: {
+          $ne: true,
+        },
+      }).sort({
+        createdAt: 1,
+      });
+
+    if (
+      !originalEntries.length
+    ) {
+      grn.stockPosted =
+        false;
+
+      await grn.save();
+
+      return;
+    }
+
+    const requirements =
+      new Map();
+
+    for (
+      const entry of
+      originalEntries
+    ) {
+      const warehouseReference =
+        entry.warehouseId ||
+        entry.warehouse;
+
+      const warehouseKey =
+        String(
+          warehouseReference ||
+            ""
+        );
+
       const key =
-        `${entry.item}|${entry.warehouse}`;
+        `${entry.item}|${warehouseKey}`;
 
-      const previous =
-        requiredStockMap.get(key) || {
-          item: entry.item,
+      const current =
+        requirements.get(key) || {
+          item:
+            entry.item,
 
           warehouse:
-            entry.warehouse,
+            warehouseReference,
+
+          warehouseName:
+            cleanText(
+              entry.warehouse,
+              warehouseKey
+            ),
 
           quantity: 0,
 
-          unit: entry.unit,
+          unit:
+            entry.unit ||
+            "Pcs",
         };
 
-      previous.quantity +=
-        normalizeNumber(
+      current.quantity +=
+        cleanNumber(
           entry.qtyIn
         );
 
-      requiredStockMap.set(
+      requirements.set(
         key,
-        previous
+        current
       );
     }
-  );
 
-  for (
-    const requirement of
-    requiredStockMap.values()
-  ) {
-    const currentStock =
-      await getItemStock(
-        requirement.item,
-        requirement.warehouse
-      );
-
-    if (
-      currentStock <
-      requirement.quantity
+    for (
+      const requirement of
+      requirements.values()
     ) {
-      throw new Error(
-        `GRN cancel nahi ho sakta. ${requirement.warehouse} mein stock ${currentStock} ${requirement.unit} hai, jabke ${requirement.quantity} ${requirement.unit} reverse karna hai.`
-      );
-    }
-  }
+      const currentStock =
+        await getItemStock(
+          requirement.item,
+          requirement.warehouse
+        );
 
-  for (
-    const originalEntry of
-    originalEntries
-  ) {
-    const reversalExists =
-      await StockLedger.exists({
+      if (
+        currentStock <
+        requirement.quantity
+      ) {
+        throw new Error(
+          `GRN cannot be cancelled. ${requirement.warehouseName} has ${currentStock} ${requirement.unit}, but ${requirement.quantity} ${requirement.unit} must be reversed.`
+        );
+      }
+    }
+
+    for (
+      const original of
+      originalEntries
+    ) {
+      const reversalExists =
+        await StockLedger.exists({
+          reversalOf:
+            original._id,
+
+          isReversal:
+            true,
+        });
+
+      if (
+        reversalExists
+      ) {
+        continue;
+      }
+
+      await postStockMovement({
+        item:
+          original.item,
+
+        warehouse:
+          original.warehouseId ||
+          original.warehouse,
+
+        date:
+          todayDate(),
+
         movementType:
           "Reversal Out",
 
+        sourceModule:
+          "GRN Cancellation",
+
+        referenceModel:
+          "GRN",
+
+        referenceId:
+          grn._id,
+
+        referenceLineId:
+          `REV-${original._id}`,
+
+        referenceNo:
+          grn.grnNo,
+
+        postingKey:
+          `GRN:${grn._id}:${original._id}:REV-OUT`,
+
+        qtyIn: 0,
+
+        qtyOut:
+          cleanNumber(
+            original.qtyIn
+          ),
+
+        rate:
+          cleanNumber(
+            original.rate
+          ),
+
+        remarks:
+          `Cancellation reversal of GRN ${grn.grnNo}`,
+
+        allowNegativeStock:
+          false,
+
+        allowInactiveItem:
+          true,
+
+        allowDuplicate:
+          false,
+
+        isReversal:
+          true,
+
         reversalOf:
-          originalEntry._id,
+          original._id,
       });
-
-    if (reversalExists) {
-      continue;
     }
 
-    await postStockMovement({
-      item:
-        originalEntry.item,
+    grn.stockPosted =
+      false;
 
-      warehouse:
-        originalEntry.warehouseId ||
-        originalEntry.warehouse,
+    grn.reversalPosted =
+      true;
 
-      date: todayDate(),
-
-      movementType:
-        "Reversal Out",
-
-      sourceModule:
-        "GRN Cancellation",
-
-      referenceModel: "GRN",
-
-      referenceId: grn._id,
-
-      referenceLineId:
-        `REV-${originalEntry._id}`,
-
-      referenceNo: grn.grnNo,
-
-      qtyIn: 0,
-
-      qtyOut: normalizeNumber(
-        originalEntry.qtyIn
-      ),
-
-      rate: normalizeNumber(
-        originalEntry.rate
-      ),
-
-      remarks:
-        `Cancellation reversal of GRN ${grn.grnNo}`,
-
-      allowNegativeStock: false,
-
-      allowInactiveItem: true,
-
-      allowDuplicate: false,
-
-      isReversal: true,
-
-      reversalOf:
-        originalEntry._id,
-    });
-  }
-
-  await GRN.findByIdAndUpdate(
-    grn._id,
-    {
-      stockPosted: false,
-    }
-  );
-};
+    await grn.save();
+  };
 
 const updatePurchaseOrderReceivingStatus =
-  async (purchaseOrderId) => {
+  async (
+    purchaseOrderId
+  ) => {
     const purchaseOrder =
       await PurchaseOrder.findById(
         purchaseOrderId
@@ -1065,7 +1718,7 @@ const updatePurchaseOrderReceivingStatus =
       return;
     }
 
-    const receivedQtyMap =
+    const receivedMap =
       await getReceivedQtyMap(
         purchaseOrderId
       );
@@ -1073,185 +1726,378 @@ const updatePurchaseOrderReceivingStatus =
     let totalOrdered = 0;
     let totalReceived = 0;
 
-    const updatedItems = (
-      purchaseOrder.items || []
-    ).map((row) => {
-      const key = makeItemKey(row);
-
+    for (
+      const row of
+      purchaseOrder.items ||
+      []
+    ) {
       const orderedQty =
-        normalizeNumber(
-          row.quantity ?? row.qty
+        cleanNumber(
+          row.quantity ??
+            row.qty
         );
 
       const receivedQty =
-        normalizeNumber(
-          receivedQtyMap.get(key)
+        getMapNumberByKeys(
+          receivedMap,
+
+          getItemKeys(
+            row,
+            {
+              useDocumentIdAsPurchaseOrderRowId:
+                true,
+            }
+          )
         );
 
-      const pendingQty =
+      row.receivedQty =
+        receivedQty;
+
+      row.pendingQty =
         Math.max(
           orderedQty -
             receivedQty,
           0
         );
 
-      totalOrdered += orderedQty;
-      totalReceived += receivedQty;
+      totalOrdered +=
+        orderedQty;
 
-      return {
-        ...row.toObject(),
+      totalReceived +=
+        receivedQty;
+    }
 
-        receivedQty,
-
-        pendingQty,
-      };
-    });
-
-    let status = "Ordered";
-
-    if (totalReceived <= 0) {
-      status =
+    if (
+      totalReceived <= 0
+    ) {
+      purchaseOrder.status =
         purchaseOrder.status ===
         "Draft"
           ? "Draft"
           : "Ordered";
     } else if (
       totalOrdered > 0 &&
-      totalReceived >= totalOrdered
+      totalReceived >=
+        totalOrdered
     ) {
-      status = "Received";
+      purchaseOrder.status =
+        "Received";
     } else {
-      status =
+      purchaseOrder.status =
         "Partially Received";
     }
 
-    await PurchaseOrder.findByIdAndUpdate(
-      purchaseOrderId,
-      {
-        items: updatedItems,
-        status,
-      },
-      {
-        new: true,
-        runValidators: true,
-      }
-    );
+    await purchaseOrder.save();
   };
 
-const populateGRN = (query) => {
-  return query
+const populateGRN = (
+  query
+) =>
+  query
     .populate(
       "purchaseOrder",
-      "purchaseOrderNo orderDate expectedDate status grandTotal balance items"
+      "purchaseOrderNo orderNo status orderDate deliveryDate"
     )
-
     .populate(
       "vendor",
-      "vendorName name phoneNumber phone email address city ntn strn"
+      "vendorName name phoneNumber phone email address city ntn strn status"
     )
-
-    .populate(
-      "warehouseId",
-      "code name warehouseType status isSystem"
-    )
-
     .populate(
       "items.item",
-      "code name itemType unit category brand purchasePrice stockManaged status"
+      "code name itemType unit status stockManaged purchasePrice salePrice"
+    )
+    .populate(
+      "items.warehouseId",
+      "code name warehouseType status"
+    )
+    .populate(
+      "warehouseId",
+      "code name warehouseType status"
     );
-};
 
-const validatePurchaseOrderForGRN =
-  (purchaseOrder) => {
-    if (!purchaseOrder) {
-      throw new Error(
-        "Purchase Order not found"
-      );
-    }
+const getEligiblePurchaseOrders =
+  async () => {
+    const warehouses =
+      await getWarehouses();
 
-    if (
-      purchaseOrder.status ===
-      "Cancelled"
+    const orders =
+      await PurchaseOrder.find({
+        status: {
+          $in:
+            GRN_ALLOWED_PO_STATUSES,
+        },
+      })
+        .populate(
+          "vendor",
+          "vendorName name phoneNumber phone email address city status"
+        )
+        .populate(
+          "items.item",
+          "code name itemType unit status stockManaged purchasePrice salePrice"
+        )
+        .sort({
+          createdAt: -1,
+        });
+
+    const output = [];
+
+    for (
+      const order of
+      orders
     ) {
-      throw new Error(
-        "Cancelled Purchase Order ka GRN nahi ban sakta"
-      );
+      const receivedMap =
+        await getReceivedQtyMap(
+          order._id
+        );
+
+      const items = [];
+
+      for (
+        const row of
+        order.items || []
+      ) {
+        const item =
+          row.item;
+
+        if (
+          !item ||
+          item.status ===
+            "Inactive" ||
+          item.stockManaged ===
+            false ||
+          !SUPPORTED_ITEM_TYPES.includes(
+            item.itemType
+          )
+        ) {
+          continue;
+        }
+
+        const orderedQty =
+          cleanNumber(
+            row.quantity ??
+              row.qty
+          );
+
+        const previousReceivedQty =
+          getMapNumberByKeys(
+            receivedMap,
+
+            getItemKeys(
+              row,
+              {
+                useDocumentIdAsPurchaseOrderRowId:
+                  true,
+              }
+            )
+          );
+
+        const pendingQty =
+          Math.max(
+            orderedQty -
+              previousReceivedQty,
+            0
+          );
+
+        if (
+          pendingQty <= 0
+        ) {
+          continue;
+        }
+
+        const warehouse =
+          warehouseForItemType(
+            item.itemType,
+            warehouses
+          );
+
+        items.push({
+          purchaseOrderItemId:
+            row._id ||
+            null,
+
+          item:
+            item._id,
+
+          itemCode:
+            item.code,
+
+          itemName:
+            item.name,
+
+          itemType:
+            item.itemType,
+
+          warehouseId:
+            warehouse._id,
+
+          warehouse:
+            warehouse.name,
+
+          description:
+            cleanText(
+              row.description ||
+                row.itemName,
+              item.name
+            ),
+
+          size:
+            cleanText(
+              row.size
+            ),
+
+          orderedQty,
+
+          previousReceivedQty,
+
+          pendingQty,
+
+          receivedQty: 0,
+
+          rejectedQty: 0,
+
+          acceptedQty: 0,
+
+          unit:
+            cleanText(
+              row.unit,
+              item.unit ||
+                "Pcs"
+            ),
+
+          unitPrice:
+            cleanNumber(
+              row.unitPrice ??
+                item.purchasePrice
+            ),
+
+          remarks:
+            cleanText(
+              row.remarks
+            ),
+        });
+      }
+
+      if (
+        !items.length
+      ) {
+        continue;
+      }
+
+      const vendor =
+        order.vendor || {};
+
+      output.push({
+        _id:
+          order._id,
+
+        purchaseOrderNo:
+          cleanText(
+            order.purchaseOrderNo ||
+              order.orderNo
+          ),
+
+        status:
+          order.status,
+
+        vendor:
+          vendor._id ||
+          vendor,
+
+        vendorName:
+          cleanText(
+            order.vendorName ||
+              vendor.vendorName ||
+              vendor.name
+          ),
+
+        vendorPhone:
+          cleanText(
+            order.vendorPhone ||
+              vendor.phoneNumber ||
+              vendor.phone
+          ),
+
+        vendorEmail:
+          cleanText(
+            order.vendorEmail ||
+              vendor.email
+          ),
+
+        vendorAddress:
+          cleanText(
+            order.vendorAddress ||
+              vendor.address
+          ),
+
+        items,
+      });
     }
 
-    if (
-      purchaseOrder.status ===
-      "Received"
-    ) {
-      throw new Error(
-        "Ye Purchase Order already fully received hai"
-      );
-    }
-
-    if (
-      !GRN_ALLOWED_PO_STATUSES.includes(
-        purchaseOrder.status
-      )
-    ) {
-      throw new Error(
-        `Purchase Order status "${purchaseOrder.status}" hai. GRN sirf Ordered ya Partially Received Purchase Order se banega.`
-      );
-    }
+    return output;
   };
-
-/*
-|--------------------------------------------------------------------------
-| Next GRN Number
-|--------------------------------------------------------------------------
-*/
 
 router.get(
   "/next-no",
-  async (req, res) => {
+  async (
+    req,
+    res
+  ) => {
     try {
       const grnNo =
         await peekNextGRNNo();
 
-      return res.status(200).json({
+      return res.json({
         success: true,
         grnNo,
       });
     } catch (error) {
-      console.error(
-        "GRN Next No Error:",
-        error
-      );
-
-      return res.status(500).json({
-        success: false,
-
-        message:
-          "GRN number generate nahi hua",
-
-        error: error.message,
-      });
+      return res
+        .status(500)
+        .json({
+          success: false,
+          message:
+            error.message,
+        });
     }
   }
 );
 
-/*
-|--------------------------------------------------------------------------
-| Get All GRNs
-|--------------------------------------------------------------------------
-*/
+router.get(
+  "/eligible-purchase-orders",
+  async (
+    req,
+    res
+  ) => {
+    try {
+      const purchaseOrders =
+        await getEligiblePurchaseOrders();
+
+      return res.json(
+        purchaseOrders
+      );
+    } catch (error) {
+      return res
+        .status(500)
+        .json({
+          success: false,
+          message:
+            error.message,
+        });
+    }
+  }
+);
 
 router.get(
   "/all",
-  async (req, res) => {
+  async (
+    req,
+    res
+  ) => {
     try {
       const {
         search = "",
         status = "",
-        inspectionStatus = "",
-        purchaseOrder = "",
-        vendor = "",
-        purchaseStatus = "",
-        dateFrom = "",
-        dateTo = "",
+        receiptType = "",
       } = req.query;
 
       const query = {};
@@ -1261,126 +2107,74 @@ router.get(
         status !== "All"
       ) {
         query.status =
-          normalizeStatus(status);
+          status;
       }
 
       if (
-        inspectionStatus &&
-        inspectionStatus !== "All"
+        receiptType &&
+        receiptType !==
+          "All"
       ) {
-        query.inspectionStatus =
-          normalizeInspectionStatus(
-            inspectionStatus
-          );
-      }
-
-      if (
-        purchaseStatus &&
-        purchaseStatus !== "All"
-      ) {
-        query.purchaseStatus =
-          purchaseStatus;
-      }
-
-      if (purchaseOrder) {
-        if (
-          !isValidObjectId(
-            purchaseOrder
-          )
-        ) {
-          return res
-            .status(400)
-            .json({
-              success: false,
-
-              message:
-                "Invalid Purchase Order ID",
-            });
-        }
-
-        query.purchaseOrder =
-          purchaseOrder;
-      }
-
-      if (vendor) {
-        if (
-          !isValidObjectId(vendor)
-        ) {
-          return res
-            .status(400)
-            .json({
-              success: false,
-
-              message:
-                "Invalid Vendor ID",
-            });
-        }
-
-        query.vendor = vendor;
-      }
-
-      if (dateFrom || dateTo) {
-        query.receivedDate = {};
-
-        if (dateFrom) {
-          query.receivedDate.$gte =
-            dateFrom;
-        }
-
-        if (dateTo) {
-          query.receivedDate.$lte =
-            dateTo;
-        }
+        query.receiptType =
+          receiptType;
       }
 
       if (search) {
         query.$or = [
           {
             grnNo: {
-              $regex: search,
-              $options: "i",
+              $regex:
+                search,
+              $options:
+                "i",
             },
           },
-
           {
             purchaseOrderNo: {
-              $regex: search,
-              $options: "i",
+              $regex:
+                search,
+              $options:
+                "i",
             },
           },
-
           {
             vendorName: {
-              $regex: search,
-              $options: "i",
+              $regex:
+                search,
+              $options:
+                "i",
             },
           },
-
           {
             challanNo: {
-              $regex: search,
-              $options: "i",
+              $regex:
+                search,
+              $options:
+                "i",
             },
           },
-
           {
             invoiceNo: {
-              $regex: search,
-              $options: "i",
+              $regex:
+                search,
+              $options:
+                "i",
             },
           },
-
           {
-            vehicleNo: {
-              $regex: search,
-              $options: "i",
+            "items.itemCode": {
+              $regex:
+                search,
+              $options:
+                "i",
             },
           },
-
           {
-            "items.description": {
-              $regex: search,
-              $options: "i",
+            "items.itemName": {
+              $regex:
+                search,
+              $options:
+                "i",
             },
           },
         ];
@@ -1388,45 +2182,38 @@ router.get(
 
       const grns =
         await populateGRN(
-          GRN.find(query).sort({
+          GRN.find(
+            query
+          ).sort({
             receivedDate: -1,
             createdAt: -1,
           })
         );
 
-      return res
-        .status(200)
-        .json(grns);
-    } catch (error) {
-      console.error(
-        "GRNs Load Error:",
-        error
+      return res.json(
+        grns
       );
-
-      return res.status(500).json({
-        success: false,
-
-        message:
-          "GRNs load nahi huay",
-
-        error: error.message,
-      });
+    } catch (error) {
+      return res
+        .status(500)
+        .json({
+          success: false,
+          message:
+            error.message,
+        });
     }
   }
 );
 
-/*
-|--------------------------------------------------------------------------
-| Get Single GRN
-|--------------------------------------------------------------------------
-*/
-
 router.get(
   "/:id",
-  async (req, res) => {
+  async (
+    req,
+    res
+  ) => {
     try {
       if (
-        !isValidObjectId(
+        !isValidId(
           req.params.id
         )
       ) {
@@ -1434,6 +2221,7 @@ router.get(
           .status(400)
           .json({
             success: false,
+
             message:
               "Invalid GRN ID",
           });
@@ -1451,269 +2239,189 @@ router.get(
           .status(404)
           .json({
             success: false,
+
             message:
               "GRN not found",
           });
       }
 
-      return res
-        .status(200)
-        .json({
-          success: true,
-          data: grn,
-        });
-    } catch (error) {
-      console.error(
-        "GRN Single Load Error:",
-        error
-      );
-
-      return res.status(500).json({
-        success: false,
-
-        message:
-          "GRN load nahi hua",
-
-        error: error.message,
+      return res.json({
+        success: true,
+        data: grn,
       });
+    } catch (error) {
+      return res
+        .status(500)
+        .json({
+          success: false,
+
+          message:
+            error.message,
+        });
     }
   }
 );
 
-/*
-|--------------------------------------------------------------------------
-| Add GRN
-|--------------------------------------------------------------------------
-*/
-
 router.post(
   "/add",
-  async (req, res) => {
+  async (
+    req,
+    res
+  ) => {
     let savedGRN = null;
 
     try {
-      const {
-        grnNo,
-        purchaseOrder,
-        receivedDate,
-        challanNo,
-        invoiceNo,
-        vehicleNo,
-        receivedBy,
-        checkedBy,
-        inspectionStatus,
-        status,
-        remarks,
-        items,
-      } = req.body;
+      const body =
+        req.body || {};
 
-      if (
-        !purchaseOrder ||
-        !isValidObjectId(
-          purchaseOrder
-        )
-      ) {
-        return res
-          .status(400)
-          .json({
-            success: false,
-
-            message:
-              "Valid Purchase Order required hai",
-          });
-      }
-
-      if (!receivedDate) {
-        return res
-          .status(400)
-          .json({
-            success: false,
-
-            message:
-              "Received date required hai",
-          });
-      }
-
-      const selectedPO =
-        await PurchaseOrder.findById(
-          purchaseOrder
-        ).populate(
-          "vendor",
-          "vendorName name phoneNumber phone email address city ntn strn"
+      const purchaseOrder =
+        await loadPurchaseOrder(
+          body.purchaseOrder
         );
 
-      validatePurchaseOrderForGRN(
-        selectedPO
-      );
-
-      const finalStatus =
-        normalizeStatus(status);
-
-      const finalInspectionStatus =
-        normalizeInspectionStatus(
-          inspectionStatus
-        );
-
-      if (
-        finalStatus ===
-        "Cancelled"
-      ) {
-        return res
-          .status(400)
-          .json({
-            success: false,
-
-            message:
-              "Naya GRN Cancelled status mein create nahi ho sakta",
-          });
-      }
-
-      const cleanItems =
+      const items =
         await cleanGRNItems({
-          items: items || [],
+          items:
+            body.items || [],
 
-          purchaseOrder:
-            selectedPO,
+          purchaseOrder,
         });
-
-      if (
-        cleanItems.length === 0
-      ) {
-        return res
-          .status(400)
-          .json({
-            success: false,
-
-            message:
-              "Kam az kam aik valid received item add karein",
-          });
-      }
 
       const totals =
         calculateTotals(
-          cleanItems
+          items
         );
 
+      const status =
+        normalizeStatus(
+          body.status
+        );
+
+      const inspectionStatus =
+        normalizeInspectionStatus(
+          body.inspectionStatus
+        );
+
+      if (
+        status ===
+        "Cancelled"
+      ) {
+        throw new Error(
+          "A new GRN cannot be created with Cancelled status"
+        );
+      }
+
       validatePostingState({
-        status: finalStatus,
-
-        inspectionStatus:
-          finalInspectionStatus,
-
+        status,
+        inspectionStatus,
         totals,
       });
 
-      const warehouse =
-        await getRawMaterialWarehouse();
-
       const vendorSnapshot =
         getVendorSnapshot(
-          selectedPO
+          purchaseOrder
         );
 
       if (
         !vendorSnapshot.vendor ||
-        !isValidObjectId(
+        !isValidId(
           vendorSnapshot.vendor
         )
       ) {
-        return res
-          .status(400)
-          .json({
-            success: false,
-
-            message:
-              "Purchase Order ka Vendor link missing hai",
-          });
+        throw new Error(
+          "Purchase Order vendor reference is missing"
+        );
       }
 
       if (
         !vendorSnapshot.vendorName
       ) {
-        return res
-          .status(400)
-          .json({
-            success: false,
-
-            message:
-              "Purchase Order ka Vendor name missing hai",
-          });
+        throw new Error(
+          "Purchase Order vendor name is missing"
+        );
       }
 
-      const finalGRNNo = grnNo
-        ? normalizeText(
-            grnNo
-          ).toUpperCase()
-        : await getNextGRNNo();
+      const warehouseSummary =
+        getWarehouseSummary(
+          items
+        );
+
+      const grnNo =
+        body.grnNo
+          ? cleanText(
+              body.grnNo
+            ).toUpperCase()
+          : await getNextGRNNo();
 
       savedGRN =
         await GRN.create({
-          grnNo: finalGRNNo,
+          grnNo,
 
           purchaseOrder:
-            selectedPO._id,
+            purchaseOrder._id,
 
           purchaseOrderNo:
-            normalizeText(
-              selectedPO.purchaseOrderNo ||
-                selectedPO.orderNo
+            cleanText(
+              purchaseOrder.purchaseOrderNo ||
+                purchaseOrder.orderNo
             ).toUpperCase(),
 
-          vendor:
-            vendorSnapshot.vendor,
+          ...vendorSnapshot,
 
-          vendorName:
-            vendorSnapshot.vendorName,
-
-          vendorPhone:
-            vendorSnapshot.vendorPhone,
-
-          vendorEmail:
-            vendorSnapshot.vendorEmail,
-
-          vendorAddress:
-            vendorSnapshot.vendorAddress,
-
-          receivedDate,
+          receivedDate:
+            cleanText(
+              body.receivedDate,
+              todayDate()
+            ),
 
           challanNo:
-            normalizeText(challanNo),
+            cleanText(
+              body.challanNo
+            ),
 
           invoiceNo:
-            normalizeText(invoiceNo),
+            cleanText(
+              body.invoiceNo
+            ),
 
           vehicleNo:
-            normalizeText(
-              vehicleNo
+            cleanText(
+              body.vehicleNo
             ).toUpperCase(),
 
-          warehouseId:
-            warehouse._id,
-
-          warehouse:
-            warehouse.name,
+          ...warehouseSummary,
 
           receivedBy:
-            normalizeText(receivedBy),
+            cleanText(
+              body.receivedBy
+            ),
 
           checkedBy:
-            normalizeText(checkedBy),
+            cleanText(
+              body.checkedBy
+            ),
 
-          inspectionStatus:
-            finalInspectionStatus,
+          inspectionStatus,
 
-          status: finalStatus,
+          status,
 
-          items: cleanItems,
+          items,
 
           ...totals,
 
-          stockPosted: false,
+          stockPosted:
+            false,
 
-          stockPostedAt: null,
+          stockPostedAt:
+            null,
+
+          reversalPosted:
+            false,
 
           remarks:
-            normalizeText(remarks),
+            cleanText(
+              body.remarks
+            ),
         });
 
       if (
@@ -1727,10 +2435,10 @@ router.post(
       }
 
       await updatePurchaseOrderReceivingStatus(
-        selectedPO._id
+        purchaseOrder._id
       );
 
-      const populatedGRN =
+      const data =
         await populateGRN(
           GRN.findById(
             savedGRN._id
@@ -1743,21 +2451,16 @@ router.post(
           success: true,
 
           message:
-            shouldPostStock(
-              populatedGRN.status
-            )
-              ? "GRN created and Raw Material Godown stock posted successfully"
+            data.stockPosted
+              ? "GRN created and stock posted to the correct warehouse"
               : "Draft GRN created successfully",
 
-          data: populatedGRN,
+          data,
         });
     } catch (error) {
-      console.error(
-        "GRN Add Error:",
-        error
-      );
-
-      if (savedGRN?._id) {
+      if (
+        savedGRN?._id
+      ) {
         try {
           await removeFailedGRNStockEntries(
             savedGRN._id
@@ -1770,23 +2473,10 @@ router.post(
           rollbackError
         ) {
           console.error(
-            "GRN Add Rollback Error:",
-            rollbackError
+            "GRN add rollback failed:",
+            rollbackError.message
           );
         }
-      }
-
-      if (
-        error.code === 11000
-      ) {
-        return res
-          .status(400)
-          .json({
-            success: false,
-
-            message:
-              "Ye GRN number already used hai",
-          });
       }
 
       return res
@@ -1795,25 +2485,24 @@ router.post(
           success: false,
 
           message:
-            error.message ||
-            "GRN save nahi hua",
+            duplicateMessage(
+              error,
+              "Unable to create GRN"
+            ),
         });
     }
   }
 );
-
-/*
-|--------------------------------------------------------------------------
-| Update GRN
-|--------------------------------------------------------------------------
-*/
 
 router.put(
   "/update/:id",
-  async (req, res) => {
+  async (
+    req,
+    res
+  ) => {
     try {
       if (
-        !isValidObjectId(
+        !isValidId(
           req.params.id
         )
       ) {
@@ -1821,682 +2510,7 @@ router.put(
           .status(400)
           .json({
             success: false,
-            message:
-              "Invalid GRN ID",
-          });
-      }
 
-      const existingGRN =
-        await GRN.findById(
-          req.params.id
-        );
-
-      if (!existingGRN) {
-        return res
-          .status(404)
-          .json({
-            success: false,
-            message:
-              "GRN not found",
-          });
-      }
-
-      if (
-        existingGRN.purchaseStatus ===
-        "Purchased"
-      ) {
-        return res
-          .status(400)
-          .json({
-            success: false,
-
-            message:
-              "Purchased GRN update nahi ho sakta",
-          });
-      }
-
-      if (
-        existingGRN.status ===
-        "Cancelled"
-      ) {
-        return res
-          .status(400)
-          .json({
-            success: false,
-
-            message:
-              "Cancelled GRN update nahi ho sakta",
-          });
-      }
-
-      const existingStockEntry =
-        await hasGRNStockEntries(
-          existingGRN._id
-        );
-
-      if (
-        existingGRN.stockPosted ||
-        existingStockEntry ||
-        shouldPostStock(
-          existingGRN.status
-        )
-      ) {
-        return res
-          .status(400)
-          .json({
-            success: false,
-
-            message:
-              "Posted/Received GRN edit nahi ho sakta. Correction ke liye pehle GRN cancel karein aur naya GRN banayein.",
-          });
-      }
-
-      const purchaseOrderId =
-        req.body.purchaseOrder ||
-        existingGRN.purchaseOrder;
-
-      if (
-        !isValidObjectId(
-          purchaseOrderId
-        )
-      ) {
-        return res
-          .status(400)
-          .json({
-            success: false,
-
-            message:
-              "Valid Purchase Order required hai",
-          });
-      }
-
-      const selectedPO =
-        await PurchaseOrder.findById(
-          purchaseOrderId
-        ).populate(
-          "vendor",
-          "vendorName name phoneNumber phone email address city ntn strn"
-        );
-
-      validatePurchaseOrderForGRN(
-        selectedPO
-      );
-
-      const finalStatus =
-        normalizeStatus(
-          req.body.status ||
-            existingGRN.status
-        );
-
-      const finalInspectionStatus =
-        normalizeInspectionStatus(
-          req.body
-            .inspectionStatus ||
-            existingGRN
-              .inspectionStatus
-        );
-
-      if (
-        finalStatus ===
-        "Cancelled"
-      ) {
-        return res
-          .status(400)
-          .json({
-            success: false,
-
-            message:
-              "GRN cancel karne ke liye status endpoint use karein",
-          });
-      }
-
-      const cleanItems =
-        await cleanGRNItems({
-          items:
-            req.body.items ||
-            existingGRN.items,
-
-          purchaseOrder:
-            selectedPO,
-
-          excludeGRNId:
-            existingGRN._id,
-        });
-
-      if (
-        cleanItems.length === 0
-      ) {
-        return res
-          .status(400)
-          .json({
-            success: false,
-
-            message:
-              "Kam az kam aik valid received item add karein",
-          });
-      }
-
-      const totals =
-        calculateTotals(
-          cleanItems
-        );
-
-      validatePostingState({
-        status: finalStatus,
-
-        inspectionStatus:
-          finalInspectionStatus,
-
-        totals,
-      });
-
-      const warehouse =
-        await getRawMaterialWarehouse();
-
-      const vendorSnapshot =
-        getVendorSnapshot(
-          selectedPO
-        );
-
-      if (
-        !vendorSnapshot.vendor ||
-        !isValidObjectId(
-          vendorSnapshot.vendor
-        )
-      ) {
-        return res
-          .status(400)
-          .json({
-            success: false,
-
-            message:
-              "Purchase Order ka Vendor link missing hai",
-          });
-      }
-
-      const originalPurchaseOrderId =
-        existingGRN.purchaseOrder;
-
-      const updatedGRN =
-        await GRN.findByIdAndUpdate(
-          existingGRN._id,
-          {
-            grnNo:
-              req.body.grnNo
-                ? normalizeText(
-                    req.body
-                      .grnNo
-                  ).toUpperCase()
-                : existingGRN.grnNo,
-
-            purchaseOrder:
-              selectedPO._id,
-
-            purchaseOrderNo:
-              normalizeText(
-                selectedPO.purchaseOrderNo ||
-                  selectedPO.orderNo
-              ).toUpperCase(),
-
-            vendor:
-              vendorSnapshot.vendor,
-
-            vendorName:
-              vendorSnapshot.vendorName,
-
-            vendorPhone:
-              vendorSnapshot.vendorPhone,
-
-            vendorEmail:
-              vendorSnapshot.vendorEmail,
-
-            vendorAddress:
-              vendorSnapshot.vendorAddress,
-
-            receivedDate:
-              req.body
-                .receivedDate ||
-              existingGRN.receivedDate,
-
-            challanNo:
-              normalizeText(
-                req.body.challanNo
-              ),
-
-            invoiceNo:
-              normalizeText(
-                req.body.invoiceNo
-              ),
-
-            vehicleNo:
-              normalizeText(
-                req.body.vehicleNo
-              ).toUpperCase(),
-
-            warehouseId:
-              warehouse._id,
-
-            warehouse:
-              warehouse.name,
-
-            receivedBy:
-              normalizeText(
-                req.body.receivedBy
-              ),
-
-            checkedBy:
-              normalizeText(
-                req.body.checkedBy
-              ),
-
-            inspectionStatus:
-              finalInspectionStatus,
-
-            status: finalStatus,
-
-            items: cleanItems,
-
-            ...totals,
-
-            remarks:
-              normalizeText(
-                req.body.remarks
-              ),
-          },
-          {
-            new: true,
-            runValidators: true,
-          }
-        );
-
-      try {
-        if (
-          shouldPostStock(
-            updatedGRN.status
-          )
-        ) {
-          await postGRNStock(
-            updatedGRN
-          );
-        }
-      } catch (postingError) {
-        await removeFailedGRNStockEntries(
-          updatedGRN._id
-        );
-
-        await GRN.findByIdAndUpdate(
-          updatedGRN._id,
-          {
-            status: "Draft",
-            stockPosted: false,
-            stockPostedAt: null,
-          },
-          {
-            new: true,
-            runValidators: true,
-          }
-        );
-
-        throw postingError;
-      }
-
-      await updatePurchaseOrderReceivingStatus(
-        selectedPO._id
-      );
-
-      if (
-        String(
-          originalPurchaseOrderId
-        ) !==
-        String(selectedPO._id)
-      ) {
-        await updatePurchaseOrderReceivingStatus(
-          originalPurchaseOrderId
-        );
-      }
-
-      const populatedGRN =
-        await populateGRN(
-          GRN.findById(
-            updatedGRN._id
-          )
-        );
-
-      return res
-        .status(200)
-        .json({
-          success: true,
-
-          message:
-            shouldPostStock(
-              populatedGRN.status
-            )
-              ? "GRN updated and stock posted successfully"
-              : "Draft GRN updated successfully",
-
-          data: populatedGRN,
-        });
-    } catch (error) {
-      console.error(
-        "GRN Update Error:",
-        error
-      );
-
-      if (
-        error.code === 11000
-      ) {
-        return res
-          .status(400)
-          .json({
-            success: false,
-
-            message:
-              "Ye GRN number already used hai",
-          });
-      }
-
-      return res
-        .status(400)
-        .json({
-          success: false,
-
-          message:
-            error.message ||
-            "GRN update nahi hua",
-        });
-    }
-  }
-);
-
-/*
-|--------------------------------------------------------------------------
-| Change GRN Status
-|--------------------------------------------------------------------------
-*/
-
-router.patch(
-  "/status/:id",
-  async (req, res) => {
-    try {
-      if (
-        !isValidObjectId(
-          req.params.id
-        )
-      ) {
-        return res
-          .status(400)
-          .json({
-            success: false,
-            message:
-              "Invalid GRN ID",
-          });
-      }
-
-      const requestedStatus =
-        normalizeStatus(
-          req.body.status
-        );
-
-      const existingGRN =
-        await GRN.findById(
-          req.params.id
-        );
-
-      if (!existingGRN) {
-        return res
-          .status(404)
-          .json({
-            success: false,
-            message:
-              "GRN not found",
-          });
-      }
-
-      if (
-        existingGRN.purchaseStatus ===
-        "Purchased"
-      ) {
-        return res
-          .status(400)
-          .json({
-            success: false,
-
-            message:
-              "Purchased GRN ka status change nahi ho sakta",
-          });
-      }
-
-      if (
-        existingGRN.status ===
-        "Cancelled"
-      ) {
-        return res
-          .status(400)
-          .json({
-            success: false,
-
-            message:
-              "Cancelled GRN dobara activate nahi ho sakta",
-          });
-      }
-
-      if (
-        requestedStatus ===
-        existingGRN.status
-      ) {
-        const sameGRN =
-          await populateGRN(
-            GRN.findById(
-              existingGRN._id
-            )
-          );
-
-        return res
-          .status(200)
-          .json({
-            success: true,
-
-            message:
-              "GRN status already updated hai",
-
-            data: sameGRN,
-          });
-      }
-
-      const oldStatus =
-        existingGRN.status;
-
-      if (
-        requestedStatus ===
-          "Draft" &&
-        shouldPostStock(
-          oldStatus
-        )
-      ) {
-        return res
-          .status(400)
-          .json({
-            success: false,
-
-            message:
-              "Posted GRN dobara Draft nahi ban sakta",
-          });
-      }
-
-      if (
-        requestedStatus ===
-        "Cancelled"
-      ) {
-        if (
-          existingGRN.stockPosted ||
-          shouldPostStock(
-            oldStatus
-          )
-        ) {
-          await reverseGRNStock(
-            existingGRN
-          );
-        }
-
-        await GRN.findByIdAndUpdate(
-          existingGRN._id,
-          {
-            status: "Cancelled",
-
-            stockPosted: false,
-
-            cancelledAt:
-              new Date(),
-          },
-          {
-            new: true,
-            runValidators: true,
-          }
-        );
-      } else if (
-        shouldPostStock(
-          requestedStatus
-        )
-      ) {
-        validatePostingState({
-          status:
-            requestedStatus,
-
-          inspectionStatus:
-            existingGRN
-              .inspectionStatus,
-
-          totals: {
-            totalAcceptedQty:
-              existingGRN
-                .totalAcceptedQty,
-          },
-        });
-
-        if (
-          !existingGRN.stockPosted
-        ) {
-          existingGRN.status =
-            requestedStatus;
-
-          await existingGRN.save();
-
-          try {
-            await postGRNStock(
-              existingGRN
-            );
-          } catch (postingError) {
-            await removeFailedGRNStockEntries(
-              existingGRN._id
-            );
-
-            await GRN.findByIdAndUpdate(
-              existingGRN._id,
-              {
-                status: oldStatus,
-
-                stockPosted: false,
-
-                stockPostedAt:
-                  null,
-              }
-            );
-
-            throw postingError;
-          }
-        } else {
-          await GRN.findByIdAndUpdate(
-            existingGRN._id,
-            {
-              status:
-                requestedStatus,
-            },
-            {
-              new: true,
-              runValidators: true,
-            }
-          );
-        }
-      } else {
-        await GRN.findByIdAndUpdate(
-          existingGRN._id,
-          {
-            status:
-              requestedStatus,
-          },
-          {
-            new: true,
-            runValidators: true,
-          }
-        );
-      }
-
-      await updatePurchaseOrderReceivingStatus(
-        existingGRN.purchaseOrder
-      );
-
-      const updatedGRN =
-        await populateGRN(
-          GRN.findById(
-            existingGRN._id
-          )
-        );
-
-      return res
-        .status(200)
-        .json({
-          success: true,
-
-          message:
-            requestedStatus ===
-            "Cancelled"
-              ? "GRN cancelled and stock reversed successfully"
-              : shouldPostStock(
-                  requestedStatus
-                )
-              ? "GRN status updated and stock posted successfully"
-              : "GRN status updated successfully",
-
-          data: updatedGRN,
-        });
-    } catch (error) {
-      console.error(
-        "GRN Status Error:",
-        error
-      );
-
-      return res
-        .status(400)
-        .json({
-          success: false,
-
-          message:
-            error.message ||
-            "Status update nahi hua",
-        });
-    }
-  }
-);
-
-/*
-|--------------------------------------------------------------------------
-| Delete GRN
-|--------------------------------------------------------------------------
-*/
-
-router.delete(
-  "/delete/:id",
-  async (req, res) => {
-    try {
-      if (
-        !isValidObjectId(
-          req.params.id
-        )
-      ) {
-        return res
-          .status(400)
-          .json({
-            success: false,
             message:
               "Invalid GRN ID",
           });
@@ -2512,6 +2526,7 @@ router.delete(
           .status(404)
           .json({
             success: false,
+
             message:
               "GRN not found",
           });
@@ -2521,26 +2536,243 @@ router.delete(
         grn.purchaseStatus ===
         "Purchased"
       ) {
-        return res
-          .status(400)
-          .json({
-            success: false,
-
-            message:
-              "Purchased GRN delete nahi ho sakta",
-          });
+        throw new Error(
+          "A purchased GRN cannot be edited"
+        );
       }
 
-      const stockEntryExists =
+      if (
+        grn.status !==
+          "Draft" ||
+        grn.stockPosted ||
         await hasGRNStockEntries(
           grn._id
+        )
+      ) {
+        throw new Error(
+          "Only an unposted Draft GRN can be edited"
+        );
+      }
+
+      const body =
+        req.body || {};
+
+      const purchaseOrder =
+        await loadPurchaseOrder(
+          body.purchaseOrder ||
+            grn.purchaseOrder
+        );
+
+      const items =
+        await cleanGRNItems({
+          items:
+            body.items ||
+            grn.items,
+
+          purchaseOrder,
+
+          excludeGRNId:
+            grn._id,
+        });
+
+      const totals =
+        calculateTotals(
+          items
+        );
+
+      const status =
+        normalizeStatus(
+          body.status ||
+            grn.status
+        );
+
+      const inspectionStatus =
+        normalizeInspectionStatus(
+          body.inspectionStatus ||
+            grn.inspectionStatus
         );
 
       if (
-        grn.stockPosted ||
-        stockEntryExists ||
+        status ===
+        "Cancelled"
+      ) {
+        throw new Error(
+          "Use the status action to cancel a GRN"
+        );
+      }
+
+      validatePostingState({
+        status,
+        inspectionStatus,
+        totals,
+      });
+
+      const oldPurchaseOrderId =
+        grn.purchaseOrder;
+
+      const warehouseSummary =
+        getWarehouseSummary(
+          items
+        );
+
+      const vendorSnapshot =
+        getVendorSnapshot(
+          purchaseOrder
+        );
+
+      Object.assign(
+        grn,
+        {
+          purchaseOrder:
+            purchaseOrder._id,
+
+          purchaseOrderNo:
+            cleanText(
+              purchaseOrder.purchaseOrderNo ||
+                purchaseOrder.orderNo
+            ).toUpperCase(),
+
+          ...vendorSnapshot,
+
+          receivedDate:
+            cleanText(
+              body.receivedDate,
+              grn.receivedDate
+            ),
+
+          challanNo:
+            cleanText(
+              body.challanNo
+            ),
+
+          invoiceNo:
+            cleanText(
+              body.invoiceNo
+            ),
+
+          vehicleNo:
+            cleanText(
+              body.vehicleNo
+            ).toUpperCase(),
+
+          ...warehouseSummary,
+
+          receivedBy:
+            cleanText(
+              body.receivedBy
+            ),
+
+          checkedBy:
+            cleanText(
+              body.checkedBy
+            ),
+
+          inspectionStatus,
+
+          status,
+
+          items,
+
+          ...totals,
+
+          remarks:
+            cleanText(
+              body.remarks
+            ),
+        }
+      );
+
+      await grn.save();
+
+      if (
         shouldPostStock(
           grn.status
+        )
+      ) {
+        try {
+          await postGRNStock(
+            grn
+          );
+        } catch (error) {
+          await removeFailedGRNStockEntries(
+            grn._id
+          );
+
+          grn.status =
+            "Draft";
+
+          grn.stockPosted =
+            false;
+
+          grn.stockPostedAt =
+            null;
+
+          await grn.save();
+
+          throw error;
+        }
+      }
+
+      await updatePurchaseOrderReceivingStatus(
+        purchaseOrder._id
+      );
+
+      if (
+        String(
+          oldPurchaseOrderId
+        ) !==
+        String(
+          purchaseOrder._id
+        )
+      ) {
+        await updatePurchaseOrderReceivingStatus(
+          oldPurchaseOrderId
+        );
+      }
+
+      const data =
+        await populateGRN(
+          GRN.findById(
+            grn._id
+          )
+        );
+
+      return res.json({
+        success: true,
+
+        message:
+          data.stockPosted
+            ? "GRN updated and stock posted successfully"
+            : "Draft GRN updated successfully",
+
+        data,
+      });
+    } catch (error) {
+      return res
+        .status(400)
+        .json({
+          success: false,
+
+          message:
+            duplicateMessage(
+              error,
+              "Unable to update GRN"
+            ),
+        });
+    }
+  }
+);
+
+router.patch(
+  "/status/:id",
+  async (
+    req,
+    res
+  ) => {
+    try {
+      if (
+        !isValidId(
+          req.params.id
         )
       ) {
         return res
@@ -2549,8 +2781,247 @@ router.delete(
             success: false,
 
             message:
-              "Posted/Received GRN delete nahi ho sakta. Stock history محفوظ رکھنے کے لیے GRN cancel karein.",
+              "Invalid GRN ID",
           });
+      }
+
+      const grn =
+        await GRN.findById(
+          req.params.id
+        );
+
+      if (!grn) {
+        return res
+          .status(404)
+          .json({
+            success: false,
+
+            message:
+              "GRN not found",
+          });
+      }
+
+      if (
+        grn.purchaseStatus ===
+        "Purchased"
+      ) {
+        throw new Error(
+          "A purchased GRN status cannot be changed"
+        );
+      }
+
+      if (
+        grn.status ===
+        "Cancelled"
+      ) {
+        throw new Error(
+          "A cancelled GRN cannot be reactivated"
+        );
+      }
+
+      const requestedStatus =
+        normalizeStatus(
+          req.body.status
+        );
+
+      if (
+        requestedStatus ===
+        "Cancelled"
+      ) {
+        if (
+          grn.stockPosted ||
+          await hasGRNStockEntries(
+            grn._id
+          )
+        ) {
+          await reverseGRNStock(
+            grn
+          );
+        }
+
+        grn.status =
+          "Cancelled";
+
+        grn.stockPosted =
+          false;
+
+        grn.cancelledAt =
+          new Date();
+
+        grn.cancelReason =
+          cleanText(
+            req.body.cancelReason,
+            "GRN cancelled"
+          );
+
+        await grn.save();
+      } else if (
+        shouldPostStock(
+          requestedStatus
+        )
+      ) {
+        validatePostingState({
+          status:
+            requestedStatus,
+
+          inspectionStatus:
+            grn.inspectionStatus,
+
+          totals: {
+            totalAcceptedQty:
+              grn.totalAcceptedQty,
+          },
+        });
+
+        if (
+          !grn.stockPosted
+        ) {
+          const oldStatus =
+            grn.status;
+
+          grn.status =
+            requestedStatus;
+
+          await grn.save();
+
+          try {
+            await postGRNStock(
+              grn
+            );
+          } catch (error) {
+            await removeFailedGRNStockEntries(
+              grn._id
+            );
+
+            grn.status =
+              oldStatus;
+
+            grn.stockPosted =
+              false;
+
+            grn.stockPostedAt =
+              null;
+
+            await grn.save();
+
+            throw error;
+          }
+        } else {
+          grn.status =
+            requestedStatus;
+
+          await grn.save();
+        }
+      } else {
+        if (
+          grn.stockPosted
+        ) {
+          throw new Error(
+            "A posted GRN cannot be changed back to Draft"
+          );
+        }
+
+        grn.status =
+          requestedStatus;
+
+        await grn.save();
+      }
+
+      await updatePurchaseOrderReceivingStatus(
+        grn.purchaseOrder
+      );
+
+      const data =
+        await populateGRN(
+          GRN.findById(
+            grn._id
+          )
+        );
+
+      return res.json({
+        success: true,
+
+        message:
+          requestedStatus ===
+          "Cancelled"
+            ? "GRN cancelled and stock reversed successfully"
+            : data.stockPosted
+              ? "GRN stock posted successfully"
+              : "GRN status updated successfully",
+
+        data,
+      });
+    } catch (error) {
+      return res
+        .status(400)
+        .json({
+          success: false,
+
+          message:
+            error.message,
+        });
+    }
+  }
+);
+
+router.delete(
+  "/delete/:id",
+  async (
+    req,
+    res
+  ) => {
+    try {
+      if (
+        !isValidId(
+          req.params.id
+        )
+      ) {
+        return res
+          .status(400)
+          .json({
+            success: false,
+
+            message:
+              "Invalid GRN ID",
+          });
+      }
+
+      const grn =
+        await GRN.findById(
+          req.params.id
+        );
+
+      if (!grn) {
+        return res
+          .status(404)
+          .json({
+            success: false,
+
+            message:
+              "GRN not found",
+          });
+      }
+
+      if (
+        grn.purchaseStatus ===
+        "Purchased"
+      ) {
+        throw new Error(
+          "A purchased GRN cannot be deleted"
+        );
+      }
+
+      if (
+        grn.status !==
+          "Draft" ||
+        grn.stockPosted ||
+        await hasGRNStockEntries(
+          grn._id
+        )
+      ) {
+        throw new Error(
+          "Only an unposted Draft GRN can be deleted"
+        );
       }
 
       const purchaseOrderId =
@@ -2564,28 +3035,20 @@ router.delete(
         purchaseOrderId
       );
 
-      return res
-        .status(200)
-        .json({
-          success: true,
+      return res.json({
+        success: true,
 
-          message:
-            "Draft GRN deleted successfully",
-        });
+        message:
+          "Draft GRN deleted successfully",
+      });
     } catch (error) {
-      console.error(
-        "GRN Delete Error:",
-        error
-      );
-
       return res
-        .status(500)
+        .status(400)
         .json({
           success: false,
 
           message:
-            error.message ||
-            "GRN delete nahi hua",
+            error.message,
         });
     }
   }

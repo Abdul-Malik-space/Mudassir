@@ -1,784 +1,1674 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, {
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
+
 import {
-  Plus,
-  Trash2,
-  Printer,
-  Loader2,
-  FileText,
-  Edit2,
-  X,
-  Save,
   ArrowLeft,
-  ClipboardCheck,
+  CheckCircle2,
+  Edit2,
+  Loader2,
   PackageCheck,
-  Warehouse,
-  ShieldCheck,
-  Search,
+  Plus,
+  Printer,
   RefreshCcw,
+  Save,
+  Search,
+  Trash2,
+  Warehouse,
+  X,
+  XCircle,
 } from "lucide-react";
-import { API_BASE_URL } from "../config/api";
 
-const todayDate = () => new Date().toISOString().slice(0, 10);
+import {
+  API_BASE_URL,
+} from "../config/api";
 
-const money = (value) => `Rs. ${Number(value || 0).toLocaleString()}`;
+const API_GRN =
+  `${API_BASE_URL}/grns`;
 
-const RequiredLabel = ({ children }) => (
-  <label className="text-xs font-bold text-slate-600">
-    {children} <span className="text-red-600">*</span>
-  </label>
-);
+const todayDate = () =>
+  new Date()
+    .toISOString()
+    .slice(0, 10);
 
-const NormalLabel = ({ children }) => (
-  <label className="text-xs font-bold text-slate-600">{children}</label>
-);
+const numberValue = (
+  value
+) => {
+  const number =
+    Number(value);
 
-const normalizeArray = (data, keys = []) => {
-  if (Array.isArray(data)) return data;
+  return Number.isFinite(
+    number
+  )
+    ? number
+    : 0;
+};
 
-  for (const key of keys) {
-    if (Array.isArray(data?.[key])) return data[key];
+const quantity = (
+  value
+) =>
+  numberValue(
+    value
+  ).toLocaleString(
+    undefined,
+    {
+      maximumFractionDigits:
+        3,
+    }
+  );
+
+const money = (
+  value
+) =>
+  `Rs. ${numberValue(
+    value
+  ).toLocaleString(
+    "en-PK",
+    {
+      maximumFractionDigits:
+        2,
+    }
+  )}`;
+
+const idOf = (
+  value
+) => {
+  if (!value) {
+    return "";
   }
 
-  if (Array.isArray(data?.data)) return data.data;
-
-  return [];
+  return typeof value ===
+    "object"
+    ? String(
+        value._id ||
+          value.id ||
+          ""
+      )
+    : String(value);
 };
 
-const apiRequest = async (url, options = {}) => {
-  const response = await fetch(url, {
-    headers: {
-      "Content-Type": "application/json",
-      ...(options.headers || {}),
-    },
-    ...options,
-  });
-
-  const data = await response.json().catch(() => ({}));
-
-  if (!response.ok) {
-    throw new Error(data.message || data.error || "Request failed");
+const normalizeArray = (
+  data,
+  keys = []
+) => {
+  if (
+    Array.isArray(
+      data
+    )
+  ) {
+    return data;
   }
 
-  return data;
+  for (
+    const key of
+    keys
+  ) {
+    if (
+      Array.isArray(
+        data?.[key]
+      )
+    ) {
+      return data[
+        key
+      ];
+    }
+  }
+
+  return Array.isArray(
+    data?.data
+  )
+    ? data.data
+    : [];
 };
 
-const getVendorName = (order) => {
-  return (
-    order?.vendorName ||
-    order?.vendor?.vendorName ||
-    order?.vendor?.name ||
-    "N/A"
-  );
-};
+const escapeHtml = (
+  value
+) =>
+  String(
+    value ?? ""
+  )
+    .replaceAll(
+      "&",
+      "&amp;"
+    )
+    .replaceAll(
+      "<",
+      "&lt;"
+    )
+    .replaceAll(
+      ">",
+      "&gt;"
+    )
+    .replaceAll(
+      '"',
+      "&quot;"
+    )
+    .replaceAll(
+      "'",
+      "&#039;"
+    );
 
-const getVendorPhone = (order) => {
-  return (
-    order?.vendorPhone ||
-    order?.vendor?.phoneNumber ||
-    order?.vendor?.phone ||
-    ""
-  );
-};
+const apiRequest =
+  async (
+    url,
+    options = {}
+  ) => {
+    const response =
+      await fetch(
+        url,
+        {
+          ...options,
 
-const getOrderNo = (order) => {
-  return order?.purchaseOrderNo || order?.orderNo || "N/A";
-};
+          headers: {
+            "Content-Type":
+              "application/json",
 
-const getDefaultForm = (grnNo = "") => ({
+            ...(options.headers ||
+              {}),
+          },
+        }
+      );
+
+    const data =
+      await response
+        .json()
+        .catch(
+          () => ({})
+        );
+
+    if (
+      !response.ok ||
+      data?.success ===
+        false
+    ) {
+      throw new Error(
+        data.message ||
+          data.error ||
+          "Request failed"
+      );
+    }
+
+    return data;
+  };
+
+const emptyForm = (
+  grnNo = ""
+) => ({
   grnNo,
+
   purchaseOrder: "",
+
   purchaseOrderNo: "",
+
   vendor: "",
+
   vendorName: "",
+
   vendorPhone: "",
-  receivedDate: todayDate(),
+
+  receivedDate:
+    todayDate(),
+
   challanNo: "",
+
   invoiceNo: "",
+
   vehicleNo: "",
-  warehouse: "Main Godown",
+
   receivedBy: "",
+
   checkedBy: "",
-  inspectionStatus: "Pending",
+
+  inspectionStatus:
+    "Pending",
+
   status: "Draft",
+
   remarks: "",
+
   items: [],
 });
 
+const inputClass =
+  "w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-blue-600 focus:ring-2 focus:ring-blue-100 disabled:bg-slate-100 disabled:text-slate-500";
+
+const statusClass = (
+  status
+) =>
+  ({
+    Draft:
+      "bg-slate-100 text-slate-700",
+
+    Received:
+      "bg-blue-100 text-blue-700",
+
+    "Partially Received":
+      "bg-orange-100 text-orange-700",
+
+    Completed:
+      "bg-emerald-100 text-emerald-700",
+
+    Posted:
+      "bg-purple-100 text-purple-700",
+
+    Cancelled:
+      "bg-red-100 text-red-700",
+  }[status] ||
+    "bg-slate-100 text-slate-700");
+
 const GRN = () => {
-  const [purchaseOrders, setPurchaseOrders] = useState([]);
-  const [grns, setGrns] = useState([]);
+  const [
+    purchaseOrders,
+    setPurchaseOrders,
+  ] = useState([]);
 
-  const [loading, setLoading] = useState(false);
-  const [poLoading, setPoLoading] = useState(false);
-  const [saving, setSaving] = useState(false);
+  const [
+    grns,
+    setGrns,
+  ] = useState([]);
 
-  const [showForm, setShowForm] = useState(false);
-  const [editId, setEditId] = useState(null);
+  const [
+    form,
+    setForm,
+  ] = useState(
+    emptyForm()
+  );
 
-  const [searchTerm, setSearchTerm] = useState("");
-  const [statusFilter, setStatusFilter] = useState("All");
+  const [
+    showForm,
+    setShowForm,
+  ] = useState(false);
 
-  const [form, setForm] = useState(getDefaultForm());
+  const [
+    editId,
+    setEditId,
+  ] = useState(null);
 
-  const fetchPurchaseOrders = async () => {
-    try {
-      setPoLoading(true);
+  const [
+    loading,
+    setLoading,
+  ] = useState(false);
 
-      const data = await apiRequest(`${API_BASE_URL}/purchase-orders/all`);
-      const list = normalizeArray(data, ["purchaseOrders", "orders"]);
+  const [
+    saving,
+    setSaving,
+  ] = useState(false);
+
+  const [
+    actionId,
+    setActionId,
+  ] = useState("");
+
+  const [
+    search,
+    setSearch,
+  ] = useState("");
+
+  const [
+    statusFilter,
+    setStatusFilter,
+  ] = useState("All");
+
+  const [
+    typeFilter,
+    setTypeFilter,
+  ] = useState("All");
+
+  const fetchPurchaseOrders =
+    async () => {
+      const data =
+        await apiRequest(
+          `${API_GRN}/eligible-purchase-orders`
+        );
 
       setPurchaseOrders(
-        list.filter((order) => !["Cancelled", "Received"].includes(order.status))
+        normalizeArray(
+          data,
+          [
+            "purchaseOrders",
+            "orders",
+          ]
+        )
       );
-    } catch (error) {
-      console.error("Purchase orders loading error:", error);
-      alert(error.message || "Purchase orders load nahi huay");
-      setPurchaseOrders([]);
-    } finally {
-      setPoLoading(false);
-    }
-  };
-
-  const fetchGrns = async () => {
-    try {
-      setLoading(true);
-
-      const data = await apiRequest(`${API_BASE_URL}/grns/all`);
-      setGrns(normalizeArray(data, ["grns"]));
-    } catch (error) {
-      console.error("GRN loading error:", error);
-      alert(error.message || "GRN load nahi huay");
-      setGrns([]);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const fetchNextNo = async () => {
-    const data = await apiRequest(`${API_BASE_URL}/grns/next-no`);
-    return data.grnNo || "";
-  };
-
-  useEffect(() => {
-    fetchPurchaseOrders();
-    fetchGrns();
-  }, []);
-
-  const totals = useMemo(() => {
-    const totalOrderedQty = form.items.reduce(
-      (sum, item) => sum + Number(item.orderedQty || 0),
-      0
-    );
-
-    const totalReceivedQty = form.items.reduce(
-      (sum, item) => sum + Number(item.receivedQty || 0),
-      0
-    );
-
-    const totalAcceptedQty = form.items.reduce(
-      (sum, item) => sum + Number(item.acceptedQty || 0),
-      0
-    );
-
-    const totalRejectedQty = form.items.reduce(
-      (sum, item) => sum + Number(item.rejectedQty || 0),
-      0
-    );
-
-    const totalPendingQty = form.items.reduce(
-      (sum, item) => sum + Number(item.pendingQty || 0),
-      0
-    );
-
-    return {
-      totalOrderedQty,
-      totalReceivedQty,
-      totalAcceptedQty,
-      totalRejectedQty,
-      totalPendingQty,
     };
-  }, [form.items]);
 
-  const stats = useMemo(() => {
-    return {
-      totalGrns: grns.length,
-      receivedQty: grns.reduce(
-        (s, g) => s + Number(g.totalReceivedQty || g.totals?.totalReceivedQty || 0),
-        0
-      ),
-      rejectedQty: grns.reduce(
-        (s, g) => s + Number(g.totalRejectedQty || g.totals?.totalRejectedQty || 0),
-        0
-      ),
-      pendingQty: grns.reduce(
-        (s, g) => s + Number(g.totalPendingQty || g.totals?.totalPendingQty || 0),
-        0
-      ),
+  const fetchGrns =
+    async () => {
+      const data =
+        await apiRequest(
+          `${API_GRN}/all`
+        );
+
+      setGrns(
+        normalizeArray(
+          data,
+          [
+            "grns",
+          ]
+        )
+      );
     };
-  }, [grns]);
 
-  const filteredGrns = useMemo(() => {
-    const keyword = searchTerm.trim().toLowerCase();
+  const refresh =
+    async () => {
+      try {
+        setLoading(
+          true
+        );
 
-    return grns.filter((grn) => {
-      const matchesSearch =
-        !keyword ||
-        grn.grnNo?.toLowerCase().includes(keyword) ||
-        grn.purchaseOrderNo?.toLowerCase().includes(keyword) ||
-        grn.vendorName?.toLowerCase().includes(keyword) ||
-        grn.challanNo?.toLowerCase().includes(keyword) ||
-        grn.invoiceNo?.toLowerCase().includes(keyword);
+        await Promise.all([
+          fetchPurchaseOrders(),
+          fetchGrns(),
+        ]);
+      } catch (error) {
+        console.error(
+          "GRN load error:",
+          error
+        );
 
-      const matchesStatus = statusFilter === "All" || grn.status === statusFilter;
+        alert(
+          error.message ||
+            "Unable to load GRN data"
+        );
+      } finally {
+        setLoading(
+          false
+        );
+      }
+    };
 
-      return matchesSearch && matchesStatus;
-    });
-  }, [grns, searchTerm, statusFilter]);
+  useEffect(
+    () => {
+      refresh();
 
-  const openNewForm = async () => {
-    try {
-      setSaving(true);
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    },
+    []
+  );
 
-      await fetchPurchaseOrders();
-      const nextNo = await fetchNextNo();
+  const totals =
+    useMemo(
+      () =>
+        form.items.reduce(
+          (
+            sum,
+            item
+          ) => {
+            sum.received +=
+              numberValue(
+                item.receivedQty
+              );
 
-      setEditId(null);
-      setForm(getDefaultForm(nextNo));
-      setShowForm(true);
-    } catch (error) {
-      alert(error.message || "GRN No load nahi hua");
-    } finally {
-      setSaving(false);
-    }
+            sum.accepted +=
+              numberValue(
+                item.acceptedQty
+              );
+
+            sum.rejected +=
+              numberValue(
+                item.rejectedQty
+              );
+
+            sum.pending +=
+              numberValue(
+                item.pendingQty
+              );
+
+            sum.value +=
+              numberValue(
+                item.amount
+              );
+
+            return sum;
+          },
+          {
+            received: 0,
+            accepted: 0,
+            rejected: 0,
+            pending: 0,
+            value: 0,
+          }
+        ),
+      [
+        form.items,
+      ]
+    );
+
+  const warehouseSummary =
+    useMemo(
+      () => {
+        const activeRows =
+          form.items.filter(
+            (item) =>
+              numberValue(
+                item.receivedQty
+              ) > 0
+          );
+
+        const rows =
+          activeRows.length
+            ? activeRows
+            : form.items;
+
+        const names = [
+          ...new Set(
+            rows
+              .map(
+                (item) =>
+                  item.warehouse
+              )
+              .filter(
+                Boolean
+              )
+          ),
+        ];
+
+        if (
+          !names.length
+        ) {
+          return "Auto by Item Type";
+        }
+
+        return names.length ===
+          1
+          ? names[0]
+          : "Multiple Warehouses";
+      },
+      [
+        form.items,
+      ]
+    );
+
+  const filteredGrns =
+    useMemo(
+      () => {
+        const keyword =
+          search
+            .trim()
+            .toLowerCase();
+
+        return grns.filter(
+          (grn) => {
+            const text =
+              [
+                grn.grnNo,
+                grn.purchaseOrderNo,
+                grn.vendorName,
+                grn.receiptType,
+                grn.warehouse,
+
+                ...(
+                  grn.items ||
+                  []
+                ).flatMap(
+                  (item) => [
+                    item.itemCode,
+                    item.itemName,
+                    item.itemType,
+                    item.description,
+                  ]
+                ),
+              ]
+                .filter(
+                  Boolean
+                )
+                .join(
+                  " "
+                )
+                .toLowerCase();
+
+            return (
+              (!keyword ||
+                text.includes(
+                  keyword
+                )) &&
+
+              (statusFilter ===
+                "All" ||
+                grn.status ===
+                  statusFilter) &&
+
+              (typeFilter ===
+                "All" ||
+                grn.receiptType ===
+                  typeFilter)
+            );
+          }
+        );
+      },
+      [
+        grns,
+        search,
+        statusFilter,
+        typeFilter,
+      ]
+    );
+
+  const openNew =
+    async () => {
+      try {
+        setSaving(
+          true
+        );
+
+        const [
+          numberData,
+        ] =
+          await Promise.all([
+            apiRequest(
+              `${API_GRN}/next-no`
+            ),
+
+            fetchPurchaseOrders(),
+          ]);
+
+        setEditId(
+          null
+        );
+
+        setForm(
+          emptyForm(
+            numberData.grnNo ||
+              ""
+          )
+        );
+
+        setShowForm(
+          true
+        );
+      } catch (error) {
+        alert(
+          error.message ||
+            "Unable to open a new GRN"
+        );
+      } finally {
+        setSaving(
+          false
+        );
+      }
+    };
+
+  const closeForm =
+    () => {
+      setShowForm(
+        false
+      );
+
+      setEditId(
+        null
+      );
+
+      setForm(
+        emptyForm()
+      );
+    };
+
+  const updateField = (
+    field,
+    value
+  ) => {
+    setForm(
+      (current) => ({
+        ...current,
+
+        [field]:
+          value,
+      })
+    );
   };
 
-  const closeForm = () => {
-    setShowForm(false);
-    setEditId(null);
-    setForm(getDefaultForm());
-  };
-
-  const handlePurchaseOrderSelect = (purchaseOrderId) => {
-    const order = purchaseOrders.find((po) => po._id === purchaseOrderId);
+  const selectPurchaseOrder = (
+    purchaseOrderId
+  ) => {
+    const order =
+      purchaseOrders.find(
+        (row) =>
+          String(
+            row._id
+          ) ===
+          String(
+            purchaseOrderId
+          )
+      );
 
     if (!order) {
-      setForm({
-        ...form,
-        purchaseOrder: "",
-        purchaseOrderNo: "",
-        vendor: "",
-        vendorName: "",
-        vendorPhone: "",
-        items: [],
-      });
+      setForm(
+        (current) => ({
+          ...emptyForm(
+            current.grnNo
+          ),
+
+          receivedDate:
+            current.receivedDate,
+        })
+      );
+
       return;
     }
 
-    const mappedItems = (order.items || []).map((row, index) => {
-      const orderedQty = Number(row.quantity || row.qty || 0);
-      const alreadyReceivedQty = Number(row.receivedQty || 0);
-      const pendingQty = Math.max(orderedQty - alreadyReceivedQty, 0);
+    setForm(
+      (current) => ({
+        ...current,
 
-      return {
-        item: row.item?._id || row.item || null,
-        purchaseOrderItemId: row._id || null,
-        description: row.description || row.itemName || "",
-        size: row.size || "",
-        orderedQty,
-        previousReceivedQty: alreadyReceivedQty,
-        receivedQty: "",
-        rejectedQty: "",
-        acceptedQty: 0,
-        pendingQty,
-        unit: row.unit || "Pcs",
-        unitPrice: Number(row.unitPrice || 0),
-        amount: 0,
-        remarks: "",
-        rowIndex: index,
-      };
-    });
+        purchaseOrder:
+          order._id,
 
-    setForm({
-      ...form,
-      purchaseOrder: purchaseOrderId,
-      purchaseOrderNo: getOrderNo(order),
-      vendor: order.vendor?._id || order.vendor || "",
-      vendorName: getVendorName(order),
-      vendorPhone: getVendorPhone(order),
-      items: mappedItems,
-    });
+        purchaseOrderNo:
+          order.purchaseOrderNo ||
+          order.orderNo ||
+          "",
+
+        vendor:
+          idOf(
+            order.vendor
+          ),
+
+        vendorName:
+          order.vendorName ||
+          "",
+
+        vendorPhone:
+          order.vendorPhone ||
+          "",
+
+        items:
+          (
+            order.items ||
+            []
+          ).map(
+            (item) => ({
+              purchaseOrderItemId:
+                idOf(
+                  item.purchaseOrderItemId
+                ),
+
+              item:
+                idOf(
+                  item.item
+                ),
+
+              itemCode:
+                item.itemCode ||
+                "",
+
+              itemName:
+                item.itemName ||
+                item.description ||
+                "",
+
+              itemType:
+                item.itemType ||
+                "",
+
+              warehouseId:
+                idOf(
+                  item.warehouseId
+                ),
+
+              warehouse:
+                item.warehouse ||
+                "",
+
+              description:
+                item.description ||
+                item.itemName ||
+                "",
+
+              size:
+                item.size ||
+                "",
+
+              orderedQty:
+                numberValue(
+                  item.orderedQty
+                ),
+
+              previousReceivedQty:
+                numberValue(
+                  item.previousReceivedQty
+                ),
+
+              pendingBeforeQty:
+                numberValue(
+                  item.pendingQty
+                ),
+
+              receivedQty:
+                "",
+
+              rejectedQty:
+                "",
+
+              acceptedQty:
+                0,
+
+              pendingQty:
+                numberValue(
+                  item.pendingQty
+                ),
+
+              unit:
+                item.unit ||
+                "Pcs",
+
+              unitPrice:
+                numberValue(
+                  item.unitPrice
+                ),
+
+              amount:
+                0,
+
+              remarks:
+                item.remarks ||
+                "",
+            })
+          ),
+      })
+    );
   };
 
-  const updateItem = (index, field, value) => {
-    const updatedItems = [...form.items];
+  const updateItem = (
+    index,
+    field,
+    value
+  ) => {
+    setForm(
+      (current) => {
+        const items = [
+          ...current.items,
+        ];
 
-    updatedItems[index] = {
-      ...updatedItems[index],
-      [field]: value,
+        const row = {
+          ...items[
+            index
+          ],
+
+          [field]:
+            value,
+        };
+
+        const receivedQty =
+          numberValue(
+            row.receivedQty
+          );
+
+        const rejectedQty =
+          numberValue(
+            row.rejectedQty
+          );
+
+        const acceptedQty =
+          Math.max(
+            receivedQty -
+              rejectedQty,
+            0
+          );
+
+        const pendingBefore =
+          Math.max(
+            numberValue(
+              row.orderedQty
+            ) -
+              numberValue(
+                row.previousReceivedQty
+              ),
+            0
+          );
+
+        row.acceptedQty =
+          acceptedQty;
+
+        row.pendingBeforeQty =
+          pendingBefore;
+
+        row.pendingQty =
+          Math.max(
+            pendingBefore -
+              acceptedQty,
+            0
+          );
+
+        row.amount =
+          acceptedQty *
+          numberValue(
+            row.unitPrice
+          );
+
+        items[index] =
+          row;
+
+        return {
+          ...current,
+          items,
+        };
+      }
+    );
+  };
+
+  const validate =
+    () => {
+      if (
+        !form.purchaseOrder
+      ) {
+        alert(
+          "Select a Purchase Order"
+        );
+
+        return false;
+      }
+
+      if (
+        !form.receivedDate
+      ) {
+        alert(
+          "Received date is required"
+        );
+
+        return false;
+      }
+
+      const rows =
+        form.items.filter(
+          (item) =>
+            numberValue(
+              item.receivedQty
+            ) > 0
+        );
+
+      if (
+        !rows.length
+      ) {
+        alert(
+          "Receive at least one item"
+        );
+
+        return false;
+      }
+
+      for (
+        const item of
+        rows
+      ) {
+        const receivedQty =
+          numberValue(
+            item.receivedQty
+          );
+
+        const rejectedQty =
+          numberValue(
+            item.rejectedQty
+          );
+
+        const acceptedQty =
+          Math.max(
+            receivedQty -
+              rejectedQty,
+            0
+          );
+
+        const pendingBefore =
+          Math.max(
+            numberValue(
+              item.orderedQty
+            ) -
+              numberValue(
+                item.previousReceivedQty
+              ),
+            0
+          );
+
+        if (
+          rejectedQty >
+          receivedQty
+        ) {
+          alert(
+            `${item.itemName}: rejected quantity cannot exceed received quantity`
+          );
+
+          return false;
+        }
+
+        if (
+          acceptedQty >
+          pendingBefore
+        ) {
+          alert(
+            `${item.itemName}: accepted quantity cannot exceed pending quantity ${quantity(
+              pendingBefore
+            )} ${item.unit}`
+          );
+
+          return false;
+        }
+      }
+
+      if (
+        form.status !==
+        "Draft"
+      ) {
+        if (
+          form.inspectionStatus ===
+          "Pending"
+        ) {
+          alert(
+            "Complete inspection before posting stock"
+          );
+
+          return false;
+        }
+
+        if (
+          form.inspectionStatus ===
+          "Rejected"
+        ) {
+          alert(
+            "A rejected GRN cannot post stock"
+          );
+
+          return false;
+        }
+
+        if (
+          totals.accepted <=
+          0
+        ) {
+          alert(
+            "Accepted quantity is required to post stock"
+          );
+
+          return false;
+        }
+      }
+
+      return true;
     };
 
-    const orderedQty = Number(updatedItems[index].orderedQty || 0);
-    const previousReceivedQty = Number(updatedItems[index].previousReceivedQty || 0);
-    const receivedQty = Number(updatedItems[index].receivedQty || 0);
-    const rejectedQty = Number(updatedItems[index].rejectedQty || 0);
-    const unitPrice = Number(updatedItems[index].unitPrice || 0);
+  const buildPayload =
+    () => ({
+      grnNo:
+        form.grnNo.trim(),
 
-    const acceptedQty = Math.max(receivedQty - rejectedQty, 0);
-    const pendingQty = Math.max(orderedQty - previousReceivedQty - receivedQty, 0);
+      purchaseOrder:
+        form.purchaseOrder,
 
-    updatedItems[index].acceptedQty = acceptedQty;
-    updatedItems[index].pendingQty = pendingQty;
-    updatedItems[index].amount = acceptedQty * unitPrice;
+      receivedDate:
+        form.receivedDate,
 
-    setForm({
-      ...form,
-      items: updatedItems,
+      challanNo:
+        form.challanNo.trim(),
+
+      invoiceNo:
+        form.invoiceNo.trim(),
+
+      vehicleNo:
+        form.vehicleNo.trim(),
+
+      receivedBy:
+        form.receivedBy.trim(),
+
+      checkedBy:
+        form.checkedBy.trim(),
+
+      inspectionStatus:
+        form.inspectionStatus,
+
+      status:
+        form.status,
+
+      remarks:
+        form.remarks.trim(),
+
+      items:
+        form.items
+          .filter(
+            (item) =>
+              numberValue(
+                item.receivedQty
+              ) > 0
+          )
+          .map(
+            (item) => ({
+              purchaseOrderItemId:
+                item.purchaseOrderItemId,
+
+              item:
+                item.item,
+
+              description:
+                item.description.trim(),
+
+              size:
+                item.size.trim(),
+
+              receivedQty:
+                numberValue(
+                  item.receivedQty
+                ),
+
+              rejectedQty:
+                numberValue(
+                  item.rejectedQty
+                ),
+
+              unit:
+                item.unit,
+
+              unitPrice:
+                numberValue(
+                  item.unitPrice
+                ),
+
+              remarks:
+                item.remarks.trim(),
+            })
+          ),
     });
-  };
 
-  const validateForm = () => {
-    if (!form.grnNo.trim()) {
-      alert("GRN No required hai");
-      return false;
-    }
+  const save =
+    async () => {
+      if (!validate()) {
+        return;
+      }
 
-    if (!form.purchaseOrder) {
-      alert("Purchase Order select karein");
-      return false;
-    }
+      try {
+        setSaving(
+          true
+        );
 
-    if (!form.receivedDate) {
-      alert("Received Date required hai");
-      return false;
-    }
+        await apiRequest(
+          editId
+            ? `${API_GRN}/update/${editId}`
+            : `${API_GRN}/add`,
 
-    if (!form.warehouse.trim()) {
-      alert("Warehouse required hai");
-      return false;
-    }
+          {
+            method:
+              editId
+                ? "PUT"
+                : "POST",
 
-    const validItems = form.items.filter(
-      (item) => Number(item.receivedQty || 0) > 0
-    );
+            body:
+              JSON.stringify(
+                buildPayload()
+              ),
+          }
+        );
 
-    if (validItems.length === 0) {
-      alert("Kam az kam aik item receive karein");
-      return false;
-    }
+        await refresh();
 
-    const invalidRejectedQty = form.items.some(
-      (item) => Number(item.rejectedQty || 0) > Number(item.receivedQty || 0)
-    );
-
-    if (invalidRejectedQty) {
-      alert("Rejected Qty received qty se zyada nahi ho sakti");
-      return false;
-    }
-
-    const overReceived = form.items.some((item) => {
-      const remaining =
-        Number(item.orderedQty || 0) - Number(item.previousReceivedQty || 0);
-      return Number(item.receivedQty || 0) > remaining;
-    });
-
-    if (overReceived) {
-      alert("Received qty pending qty se zyada nahi ho sakti");
-      return false;
-    }
-
-    return true;
-  };
-
-  const buildPayload = () => {
-    const validItems = form.items
-      .filter((item) => Number(item.receivedQty || 0) > 0)
-      .map((item) => ({
-        item: item.item || null,
-        purchaseOrderItemId: item.purchaseOrderItemId || null,
-        description: String(item.description || "").trim(),
-        size: String(item.size || "").trim(),
-        orderedQty: Number(item.orderedQty || 0),
-        previousReceivedQty: Number(item.previousReceivedQty || 0),
-        receivedQty: Number(item.receivedQty || 0),
-        rejectedQty: Number(item.rejectedQty || 0),
-        acceptedQty: Number(item.acceptedQty || 0),
-        pendingQty: Number(item.pendingQty || 0),
-        unit: String(item.unit || "Pcs").trim(),
-        unitPrice: Number(item.unitPrice || 0),
-        amount: Number(item.amount || 0),
-        remarks: String(item.remarks || "").trim(),
-      }));
-
-    return {
-      grnNo: form.grnNo,
-      purchaseOrder: form.purchaseOrder,
-      purchaseOrderNo: form.purchaseOrderNo,
-      vendor: form.vendor || null,
-      vendorName: form.vendorName,
-      vendorPhone: form.vendorPhone,
-      receivedDate: form.receivedDate,
-      challanNo: form.challanNo,
-      invoiceNo: form.invoiceNo,
-      vehicleNo: form.vehicleNo,
-      warehouse: form.warehouse,
-      receivedBy: form.receivedBy,
-      checkedBy: form.checkedBy,
-      inspectionStatus: form.inspectionStatus,
-      status: form.status,
-      remarks: form.remarks,
-      items: validItems,
-      totalOrderedQty: totals.totalOrderedQty,
-      totalReceivedQty: totals.totalReceivedQty,
-      totalAcceptedQty: totals.totalAcceptedQty,
-      totalRejectedQty: totals.totalRejectedQty,
-      totalPendingQty: totals.totalPendingQty,
+        closeForm();
+      } catch (error) {
+        alert(
+          error.message ||
+            "Unable to save GRN"
+        );
+      } finally {
+        setSaving(
+          false
+        );
+      }
     };
-  };
 
-  const handleSubmit = async () => {
-    if (!validateForm()) return;
+  const edit =
+    async (
+      grn
+    ) => {
+      if (
+        grn.status !==
+          "Draft" ||
+        grn.stockPosted
+      ) {
+        alert(
+          "Only an unposted Draft GRN can be edited"
+        );
 
-    try {
-      setSaving(true);
+        return;
+      }
 
-      const payload = buildPayload();
+      setEditId(
+        grn._id
+      );
 
-      const url = editId
-        ? `${API_BASE_URL}/grns/update/${editId}`
-        : `${API_BASE_URL}/grns/add`;
+      setForm({
+        grnNo:
+          grn.grnNo ||
+          "",
 
-      const method = editId ? "PUT" : "POST";
+        purchaseOrder:
+          idOf(
+            grn.purchaseOrder
+          ),
 
-      await apiRequest(url, {
-        method,
-        body: JSON.stringify(payload),
+        purchaseOrderNo:
+          grn.purchaseOrderNo ||
+          "",
+
+        vendor:
+          idOf(
+            grn.vendor
+          ),
+
+        vendorName:
+          grn.vendorName ||
+          "",
+
+        vendorPhone:
+          grn.vendorPhone ||
+          "",
+
+        receivedDate:
+          grn.receivedDate ||
+          todayDate(),
+
+        challanNo:
+          grn.challanNo ||
+          "",
+
+        invoiceNo:
+          grn.invoiceNo ||
+          "",
+
+        vehicleNo:
+          grn.vehicleNo ||
+          "",
+
+        receivedBy:
+          grn.receivedBy ||
+          "",
+
+        checkedBy:
+          grn.checkedBy ||
+          "",
+
+        inspectionStatus:
+          grn.inspectionStatus ||
+          "Pending",
+
+        status:
+          "Draft",
+
+        remarks:
+          grn.remarks ||
+          "",
+
+        items:
+          (
+            grn.items ||
+            []
+          ).map(
+            (item) => ({
+              purchaseOrderItemId:
+                idOf(
+                  item.purchaseOrderItemId
+                ),
+
+              item:
+                idOf(
+                  item.item
+                ),
+
+              itemCode:
+                item.itemCode ||
+                item.item?.code ||
+                "",
+
+              itemName:
+                item.itemName ||
+                item.item?.name ||
+                item.description ||
+                "",
+
+              itemType:
+                item.itemType ||
+                item.item?.itemType ||
+                "",
+
+              warehouseId:
+                idOf(
+                  item.warehouseId
+                ),
+
+              warehouse:
+                item.warehouse ||
+                "",
+
+              description:
+                item.description ||
+                "",
+
+              size:
+                item.size ||
+                "",
+
+              orderedQty:
+                numberValue(
+                  item.orderedQty
+                ),
+
+              previousReceivedQty:
+                numberValue(
+                  item.previousReceivedQty
+                ),
+
+              pendingBeforeQty:
+                Math.max(
+                  numberValue(
+                    item.orderedQty
+                  ) -
+                    numberValue(
+                      item.previousReceivedQty
+                    ),
+                  0
+                ),
+
+              receivedQty:
+                String(
+                  item.receivedQty ??
+                    ""
+                ),
+
+              rejectedQty:
+                String(
+                  item.rejectedQty ??
+                    ""
+                ),
+
+              acceptedQty:
+                numberValue(
+                  item.acceptedQty
+                ),
+
+              pendingQty:
+                numberValue(
+                  item.pendingQty
+                ),
+
+              unit:
+                item.unit ||
+                "Pcs",
+
+              unitPrice:
+                numberValue(
+                  item.unitPrice
+                ),
+
+              amount:
+                numberValue(
+                  item.amount
+                ),
+
+              remarks:
+                item.remarks ||
+                "",
+            })
+          ),
       });
 
-      await fetchGrns();
-      await fetchPurchaseOrders();
-      closeForm();
-    } catch (error) {
-      console.error("GRN Save Error:", error);
-      alert(error.message || "GRN save nahi hua");
-    } finally {
-      setSaving(false);
+      setShowForm(
+        true
+      );
+    };
+
+  const postStock =
+    async (
+      grn
+    ) => {
+      if (
+        grn.inspectionStatus ===
+        "Pending"
+      ) {
+        alert(
+          "Edit the GRN and complete inspection first"
+        );
+
+        return;
+      }
+
+      const nextStatus =
+        numberValue(
+          grn.totalPendingQty
+        ) > 0
+          ? "Partially Received"
+          : "Completed";
+
+      if (
+        !window.confirm(
+          `Post ${grn.grnNo} stock now?`
+        )
+      ) {
+        return;
+      }
+
+      try {
+        setActionId(
+          grn._id
+        );
+
+        await apiRequest(
+          `${API_GRN}/status/${grn._id}`,
+
+          {
+            method:
+              "PATCH",
+
+            body:
+              JSON.stringify({
+                status:
+                  nextStatus,
+              }),
+          }
+        );
+
+        await refresh();
+      } catch (error) {
+        alert(
+          error.message ||
+            "Unable to post GRN stock"
+        );
+      } finally {
+        setActionId(
+          ""
+        );
+      }
+    };
+
+  const cancel =
+    async (
+      grn
+    ) => {
+      const reason =
+        window.prompt(
+          "Cancellation reason:",
+          ""
+        );
+
+      if (
+        reason === null
+      ) {
+        return;
+      }
+
+      try {
+        setActionId(
+          grn._id
+        );
+
+        await apiRequest(
+          `${API_GRN}/status/${grn._id}`,
+
+          {
+            method:
+              "PATCH",
+
+            body:
+              JSON.stringify({
+                status:
+                  "Cancelled",
+
+                cancelReason:
+                  reason.trim() ||
+                  "GRN cancelled",
+              }),
+          }
+        );
+
+        await refresh();
+      } catch (error) {
+        alert(
+          error.message ||
+            "Unable to cancel GRN"
+        );
+      } finally {
+        setActionId(
+          ""
+        );
+      }
+    };
+
+  const remove =
+    async (
+      grn
+    ) => {
+      if (
+        !window.confirm(
+          `Delete ${grn.grnNo}?`
+        )
+      ) {
+        return;
+      }
+
+      try {
+        setActionId(
+          grn._id
+        );
+
+        await apiRequest(
+          `${API_GRN}/delete/${grn._id}`,
+
+          {
+            method:
+              "DELETE",
+          }
+        );
+
+        await refresh();
+      } catch (error) {
+        alert(
+          error.message ||
+            "Unable to delete GRN"
+        );
+      } finally {
+        setActionId(
+          ""
+        );
+      }
+    };
+
+  const printGrn = (
+    grn
+  ) => {
+    const printWindow =
+      window.open(
+        "",
+        "_blank",
+        "width=1100,height=850"
+      );
+
+    if (
+      !printWindow
+    ) {
+      alert(
+        "Allow pop-ups and try again"
+      );
+
+      return;
     }
-  };
 
-  const handleEdit = async (grn) => {
-    await fetchPurchaseOrders();
-
-    setEditId(grn._id);
-
-    setForm({
-      grnNo: grn.grnNo || "",
-      purchaseOrder: grn.purchaseOrder?._id || grn.purchaseOrder || "",
-      purchaseOrderNo: grn.purchaseOrderNo || "",
-      vendor: grn.vendor?._id || grn.vendor || "",
-      vendorName: grn.vendorName || "",
-      vendorPhone: grn.vendorPhone || "",
-      receivedDate: grn.receivedDate || todayDate(),
-      challanNo: grn.challanNo || "",
-      invoiceNo: grn.invoiceNo || "",
-      vehicleNo: grn.vehicleNo || "",
-      warehouse: grn.warehouse || "Main Godown",
-      receivedBy: grn.receivedBy || "",
-      checkedBy: grn.checkedBy || "",
-      inspectionStatus: grn.inspectionStatus || "Pending",
-      status: grn.status || "Draft",
-      remarks: grn.remarks || "",
-      items: grn.items?.length
-        ? grn.items.map((row) => ({
-            item: row.item?._id || row.item || null,
-            purchaseOrderItemId: row.purchaseOrderItemId || null,
-            description: row.description || "",
-            size: row.size || "",
-            orderedQty: row.orderedQty || 0,
-            previousReceivedQty: row.previousReceivedQty || 0,
-            receivedQty: row.receivedQty || "",
-            rejectedQty: row.rejectedQty || "",
-            acceptedQty: row.acceptedQty || 0,
-            pendingQty: row.pendingQty || 0,
-            unit: row.unit || "Pcs",
-            unitPrice: row.unitPrice || 0,
-            amount: row.amount || 0,
-            remarks: row.remarks || "",
-          }))
-        : [],
-    });
-
-    setShowForm(true);
-  };
-
-  const handleDelete = async (id) => {
-    if (!window.confirm("Are you sure you want to delete this GRN?")) return;
-
-    try {
-      await apiRequest(`${API_BASE_URL}/grns/delete/${id}`, {
-        method: "DELETE",
-      });
-
-      await fetchGrns();
-      await fetchPurchaseOrders();
-    } catch (error) {
-      alert(error.message || "GRN delete nahi hua");
-    }
-  };
-
-  const printGrn = (grn) => {
-    const rows = (grn.items || [])
-      .map(
-        (item, index) => `
-          <tr>
-            <td>${index + 1}</td>
-            <td>${item.description || ""}</td>
-            <td>${item.size || ""}</td>
-            <td>${item.orderedQty || 0}</td>
-            <td>${item.receivedQty || 0}</td>
-            <td>${item.acceptedQty || 0}</td>
-            <td>${item.rejectedQty || 0}</td>
-            <td>${item.pendingQty || 0}</td>
-            <td>${item.unit || ""}</td>
-            <td>${item.remarks || ""}</td>
-          </tr>
-        `
+    const rows =
+      (
+        grn.items ||
+        []
       )
-      .join("");
+        .map(
+          (
+            item,
+            index
+          ) => `
+            <tr>
+              <td>${index + 1}</td>
 
-    const printWindow = window.open("", "_blank");
+              <td>
+                <b>${escapeHtml(
+                  item.itemName ||
+                    item.description
+                )}</b><br>
+
+                ${escapeHtml(
+                  item.itemCode ||
+                    ""
+                )}
+              </td>
+
+              <td>${escapeHtml(
+                item.itemType ||
+                  ""
+              )}</td>
+
+              <td>${escapeHtml(
+                item.warehouse ||
+                  ""
+              )}</td>
+
+              <td>${quantity(
+                item.receivedQty
+              )}</td>
+
+              <td>${quantity(
+                item.acceptedQty
+              )}</td>
+
+              <td>${quantity(
+                item.rejectedQty
+              )}</td>
+
+              <td>${quantity(
+                item.pendingQty
+              )}</td>
+
+              <td>${escapeHtml(
+                item.unit ||
+                  ""
+              )}</td>
+            </tr>
+          `
+        )
+        .join("");
 
     printWindow.document.write(`
+      <!doctype html>
+
       <html>
         <head>
-          <title>${grn.grnNo}</title>
+          <meta charset="utf-8">
+
+          <title>${escapeHtml(
+            grn.grnNo
+          )}</title>
+
           <style>
             @page {
               size: A4 landscape;
-              margin: 8mm;
+              margin: 9mm;
             }
 
-            * {
-              box-sizing: border-box;
-            }
-
-            html,
             body {
-              margin: 0;
-              padding: 0;
-              background: #ffffff;
+              font-family: Arial;
+              font-size: 12px;
               color: #111827;
-              font-family: Arial, Helvetica, sans-serif;
-              font-size: 15px;
-              font-weight: 700;
-              line-height: 1.45;
-              -webkit-print-color-adjust: exact;
-              print-color-adjust: exact;
             }
 
-            body {
-              padding: 6mm;
-            }
-
-            b,
-            strong {
-              font-weight: 900;
-            }
-
-            .top {
-              display: flex;
-              justify-content: space-between;
-              align-items: flex-start;
-              gap: 30px;
-              border-bottom: 2.5px solid #111827;
-              padding-bottom: 12px;
-            }
-
-            h1 {
-              margin: 0;
-              font-size: 34px;
-              line-height: 1.1;
-              font-weight: 900;
-            }
-
+            h1,
             h2 {
               text-align: center;
-              margin: 18px 0 15px;
-              font-size: 24px;
-              line-height: 1.2;
-              font-weight: 900;
-              text-decoration: underline;
-            }
-
-            .small {
-              font-size: 14px;
-              color: #111827;
-              line-height: 1.65;
-              font-weight: 800;
-            }
-
-            .box {
-              border: 1.5px solid #111827;
-              padding: 11px 13px;
-              margin: 12px 0;
-              font-size: 15px;
-              line-height: 1.65;
-              font-weight: 700;
-              break-inside: avoid;
-              page-break-inside: avoid;
             }
 
             table {
               width: 100%;
               border-collapse: collapse;
-              table-layout: auto;
-              margin-top: 12px;
-              break-inside: avoid;
-              page-break-inside: avoid;
             }
 
             th,
             td {
-              border: 1.3px solid #111827;
-              padding: 8px;
-              font-size: 14px;
-              line-height: 1.35;
-              text-align: left;
-              vertical-align: middle;
-              font-weight: 700;
+              border: 1px solid #111;
+              padding: 7px;
             }
 
             th {
-              background: #f3f4f6;
-              font-size: 14px;
-              font-weight: 900;
-              white-space: nowrap;
+              background: #e5e7eb;
             }
 
-            .summary {
-              width: 390px;
-              margin-left: auto;
-              margin-top: 14px;
-              font-size: 15px;
-              font-weight: 800;
-              break-inside: avoid;
-              page-break-inside: avoid;
-            }
-
-            .summary div {
+            .header {
               display: flex;
               justify-content: space-between;
-              align-items: center;
-              gap: 24px;
-              border-bottom: 1.2px solid #9ca3af;
-              padding: 7px 0;
-            }
-
-            .summary div:last-child {
-              border-top: 2px solid #111827;
-              border-bottom: 2px solid #111827;
-              font-size: 16px;
-              font-weight: 900;
-            }
-
-            body > p {
-              margin-top: 18px;
-              font-size: 15px;
-              font-weight: 800;
-            }
-
-            .sign {
-              margin-top: 42px;
-              display: flex;
-              justify-content: space-between;
-              gap: 30px;
-              font-size: 15px;
-              font-weight: 800;
-              break-inside: avoid;
-              page-break-inside: avoid;
-            }
-
-            @media print {
-              html,
-              body {
-                width: 100%;
-              }
-
-              .top,
-              .box,
-              table,
-              .summary,
-              .sign {
-                break-inside: avoid;
-                page-break-inside: avoid;
-              }
+              border-bottom: 2px solid #111;
+              padding-bottom: 10px;
             }
           </style>
         </head>
 
         <body>
-          <div class="top">
+          <div class="header">
             <div>
-              <h1>Urwa Packages</h1>
-              <div class="small">Goods Receiving Note</div>
+              <h2>Muddasir Packages</h2>
+
+              <b>Goods Receiving Note</b>
             </div>
 
-            <div class="small">
-              <b>GRN No:</b> ${grn.grnNo || ""}<br/>
-              <b>GRN Date:</b> ${grn.receivedDate || ""}<br/>
-              <b>PO No:</b> ${grn.purchaseOrderNo || ""}<br/>
-              <b>Status:</b> ${grn.status || ""}
+            <div>
+              <b>GRN:</b>
+              ${escapeHtml(
+                grn.grnNo
+              )}<br>
+
+              <b>PO:</b>
+              ${escapeHtml(
+                grn.purchaseOrderNo
+              )}<br>
+
+              <b>Date:</b>
+              ${escapeHtml(
+                grn.receivedDate
+              )}
             </div>
           </div>
 
-          <h2>GOODS RECEIVING NOTE</h2>
+          <p>
+            <b>Vendor:</b>
+            ${escapeHtml(
+              grn.vendorName
+            )}
 
-          <div class="box">
-            <b>Vendor Name:</b> ${grn.vendorName || ""}<br/>
-            <b>Vendor Phone:</b> ${grn.vendorPhone || ""}<br/>
-            <b>Challan No:</b> ${grn.challanNo || ""}<br/>
-            <b>Invoice No:</b> ${grn.invoiceNo || ""}<br/>
-            <b>Vehicle No:</b> ${grn.vehicleNo || ""}<br/>
-            <b>Warehouse:</b> ${grn.warehouse || ""}<br/>
-            <b>Received By:</b> ${grn.receivedBy || ""}<br/>
-            <b>Checked By:</b> ${grn.checkedBy || ""}<br/>
-            <b>Inspection Status:</b> ${grn.inspectionStatus || ""}
-          </div>
+            &nbsp;
+
+            <b>Receipt Type:</b>
+            ${escapeHtml(
+              grn.receiptType
+            )}
+          </p>
 
           <table>
             <thead>
               <tr>
-                <th>Sr</th>
-                <th>Description</th>
-                <th>Size</th>
-                <th>Ordered</th>
+                <th>#</th>
+                <th>Item</th>
+                <th>Type</th>
+                <th>Warehouse</th>
                 <th>Received</th>
                 <th>Accepted</th>
                 <th>Rejected</th>
                 <th>Pending</th>
                 <th>Unit</th>
-                <th>Remarks</th>
               </tr>
             </thead>
-            <tbody>${rows}</tbody>
+
+            <tbody>
+              ${rows}
+            </tbody>
           </table>
 
-          <div class="summary">
-            <div><span>Total Ordered Qty</span><b>${grn.totalOrderedQty || grn.totals?.totalOrderedQty || 0}</b></div>
-            <div><span>Total Received Qty</span><b>${grn.totalReceivedQty || grn.totals?.totalReceivedQty || 0}</b></div>
-            <div><span>Total Accepted Qty</span><b>${grn.totalAcceptedQty || grn.totals?.totalAcceptedQty || 0}</b></div>
-            <div><span>Total Rejected Qty</span><b>${grn.totalRejectedQty || grn.totals?.totalRejectedQty || 0}</b></div>
-            <div><span>Total Pending Qty</span><b>${grn.totalPendingQty || grn.totals?.totalPendingQty || 0}</b></div>
-          </div>
+          <p>
+            <b>Remarks:</b>
+            ${escapeHtml(
+              grn.remarks ||
+                "-"
+            )}
+          </p>
 
-          <p><b>Remarks:</b> ${grn.remarks || ""}</p>
-
-          <div class="sign">
-            <div>Store Incharge: __________________</div>
-            <div>Quality Checked By: __________________</div>
-            <div>Approved By: __________________</div>
-          </div>
-
-          <script>window.print();</script>
+          <script>
+            window.print();
+          </script>
         </body>
       </html>
     `);
@@ -786,376 +1676,655 @@ const GRN = () => {
     printWindow.document.close();
   };
 
-  if (showForm) {
+  if (
+    showForm
+  ) {
     return (
-      <div className="w-full space-y-6">
-        <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-5">
-          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 border-b border-slate-200 pb-4">
+      <div className="w-full space-y-5 p-3 sm:p-5">
+        <div className="rounded-xl border bg-white shadow-sm">
+          <div className="flex items-center justify-between border-b p-5">
             <div>
               <button
-                onClick={closeForm}
-                className="inline-flex items-center gap-2 text-sm text-slate-600 hover:text-slate-900 mb-3"
+                type="button"
+                onClick={
+                  closeForm
+                }
+                className="mb-2 flex items-center gap-2 text-sm text-slate-600"
               >
-                <ArrowLeft size={17} />
+                <ArrowLeft
+                  size={17}
+                />
+
                 Back to GRN List
               </button>
 
-              <h1 className="text-2xl font-bold text-slate-900">
-                {editId ? "Edit GRN" : "New Goods Receiving Note"}
+              <h1 className="text-2xl font-bold">
+                {editId
+                  ? "Edit GRN"
+                  : "New GRN"}
               </h1>
-
-              <p className="text-sm text-slate-500 mt-1">
-                Purchase order select karein, received/rejected qty enter karein.
-              </p>
             </div>
 
             <button
-              onClick={closeForm}
-              className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-xl border border-slate-200 hover:bg-slate-50"
+              type="button"
+              onClick={
+                closeForm
+              }
+              className="rounded-lg border p-2"
             >
-              <X size={18} />
-              Cancel
+              <X
+                size={18}
+              />
             </button>
           </div>
 
-          <div className="pt-5 space-y-6">
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-              <div>
-                <RequiredLabel>GRN No</RequiredLabel>
+          <div className="space-y-6 p-5">
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+              <Field
+                label="GRN Number"
+                required
+              >
                 <input
-                  value={form.grnNo}
-                  onChange={(e) => setForm({ ...form, grnNo: e.target.value })}
-                  className="w-full border rounded-lg px-3 py-2 mt-1"
-                  placeholder="GRN-0001"
+                  value={
+                    form.grnNo
+                  }
+                  readOnly
+                  className={
+                    inputClass
+                  }
                 />
-              </div>
+              </Field>
 
-              <div>
-                <RequiredLabel>Purchase Order</RequiredLabel>
+              <Field
+                label="Purchase Order"
+                required
+              >
                 <select
-                  value={form.purchaseOrder}
-                  onChange={(e) => handlePurchaseOrderSelect(e.target.value)}
-                  className="w-full border rounded-lg px-3 py-2 mt-1"
-                  disabled={!!editId}
+                  value={
+                    form.purchaseOrder
+                  }
+                  disabled={
+                    Boolean(
+                      editId
+                    )
+                  }
+                  onChange={(
+                    event
+                  ) =>
+                    selectPurchaseOrder(
+                      event.target.value
+                    )
+                  }
+                  className={
+                    inputClass
+                  }
                 >
                   <option value="">
-                    {poLoading ? "Loading purchase orders..." : "Select Purchase Order"}
+                    Select Purchase Order
                   </option>
 
-                  {purchaseOrders.map((order) => (
-                    <option key={order._id} value={order._id}>
-                      {getOrderNo(order)} - {getVendorName(order)}
-                    </option>
-                  ))}
+                  {purchaseOrders.map(
+                    (order) => (
+                      <option
+                        key={
+                          order._id
+                        }
+                        value={
+                          order._id
+                        }
+                      >
+                        {
+                          order.purchaseOrderNo
+                        }{" "}
+                        —{" "}
+                        {
+                          order.vendorName
+                        }
+                      </option>
+                    )
+                  )}
                 </select>
-              </div>
+              </Field>
 
-              <div>
-                <RequiredLabel>Received Date</RequiredLabel>
+              <Field
+                label="Received Date"
+                required
+              >
                 <input
                   type="date"
-                  value={form.receivedDate}
-                  onChange={(e) =>
-                    setForm({ ...form, receivedDate: e.target.value })
+                  value={
+                    form.receivedDate
                   }
-                  className="w-full border rounded-lg px-3 py-2 mt-1"
-                />
-              </div>
-
-              <div>
-                <RequiredLabel>Warehouse</RequiredLabel>
-                <select
-                  value={form.warehouse}
-                  onChange={(e) => setForm({ ...form, warehouse: e.target.value })}
-                  className="w-full border rounded-lg px-3 py-2 mt-1"
-                >
-                  <option>Main Godown</option>
-                  <option>Raw Material Store</option>
-                  <option>Finished Goods Store</option>
-                  <option>UrwaGodam</option>
-                </select>
-              </div>
-
-              <div>
-                <NormalLabel>Vendor Name</NormalLabel>
-                <input
-                  value={form.vendorName}
-                  readOnly
-                  className="w-full border rounded-lg px-3 py-2 mt-1 bg-slate-50"
-                />
-              </div>
-
-              <div>
-                <NormalLabel>Vendor Phone</NormalLabel>
-                <input
-                  value={form.vendorPhone}
-                  readOnly
-                  className="w-full border rounded-lg px-3 py-2 mt-1 bg-slate-50"
-                />
-              </div>
-
-              <div>
-                <NormalLabel>Supplier Challan No</NormalLabel>
-                <input
-                  value={form.challanNo}
-                  onChange={(e) => setForm({ ...form, challanNo: e.target.value })}
-                  className="w-full border rounded-lg px-3 py-2 mt-1"
-                  placeholder="Challan number"
-                />
-              </div>
-
-              <div>
-                <NormalLabel>Supplier Invoice No</NormalLabel>
-                <input
-                  value={form.invoiceNo}
-                  onChange={(e) => setForm({ ...form, invoiceNo: e.target.value })}
-                  className="w-full border rounded-lg px-3 py-2 mt-1"
-                  placeholder="Invoice number"
-                />
-              </div>
-
-              <div>
-                <NormalLabel>Vehicle No</NormalLabel>
-                <input
-                  value={form.vehicleNo}
-                  onChange={(e) => setForm({ ...form, vehicleNo: e.target.value })}
-                  className="w-full border rounded-lg px-3 py-2 mt-1"
-                  placeholder="LES-1234"
-                />
-              </div>
-
-              <div>
-                <NormalLabel>Received By</NormalLabel>
-                <input
-                  value={form.receivedBy}
-                  onChange={(e) => setForm({ ...form, receivedBy: e.target.value })}
-                  className="w-full border rounded-lg px-3 py-2 mt-1"
-                  placeholder="Store person name"
-                />
-              </div>
-
-              <div>
-                <NormalLabel>Checked By</NormalLabel>
-                <input
-                  value={form.checkedBy}
-                  onChange={(e) => setForm({ ...form, checkedBy: e.target.value })}
-                  className="w-full border rounded-lg px-3 py-2 mt-1"
-                  placeholder="QC person name"
-                />
-              </div>
-
-              <div>
-                <RequiredLabel>Inspection Status</RequiredLabel>
-                <select
-                  value={form.inspectionStatus}
-                  onChange={(e) =>
-                    setForm({ ...form, inspectionStatus: e.target.value })
+                  onChange={(
+                    event
+                  ) =>
+                    updateField(
+                      "receivedDate",
+                      event.target.value
+                    )
                   }
-                  className="w-full border rounded-lg px-3 py-2 mt-1"
-                >
-                  <option>Pending</option>
-                  <option>Passed</option>
-                  <option>Partially Accepted</option>
-                  <option>Rejected</option>
-                </select>
-              </div>
+                  className={
+                    inputClass
+                  }
+                />
+              </Field>
 
-              <div>
-                <RequiredLabel>GRN Status</RequiredLabel>
+              <Field label="Warehouse Routing">
+                <input
+                  value={
+                    warehouseSummary
+                  }
+                  readOnly
+                  className={
+                    inputClass
+                  }
+                />
+              </Field>
+
+              <Field label="Vendor">
+                <input
+                  value={
+                    form.vendorName
+                  }
+                  readOnly
+                  className={
+                    inputClass
+                  }
+                />
+              </Field>
+
+              <Field label="Vendor Phone">
+                <input
+                  value={
+                    form.vendorPhone
+                  }
+                  readOnly
+                  className={
+                    inputClass
+                  }
+                />
+              </Field>
+
+              <Field label="Supplier Challan">
+                <input
+                  value={
+                    form.challanNo
+                  }
+                  onChange={(
+                    event
+                  ) =>
+                    updateField(
+                      "challanNo",
+                      event.target.value
+                    )
+                  }
+                  className={
+                    inputClass
+                  }
+                />
+              </Field>
+
+              <Field label="Supplier Invoice">
+                <input
+                  value={
+                    form.invoiceNo
+                  }
+                  onChange={(
+                    event
+                  ) =>
+                    updateField(
+                      "invoiceNo",
+                      event.target.value
+                    )
+                  }
+                  className={
+                    inputClass
+                  }
+                />
+              </Field>
+
+              <Field label="Vehicle Number">
+                <input
+                  value={
+                    form.vehicleNo
+                  }
+                  onChange={(
+                    event
+                  ) =>
+                    updateField(
+                      "vehicleNo",
+                      event.target.value
+                    )
+                  }
+                  className={
+                    inputClass
+                  }
+                />
+              </Field>
+
+              <Field label="Received By">
+                <input
+                  value={
+                    form.receivedBy
+                  }
+                  onChange={(
+                    event
+                  ) =>
+                    updateField(
+                      "receivedBy",
+                      event.target.value
+                    )
+                  }
+                  className={
+                    inputClass
+                  }
+                />
+              </Field>
+
+              <Field label="Checked By">
+                <input
+                  value={
+                    form.checkedBy
+                  }
+                  onChange={(
+                    event
+                  ) =>
+                    updateField(
+                      "checkedBy",
+                      event.target.value
+                    )
+                  }
+                  className={
+                    inputClass
+                  }
+                />
+              </Field>
+
+              <Field
+                label="Inspection Status"
+                required
+              >
                 <select
-                  value={form.status}
-                  onChange={(e) => setForm({ ...form, status: e.target.value })}
-                  className="w-full border rounded-lg px-3 py-2 mt-1"
+                  value={
+                    form.inspectionStatus
+                  }
+                  onChange={(
+                    event
+                  ) =>
+                    updateField(
+                      "inspectionStatus",
+                      event.target.value
+                    )
+                  }
+                  className={
+                    inputClass
+                  }
                 >
-                  <option>Draft</option>
-                  <option>Received</option>
-                  <option>Partially Received</option>
-                  <option>Completed</option>
-                  <option>Cancelled</option>
+                  <option value="Pending">
+                    Pending
+                  </option>
+
+                  <option value="Passed">
+                    Passed
+                  </option>
+
+                  <option value="Partially Accepted">
+                    Partially Accepted
+                  </option>
+
+                  <option value="Rejected">
+                    Rejected
+                  </option>
                 </select>
-              </div>
+              </Field>
+
+              <Field
+                label="GRN Status"
+                required
+              >
+                <select
+                  value={
+                    form.status
+                  }
+                  onChange={(
+                    event
+                  ) =>
+                    updateField(
+                      "status",
+                      event.target.value
+                    )
+                  }
+                  className={
+                    inputClass
+                  }
+                >
+                  <option value="Draft">
+                    Draft
+                  </option>
+
+                  <option value="Received">
+                    Received and Post Stock
+                  </option>
+
+                  <option value="Partially Received">
+                    Partially Received and Post Stock
+                  </option>
+
+                  <option value="Completed">
+                    Completed and Post Stock
+                  </option>
+                </select>
+              </Field>
             </div>
 
-            <div className="border rounded-xl overflow-hidden">
-              <div className="bg-slate-50 px-4 py-3 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-                <div>
-                  <h3 className="font-bold flex items-center gap-2">
-                    <PackageCheck size={18} className="text-blue-600" />
-                    Received Items
-                  </h3>
-                  <p className="text-xs text-slate-500">
-                    Item ID purchase order se aa raha hai. GRN save hone ke baad backend same item ko update karega.
-                  </p>
-                </div>
+            <div className="overflow-x-auto rounded-xl border">
+              <table className="w-full min-w-[1400px] text-left text-xs">
+                <thead className="bg-slate-800 text-white">
+                  <tr>
+                    <th className="p-3">
+                      Item
+                    </th>
 
-                <div className="text-xs bg-white border rounded-lg px-3 py-2 text-slate-600">
-                  PO No: <b>{form.purchaseOrderNo || "Not selected"}</b>
-                </div>
-              </div>
+                    <th className="p-3">
+                      Type
+                    </th>
 
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="bg-white border-b text-slate-600">
-                      <th className="p-2 text-left">Item Description</th>
-                      <th className="p-2 text-left">Size</th>
-                      <th className="p-2 text-right">Ordered</th>
-                      <th className="p-2 text-right">Previous Rec.</th>
-                      <th className="p-2 text-right">Pending</th>
-                      <th className="p-2 text-right">
-                        Received <span className="text-red-600">*</span>
-                      </th>
-                      <th className="p-2 text-right">Rejected</th>
-                      <th className="p-2 text-right">Accepted</th>
-                      <th className="p-2 text-left">Unit</th>
-                      <th className="p-2 text-left">Remarks</th>
+                    <th className="p-3">
+                      Warehouse
+                    </th>
+
+                    <th className="p-3">
+                      Ordered
+                    </th>
+
+                    <th className="p-3">
+                      Previous
+                    </th>
+
+                    <th className="p-3">
+                      Pending Before
+                    </th>
+
+                    <th className="p-3">
+                      Received
+                    </th>
+
+                    <th className="p-3">
+                      Rejected
+                    </th>
+
+                    <th className="p-3">
+                      Accepted
+                    </th>
+
+                    <th className="p-3">
+                      Pending After
+                    </th>
+
+                    <th className="p-3">
+                      Unit
+                    </th>
+
+                    <th className="p-3">
+                      Remarks
+                    </th>
+                  </tr>
+                </thead>
+
+                <tbody>
+                  {!form.items.length ? (
+                    <tr>
+                      <td
+                        colSpan="12"
+                        className="p-8 text-center text-slate-400"
+                      >
+                        Select a Purchase Order
+                      </td>
                     </tr>
-                  </thead>
+                  ) : (
+                    form.items.map(
+                      (
+                        item,
+                        index
+                      ) => (
+                        <tr
+                          key={
+                            item.purchaseOrderItemId ||
+                            index
+                          }
+                          className="border-t"
+                        >
+                          <td className="p-3">
+                            <b>
+                              {
+                                item.itemName
+                              }
+                            </b>
 
-                  <tbody>
-                    {form.items.length === 0 ? (
-                      <tr>
-                        <td colSpan="10" className="p-8 text-center text-slate-500">
-                          Purchase Order select karein. Items yahan auto load honge.
-                        </td>
-                      </tr>
-                    ) : (
-                      form.items.map((item, index) => (
-                        <tr key={index} className="border-b hover:bg-slate-50">
-                          <td className="p-2 min-w-[230px]">
-                            <div className="font-semibold text-slate-800">
-                              {item.description || "N/A"}
+                            <div className="text-[10px] text-blue-600">
+                              {
+                                item.itemCode
+                              }
                             </div>
-
-                            <div className="text-xs text-slate-500">
-                              Rate: {money(item.unitPrice)}
-                            </div>
                           </td>
 
-                          <td className="p-2 min-w-[120px]">{item.size || "-"}</td>
-
-                          <td className="p-2 text-right font-bold">
-                            {item.orderedQty}
+                          <td className="p-3">
+                            {
+                              item.itemType
+                            }
                           </td>
 
-                          <td className="p-2 text-right font-bold text-slate-500">
-                            {item.previousReceivedQty || 0}
+                          <td className="p-3 font-semibold">
+                            {
+                              item.warehouse
+                            }
                           </td>
 
-                          <td className="p-2 text-right font-bold text-orange-600">
-                            {Math.max(
-                              Number(item.orderedQty || 0) -
-                                Number(item.previousReceivedQty || 0),
-                              0
+                          <td className="p-3">
+                            {quantity(
+                              item.orderedQty
                             )}
                           </td>
 
-                          <td className="p-2 min-w-[110px]">
+                          <td className="p-3">
+                            {quantity(
+                              item.previousReceivedQty
+                            )}
+                          </td>
+
+                          <td className="p-3 font-bold text-orange-700">
+                            {quantity(
+                              item.pendingBeforeQty
+                            )}
+                          </td>
+
+                          <td className="p-3">
                             <input
                               type="number"
-                              value={item.receivedQty}
-                              onChange={(e) =>
-                                updateItem(index, "receivedQty", e.target.value)
+                              min="0"
+                              value={
+                                item.receivedQty
                               }
-                              className="w-full border rounded px-2 py-1.5 text-right"
-                              placeholder="0"
+                              onChange={(
+                                event
+                              ) =>
+                                updateItem(
+                                  index,
+                                  "receivedQty",
+                                  event.target.value
+                                )
+                              }
+                              className={
+                                inputClass
+                              }
                             />
                           </td>
 
-                          <td className="p-2 min-w-[110px]">
+                          <td className="p-3">
                             <input
                               type="number"
-                              value={item.rejectedQty}
-                              onChange={(e) =>
-                                updateItem(index, "rejectedQty", e.target.value)
+                              min="0"
+                              value={
+                                item.rejectedQty
                               }
-                              className="w-full border rounded px-2 py-1.5 text-right"
-                              placeholder="0"
+                              onChange={(
+                                event
+                              ) =>
+                                updateItem(
+                                  index,
+                                  "rejectedQty",
+                                  event.target.value
+                                )
+                              }
+                              className={
+                                inputClass
+                              }
                             />
                           </td>
 
-                          <td className="p-2 text-right font-bold text-emerald-600">
-                            {item.acceptedQty}
+                          <td className="p-3 font-bold text-emerald-700">
+                            {quantity(
+                              item.acceptedQty
+                            )}
                           </td>
 
-                          <td className="p-2">{item.unit}</td>
+                          <td className="p-3 font-bold text-orange-700">
+                            {quantity(
+                              item.pendingQty
+                            )}
+                          </td>
 
-                          <td className="p-2 min-w-[180px]">
+                          <td className="p-3">
+                            {
+                              item.unit
+                            }
+                          </td>
+
+                          <td className="p-3">
                             <input
-                              value={item.remarks}
-                              onChange={(e) =>
-                                updateItem(index, "remarks", e.target.value)
+                              value={
+                                item.remarks
                               }
-                              className="w-full border rounded px-2 py-1.5"
-                              placeholder="Item remarks"
+                              onChange={(
+                                event
+                              ) =>
+                                updateItem(
+                                  index,
+                                  "remarks",
+                                  event.target.value
+                                )
+                              }
+                              className={
+                                inputClass
+                              }
                             />
                           </td>
                         </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
-              </div>
+                      )
+                    )
+                  )}
+                </tbody>
+              </table>
             </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-              <div>
-                <NormalLabel>Overall Remarks</NormalLabel>
+            <div className="grid gap-5 lg:grid-cols-2">
+              <Field label="Remarks">
                 <textarea
-                  value={form.remarks}
-                  onChange={(e) => setForm({ ...form, remarks: e.target.value })}
-                  className="w-full border rounded-lg px-3 py-2 mt-1 min-h-[150px]"
-                  placeholder="Any receiving, quality or shortage remarks..."
+                  rows="5"
+                  value={
+                    form.remarks
+                  }
+                  onChange={(
+                    event
+                  ) =>
+                    updateField(
+                      "remarks",
+                      event.target.value
+                    )
+                  }
+                  className={
+                    inputClass
+                  }
+                />
+              </Field>
+
+              <div className="space-y-2 rounded-xl bg-slate-50 p-5">
+                <Total
+                  label="Received"
+                  value={quantity(
+                    totals.received
+                  )}
+                />
+
+                <Total
+                  label="Accepted"
+                  value={quantity(
+                    totals.accepted
+                  )}
+                />
+
+                <Total
+                  label="Rejected"
+                  value={quantity(
+                    totals.rejected
+                  )}
+                />
+
+                <Total
+                  label="Pending"
+                  value={quantity(
+                    totals.pending
+                  )}
+                />
+
+                <Total
+                  label="Accepted Value"
+                  value={money(
+                    totals.value
+                  )}
+                  strong
                 />
               </div>
-
-              <div className="bg-slate-50 rounded-xl p-5 space-y-3">
-                <div className="flex justify-between">
-                  <span>Total Ordered Qty</span>
-                  <b>{totals.totalOrderedQty}</b>
-                </div>
-
-                <div className="flex justify-between">
-                  <span>Total Received Qty</span>
-                  <b className="text-blue-700">{totals.totalReceivedQty}</b>
-                </div>
-
-                <div className="flex justify-between">
-                  <span>Total Accepted Qty</span>
-                  <b className="text-emerald-600">{totals.totalAcceptedQty}</b>
-                </div>
-
-                <div className="flex justify-between">
-                  <span>Total Rejected Qty</span>
-                  <b className="text-red-600">{totals.totalRejectedQty}</b>
-                </div>
-
-                <div className="flex justify-between text-lg border-t pt-3">
-                  <span>Total Pending Qty</span>
-                  <b className="text-orange-600">{totals.totalPendingQty}</b>
-                </div>
-              </div>
             </div>
 
-            <div className="border-t pt-5 flex justify-end gap-3">
+            <div className="flex justify-end gap-3 border-t pt-5">
               <button
-                onClick={closeForm}
-                className="px-5 py-2.5 rounded-xl border hover:bg-slate-50"
+                type="button"
+                onClick={
+                  closeForm
+                }
+                className="rounded-lg border px-6 py-2.5"
               >
                 Cancel
               </button>
 
               <button
-                onClick={handleSubmit}
-                disabled={saving}
-                className="px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-semibold flex items-center gap-2 disabled:opacity-60"
+                type="button"
+                onClick={
+                  save
+                }
+                disabled={
+                  saving
+                }
+                className="flex items-center gap-2 rounded-lg bg-blue-700 px-6 py-2.5 font-bold text-white disabled:opacity-60"
               >
                 {saving ? (
-                  <Loader2 className="animate-spin" size={18} />
+                  <Loader2
+                    size={17}
+                    className="animate-spin"
+                  />
                 ) : (
-                  <Save size={18} />
+                  <Save
+                    size={17}
+                  />
                 )}
-                {saving ? "Saving..." : "Save GRN"}
+
+                {editId
+                  ? "Update GRN"
+                  : form.status ===
+                      "Draft"
+                    ? "Save Draft"
+                    : "Save and Post Stock"}
               </button>
             </div>
           </div>
@@ -1165,240 +2334,411 @@ const GRN = () => {
   }
 
   return (
-    <div className="w-full space-y-6">
-      <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-5 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+    <div className="w-full space-y-5 p-3 sm:p-5">
+      <div className="flex flex-col gap-4 rounded-xl bg-blue-800 p-5 text-white md:flex-row md:items-center md:justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900 flex items-center gap-2">
-            <ClipboardCheck className="text-blue-600" size={26} />
-            Goods Receiving Note
+          <h1 className="flex items-center gap-2 text-xl font-bold">
+            <PackageCheck
+              size={22}
+            />
+
+            Goods Receiving Notes
           </h1>
 
-          <p className="text-sm text-slate-500 mt-1">
-            Purchase order ke against goods receiving aur warehouse entry manage karein.
+          <p className="text-sm text-blue-100">
+            Raw Material and purchased Finished Good receipts
           </p>
         </div>
 
-        <button
-          onClick={openNewForm}
-          disabled={saving}
-          className="inline-flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-xl font-semibold shadow-sm disabled:opacity-60"
-        >
-          {saving ? <Loader2 className="animate-spin" size={18} /> : <Plus size={18} />}
-          New GRN
-        </button>
-      </div>
+        <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={
+              refresh
+            }
+            className="flex items-center gap-2 rounded-lg bg-white/10 px-4 py-2"
+          >
+            <RefreshCcw
+              size={16}
+            />
 
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <div className="bg-white rounded-xl border p-4 flex items-center gap-3">
-          <div className="w-11 h-11 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center">
-            <FileText size={22} />
-          </div>
+            Refresh
+          </button>
 
-          <div>
-            <p className="text-xs text-slate-500">Total GRNs</p>
-            <h3 className="text-2xl font-bold">{stats.totalGrns}</h3>
-          </div>
-        </div>
+          <button
+            type="button"
+            onClick={
+              openNew
+            }
+            className="flex items-center gap-2 rounded-lg bg-white px-4 py-2 font-bold text-blue-700"
+          >
+            <Plus
+              size={16}
+            />
 
-        <div className="bg-white rounded-xl border p-4 flex items-center gap-3">
-          <div className="w-11 h-11 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center">
-            <PackageCheck size={22} />
-          </div>
-
-          <div>
-            <p className="text-xs text-slate-500">Received Qty</p>
-            <h3 className="text-2xl font-bold">{stats.receivedQty}</h3>
-          </div>
-        </div>
-
-        <div className="bg-white rounded-xl border p-4 flex items-center gap-3">
-          <div className="w-11 h-11 rounded-xl bg-red-50 text-red-600 flex items-center justify-center">
-            <ShieldCheck size={22} />
-          </div>
-
-          <div>
-            <p className="text-xs text-slate-500">Rejected Qty</p>
-            <h3 className="text-2xl font-bold">{stats.rejectedQty}</h3>
-          </div>
-        </div>
-
-        <div className="bg-white rounded-xl border p-4 flex items-center gap-3">
-          <div className="w-11 h-11 rounded-xl bg-orange-50 text-orange-600 flex items-center justify-center">
-            <Warehouse size={22} />
-          </div>
-
-          <div>
-            <p className="text-xs text-slate-500">Pending Qty</p>
-            <h3 className="text-2xl font-bold">{stats.pendingQty}</h3>
-          </div>
+            New GRN
+          </button>
         </div>
       </div>
 
-      <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
-        <div className="p-4 border-b border-slate-100 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
-          <div>
-            <h3 className="font-bold text-slate-900">GRN List</h3>
-            <p className="text-xs text-slate-500">All GRNs from MongoDB</p>
-          </div>
+      <div className="overflow-hidden rounded-xl border bg-white shadow-sm">
+        <div className="flex flex-col gap-3 border-b p-4 md:flex-row md:items-center md:justify-between">
+          <h2 className="font-bold">
+            GRN Register
+          </h2>
 
-          <div className="flex flex-col sm:flex-row gap-2">
+          <div className="flex flex-col gap-2 sm:flex-row">
             <div className="relative">
               <Search
-                size={16}
+                size={15}
                 className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
               />
 
               <input
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="pl-9 pr-3 py-2 border rounded-lg text-sm w-full sm:w-72"
-                placeholder="Search GRN, PO, vendor..."
+                value={
+                  search
+                }
+                onChange={(
+                  event
+                ) =>
+                  setSearch(
+                    event.target.value
+                  )
+                }
+                placeholder="Search GRN, PO, vendor, item..."
+                className="rounded-lg border py-2 pl-9 pr-3 text-xs"
               />
             </div>
 
             <select
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value)}
-              className="px-3 py-2 border rounded-lg text-sm"
+              value={
+                typeFilter
+              }
+              onChange={(
+                event
+              ) =>
+                setTypeFilter(
+                  event.target.value
+                )
+              }
+              className="rounded-lg border px-3 py-2 text-xs"
             >
-              <option>All</option>
-              <option>Draft</option>
-              <option>Received</option>
-              <option>Partially Received</option>
-              <option>Completed</option>
-              <option>Cancelled</option>
+              <option value="All">
+                All
+              </option>
+
+              <option value="Raw Material">
+                Raw Material
+              </option>
+
+              <option value="Finished Good">
+                Finished Good
+              </option>
+
+              <option value="Mixed">
+                Mixed
+              </option>
             </select>
 
-            <button
-              onClick={() => {
-                fetchPurchaseOrders();
-                fetchGrns();
-              }}
-              className="inline-flex items-center justify-center gap-2 text-sm px-3 py-2 rounded-lg border hover:bg-slate-50"
+            <select
+              value={
+                statusFilter
+              }
+              onChange={(
+                event
+              ) =>
+                setStatusFilter(
+                  event.target.value
+                )
+              }
+              className="rounded-lg border px-3 py-2 text-xs"
             >
-              <RefreshCcw size={15} />
-              Refresh
-            </button>
+              <option value="All">
+                All
+              </option>
+
+              <option value="Draft">
+                Draft
+              </option>
+
+              <option value="Received">
+                Received
+              </option>
+
+              <option value="Partially Received">
+                Partially Received
+              </option>
+
+              <option value="Completed">
+                Completed
+              </option>
+
+              <option value="Posted">
+                Posted
+              </option>
+
+              <option value="Cancelled">
+                Cancelled
+              </option>
+            </select>
           </div>
         </div>
 
         <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead className="bg-slate-50 text-slate-600">
+          <table className="w-full min-w-[1200px] text-left text-xs">
+            <thead className="bg-slate-800 text-white">
               <tr>
-                <th className="p-3 text-left">GRN No</th>
-                <th className="p-3 text-left">PO No</th>
-                <th className="p-3 text-left">Vendor</th>
-                <th className="p-3 text-left">Date</th>
-                <th className="p-3 text-left">Warehouse</th>
-                <th className="p-3 text-right">Received</th>
-                <th className="p-3 text-right">Accepted</th>
-                <th className="p-3 text-right">Rejected</th>
-                <th className="p-3 text-center">Inspection</th>
-                <th className="p-3 text-center">Status</th>
-                <th className="p-3 text-center">Actions</th>
+                <th className="p-4">
+                  GRN
+                </th>
+
+                <th className="p-4">
+                  PO
+                </th>
+
+                <th className="p-4">
+                  Vendor
+                </th>
+
+                <th className="p-4">
+                  Type
+                </th>
+
+                <th className="p-4">
+                  Warehouse
+                </th>
+
+                <th className="p-4">
+                  Accepted
+                </th>
+
+                <th className="p-4">
+                  Rejected
+                </th>
+
+                <th className="p-4">
+                  Inspection
+                </th>
+
+                <th className="p-4">
+                  Status
+                </th>
+
+                <th className="p-4">
+                  Actions
+                </th>
               </tr>
             </thead>
 
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan="11" className="p-10 text-center">
-                    <Loader2 className="animate-spin mx-auto text-blue-600" />
+                  <td
+                    colSpan="10"
+                    className="p-10 text-center"
+                  >
+                    <Loader2 className="mx-auto animate-spin" />
                   </td>
                 </tr>
-              ) : filteredGrns.length === 0 ? (
+              ) : !filteredGrns.length ? (
                 <tr>
-                  <td colSpan="11" className="p-10 text-center text-slate-500">
-                    No GRN found.
+                  <td
+                    colSpan="10"
+                    className="p-10 text-center text-slate-400"
+                  >
+                    No GRNs found
                   </td>
                 </tr>
               ) : (
-                filteredGrns.map((grn) => (
-                  <tr key={grn._id} className="border-t hover:bg-slate-50">
-                    <td className="p-3 font-bold text-blue-700">{grn.grnNo}</td>
+                filteredGrns.map(
+                  (grn) => {
+                    const busy =
+                      actionId ===
+                      grn._id;
 
-                    <td className="p-3">{grn.purchaseOrderNo}</td>
+                    const draft =
+                      grn.status ===
+                        "Draft" &&
+                      !grn.stockPosted;
 
-                    <td className="p-3">
-                      <div className="font-semibold">{grn.vendorName}</div>
-                      <div className="text-xs text-slate-500">
-                        {grn.vendorPhone}
-                      </div>
-                    </td>
+                    const canCancel =
+                      ![
+                        "Draft",
+                        "Cancelled",
+                      ].includes(
+                        grn.status
+                      ) &&
+                      grn.purchaseStatus !==
+                        "Purchased";
 
-                    <td className="p-3">{grn.receivedDate}</td>
-
-                    <td className="p-3">
-                      <div className="flex items-center gap-1">
-                        <Warehouse size={14} className="text-slate-400" />
-                        {grn.warehouse}
-                      </div>
-                    </td>
-
-                    <td className="p-3 text-right font-bold text-blue-700">
-                      {grn.totalReceivedQty || grn.totals?.totalReceivedQty || 0}
-                    </td>
-
-                    <td className="p-3 text-right font-bold text-emerald-600">
-                      {grn.totalAcceptedQty || grn.totals?.totalAcceptedQty || 0}
-                    </td>
-
-                    <td className="p-3 text-right font-bold text-red-600">
-                      {grn.totalRejectedQty || grn.totals?.totalRejectedQty || 0}
-                    </td>
-
-                    <td className="p-3 text-center">
-                      <span
-                        className={`px-3 py-1 rounded-full text-xs font-semibold ${
-                          grn.inspectionStatus === "Passed"
-                            ? "bg-green-50 text-green-700"
-                            : grn.inspectionStatus === "Rejected"
-                            ? "bg-red-50 text-red-700"
-                            : grn.inspectionStatus === "Partially Accepted"
-                            ? "bg-orange-50 text-orange-700"
-                            : "bg-slate-100 text-slate-700"
-                        }`}
+                    return (
+                      <tr
+                        key={
+                          grn._id
+                        }
+                        className="border-t hover:bg-slate-50"
                       >
-                        {grn.inspectionStatus}
-                      </span>
-                    </td>
+                        <td className="p-4">
+                          <b className="text-blue-700">
+                            {
+                              grn.grnNo
+                            }
+                          </b>
 
-                    <td className="p-3 text-center">
-                      <span className="px-3 py-1 rounded-full text-xs font-semibold bg-blue-50 text-blue-700">
-                        {grn.status}
-                      </span>
-                    </td>
+                          <div className="text-[10px]">
+                            {
+                              grn.receivedDate
+                            }
+                          </div>
+                        </td>
 
-                    <td className="p-3">
-                      <div className="flex justify-center gap-2">
-                        <button
-                          onClick={() => printGrn(grn)}
-                          className="p-2 rounded-lg bg-slate-100 hover:bg-slate-200"
-                          title="Print"
-                        >
-                          <Printer size={16} />
-                        </button>
+                        <td className="p-4">
+                          {
+                            grn.purchaseOrderNo
+                          }
+                        </td>
 
-                        <button
-                          onClick={() => handleEdit(grn)}
-                          className="p-2 rounded-lg bg-blue-50 text-blue-700 hover:bg-blue-100"
-                          title="Edit"
-                        >
-                          <Edit2 size={16} />
-                        </button>
+                        <td className="p-4">
+                          {
+                            grn.vendorName
+                          }
+                        </td>
 
-                        <button
-                          onClick={() => handleDelete(grn._id)}
-                          className="p-2 rounded-lg bg-red-50 text-red-700 hover:bg-red-100"
-                          title="Delete"
-                        >
-                          <Trash2 size={16} />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))
+                        <td className="p-4">
+                          {
+                            grn.receiptType
+                          }
+                        </td>
+
+                        <td className="p-4">
+                          <span className="flex items-center gap-1">
+                            <Warehouse
+                              size={14}
+                            />
+
+                            {
+                              grn.warehouse
+                            }
+                          </span>
+                        </td>
+
+                        <td className="p-4 font-bold text-emerald-700">
+                          {quantity(
+                            grn.totalAcceptedQty
+                          )}
+                        </td>
+
+                        <td className="p-4 font-bold text-red-600">
+                          {quantity(
+                            grn.totalRejectedQty
+                          )}
+                        </td>
+
+                        <td className="p-4">
+                          {
+                            grn.inspectionStatus
+                          }
+                        </td>
+
+                        <td className="p-4">
+                          <span
+                            className={`rounded-full px-2 py-1 font-bold ${statusClass(
+                              grn.status
+                            )}`}
+                          >
+                            {
+                              grn.status
+                            }
+                          </span>
+                        </td>
+
+                        <td className="p-4">
+                          <div className="flex gap-1">
+                            <Action
+                              title="Print"
+                              onClick={() =>
+                                printGrn(
+                                  grn
+                                )
+                              }
+                            >
+                              <Printer
+                                size={15}
+                              />
+                            </Action>
+
+                            {draft && (
+                              <Action
+                                title="Edit"
+                                onClick={() =>
+                                  edit(
+                                    grn
+                                  )
+                                }
+                              >
+                                <Edit2
+                                  size={15}
+                                />
+                              </Action>
+                            )}
+
+                            {draft && (
+                              <Action
+                                title="Post"
+                                onClick={() =>
+                                  postStock(
+                                    grn
+                                  )
+                                }
+                              >
+                                <CheckCircle2
+                                  size={15}
+                                />
+                              </Action>
+                            )}
+
+                            {draft && (
+                              <Action
+                                title="Delete"
+                                onClick={() =>
+                                  remove(
+                                    grn
+                                  )
+                                }
+                              >
+                                <Trash2
+                                  size={15}
+                                />
+                              </Action>
+                            )}
+
+                            {canCancel && (
+                              <Action
+                                title="Cancel"
+                                onClick={() =>
+                                  cancel(
+                                    grn
+                                  )
+                                }
+                              >
+                                <XCircle
+                                  size={15}
+                                />
+                              </Action>
+                            )}
+
+                            {busy && (
+                              <Loader2
+                                size={15}
+                                className="animate-spin"
+                              />
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  }
+                )
               )}
             </tbody>
           </table>
@@ -1407,5 +2747,67 @@ const GRN = () => {
     </div>
   );
 };
+
+const Field = ({
+  label,
+  required = false,
+  children,
+}) => (
+  <div>
+    <label className="mb-1.5 block text-xs font-bold text-slate-600">
+      {label}
+
+      {required && (
+        <span className="text-red-600">
+          {" "}
+          *
+        </span>
+      )}
+    </label>
+
+    {children}
+  </div>
+);
+
+const Total = ({
+  label,
+  value,
+  strong = false,
+}) => (
+  <div
+    className={`flex justify-between ${
+      strong
+        ? "border-t pt-3 text-lg"
+        : ""
+    }`}
+  >
+    <span>
+      {label}
+    </span>
+
+    <b>
+      {value}
+    </b>
+  </div>
+);
+
+const Action = ({
+  title,
+  onClick,
+  children,
+}) => (
+  <button
+    type="button"
+    title={
+      title
+    }
+    onClick={
+      onClick
+    }
+    className="rounded-lg p-2 text-blue-700 hover:bg-blue-50"
+  >
+    {children}
+  </button>
+);
 
 export default GRN;
