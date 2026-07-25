@@ -298,6 +298,18 @@ const salesOrderSchema =
         default: "",
       },
 
+      customerNTN: {
+        type: String,
+        trim: true,
+        uppercase: true,
+        default: "",
+
+        maxlength: [
+          100,
+          "Customer NTN cannot exceed 100 characters",
+        ],
+      },
+
       orderDate: {
         type: String,
 
@@ -536,6 +548,11 @@ salesOrderSchema.pre(
       cleanText(
         this.customerCity
       );
+
+    this.customerNTN =
+      cleanText(
+        this.customerNTN
+      ).toUpperCase();
 
     this.orderDate =
       cleanText(

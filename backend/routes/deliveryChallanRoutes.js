@@ -783,6 +783,11 @@ const prepareDeliveryItems =
             row.cartons
           ),
 
+        rolls:
+          cleanNumber(
+            row.rolls
+          ),
+
         quantity,
 
         unit:
@@ -830,6 +835,16 @@ const calculateTotals = (
         sum +
         cleanNumber(
           item.cartons
+        ),
+      0
+    ),
+
+  totalRolls:
+    items.reduce(
+      (sum, item) =>
+        sum +
+        cleanNumber(
+          item.rolls
         ),
       0
     ),
@@ -1012,6 +1027,11 @@ const getEligibleSalesOrders =
           cartons:
             cleanNumber(
               row.cartons
+            ),
+
+          rolls:
+            cleanNumber(
+              row.rolls
             ),
 
           grossWeight:
@@ -1979,6 +1999,42 @@ router.post(
               body.referenceNo
             ),
 
+          companyName:
+            cleanText(
+              body.companyName,
+              "URWA PACKAGES"
+            ),
+
+          companyLogo:
+            cleanText(
+              body.companyLogo,
+              "/logo.png"
+            ),
+
+          documentNo:
+            cleanText(
+              body.documentNo,
+              "UP-DC-01 / 01"
+            ),
+
+          issueNo:
+            cleanText(
+              body.issueNo,
+              "01"
+            ),
+
+          revisionNo:
+            cleanText(
+              body.revisionNo,
+              "00"
+            ),
+
+          documentIssueDate:
+            cleanText(
+              body.documentIssueDate,
+              todayDate()
+            ),
+
           challanDate:
             cleanText(
               body.challanDate,
@@ -2202,6 +2258,48 @@ router.put(
       challan.referenceNo =
         cleanText(
           body.referenceNo
+        );
+
+      challan.companyName =
+        cleanText(
+          body.companyName,
+          challan.companyName ||
+            "URWA PACKAGES"
+        );
+
+      challan.companyLogo =
+        cleanText(
+          body.companyLogo,
+          challan.companyLogo ||
+            "/logo.png"
+        );
+
+      challan.documentNo =
+        cleanText(
+          body.documentNo,
+          challan.documentNo ||
+            "UP-DC-01 / 01"
+        );
+
+      challan.issueNo =
+        cleanText(
+          body.issueNo,
+          challan.issueNo ||
+            "01"
+        );
+
+      challan.revisionNo =
+        cleanText(
+          body.revisionNo,
+          challan.revisionNo ||
+            "00"
+        );
+
+      challan.documentIssueDate =
+        cleanText(
+          body.documentIssueDate,
+          challan.documentIssueDate ||
+            todayDate()
         );
 
       challan.challanDate =

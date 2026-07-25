@@ -216,6 +216,7 @@ const emptyForm = (
 ) => ({
   salesOrderNo,
   customer: "",
+  customerNTN: "",
   orderDate:
     todayDate(),
   deliveryDate: "",
@@ -560,6 +561,7 @@ const SalesOrders =
                   order.salesOrderNo,
                   order.customerName,
                   order.customerPhone,
+                  order.customerNTN,
                   order.poNo,
                   order.referenceNo,
 
@@ -669,6 +671,39 @@ const SalesOrders =
 
           [field]:
             value,
+        })
+      );
+    };
+
+    const selectCustomer = (
+      customerId
+    ) => {
+      const selectedCustomer =
+        customers.find(
+          (customer) =>
+            String(
+              customer._id
+            ) ===
+            String(
+              customerId
+            )
+        );
+
+      setForm(
+        (current) => ({
+          ...current,
+
+          customer:
+            customerId,
+
+          customerNTN:
+            selectedCustomer
+              ? String(
+                  selectedCustomer.customerNTN ||
+                    selectedCustomer.ntn ||
+                    ""
+                )
+              : "",
         })
       );
     };
@@ -858,27 +893,6 @@ const SalesOrders =
           return false;
         }
 
-        const itemIds =
-          validItems.map(
-            (item) =>
-              String(
-                item.item
-              )
-          );
-
-        if (
-          new Set(
-            itemIds
-          ).size !==
-          itemIds.length
-        ) {
-          alert(
-            "The same Finished Good cannot be added more than once."
-          );
-
-          return false;
-        }
-
         if (
           validItems.some(
             (item) =>
@@ -914,6 +928,9 @@ const SalesOrders =
       () => ({
         customer:
           form.customer,
+
+        customerNTN:
+          form.customerNTN.trim(),
 
         orderDate:
           form.orderDate,
@@ -1067,6 +1084,12 @@ const SalesOrders =
               idOf(
                 order.customer
               ),
+
+            customerNTN:
+              order.customerNTN ||
+              order.customer?.customerNTN ||
+              order.customer?.ntn ||
+              "",
 
             orderDate:
               order.orderDate ||
@@ -1349,7 +1372,8 @@ const SalesOrders =
                   )}</td>
 
                   <td>${escapeHtml(
-                    FINISHED_GOODS_WAREHOUSE
+                    item.description ||
+                      ""
                   )}</td>
 
                   <td class="number">${formatQuantity(
@@ -1523,6 +1547,12 @@ const SalesOrders =
                     "-"
                 )}<br/>
 
+                <b>NTN:</b>
+                ${escapeHtml(
+                  order.customerNTN ||
+                    "-"
+                )}<br/>
+
                 <b>Address:</b>
                 ${escapeHtml(
                   order.customerAddress ||
@@ -1542,7 +1572,7 @@ const SalesOrders =
                     <th>#</th>
                     <th>Finished Good</th>
                     <th>Size</th>
-                    <th>Warehouse</th>
+                    <th>Description</th>
                     <th>Cartons</th>
                     <th>Quantity</th>
                     <th>Unit</th>
@@ -1692,8 +1722,7 @@ const SalesOrders =
                     onChange={(
                       event
                     ) =>
-                      updateField(
-                        "customer",
+                      selectCustomer(
                         event
                           .target
                           .value
@@ -1725,6 +1754,28 @@ const SalesOrders =
                       )
                     )}
                   </select>
+                </Field>
+
+                <Field label="NTN Number">
+                  <input
+                    value={
+                      form.customerNTN
+                    }
+                    onChange={(
+                      event
+                    ) =>
+                      updateField(
+                        "customerNTN",
+                        event
+                          .target
+                          .value
+                      )
+                    }
+                    placeholder="Enter NTN Number"
+                    className={
+                      inputClass
+                    }
+                  />
                 </Field>
 
                 <Field
@@ -2047,52 +2098,31 @@ const SalesOrders =
                                   {finishedGoods.map(
                                     (
                                       finishedGood
-                                    ) => {
-                                      const selectedElsewhere =
-                                        form.items.some(
-                                          (
-                                            row,
-                                            rowIndex
-                                          ) =>
-                                            rowIndex !==
-                                              index &&
-                                            String(
-                                              row.item
-                                            ) ===
-                                              String(
-                                                finishedGood._id
-                                              )
-                                        );
-
-                                      return (
-                                        <option
-                                          key={
-                                            finishedGood._id
-                                          }
-                                          value={
-                                            finishedGood._id
-                                          }
-                                          disabled={
-                                            selectedElsewhere
-                                          }
-                                        >
-                                          {
-                                            finishedGood.code
-                                          }{" "}
-                                          —{" "}
-                                          {
-                                            finishedGood.name
-                                          }{" "}
-                                          | Stock:{" "}
-                                          {formatQuantity(
-                                            finishedGood.availableStock
-                                          )}{" "}
-                                          {
-                                            finishedGood.unit
-                                          }
-                                        </option>
-                                      );
-                                    }
+                                    ) => (
+                                      <option
+                                        key={
+                                          finishedGood._id
+                                        }
+                                        value={
+                                          finishedGood._id
+                                        }
+                                      >
+                                        {
+                                          finishedGood.code
+                                        }{" "}
+                                        —{" "}
+                                        {
+                                          finishedGood.name
+                                        }{" "}
+                                        | Stock:{" "}
+                                        {formatQuantity(
+                                          finishedGood.availableStock
+                                        )}{" "}
+                                        {
+                                          finishedGood.unit
+                                        }
+                                      </option>
+                                    )
                                   )}
                                 </select>
                               </td>

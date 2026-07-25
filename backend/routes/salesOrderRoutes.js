@@ -163,7 +163,7 @@ const populateSalesOrder = (
   query
     .populate(
       "customer",
-      "customerName name phoneNumber phone email address city status"
+      "customerName name phoneNumber phone email address city ntn customerNTN status"
     )
 
     .populate(
@@ -457,7 +457,8 @@ const peekNextSalesOrderNo =
   };
 
 const buildCustomerSnapshot = (
-  customer
+  customer,
+  customerNTN = ""
 ) => ({
   customer:
     customer._id,
@@ -488,6 +489,13 @@ const buildCustomerSnapshot = (
     cleanText(
       customer.city
     ),
+
+  customerNTN:
+    cleanText(
+      customerNTN ||
+        customer.customerNTN ||
+        customer.ntn
+    ).toUpperCase(),
 });
 
 const loadCustomer =
@@ -583,17 +591,6 @@ const prepareSalesOrderItems =
       );
     }
 
-    if (
-      new Set(
-        itemIds
-      ).size !==
-      itemIds.length
-    ) {
-      throw new Error(
-        "The same Finished Good cannot be added more than once"
-      );
-    }
-
     const warehouse =
       await getFinishedGoodsWarehouse();
 
@@ -627,26 +624,44 @@ const prepareSalesOrderItems =
     const existingByRowId =
       new Map();
 
-    const existingByItemId =
+    const existingRowsByItemId =
       new Map();
+
+    const usedExistingRowIds =
+      new Set();
 
     for (
       const row of
       existingOrder?.items ||
       []
     ) {
-      existingByRowId.set(
+      const rowId =
         String(
           row._id
-        ),
+        );
+
+      const itemId =
+        idOf(
+          row.item
+        );
+
+      existingByRowId.set(
+        rowId,
         row
       );
 
-      existingByItemId.set(
-        idOf(
-          row.item
-        ),
+      const matchingRows =
+        existingRowsByItemId.get(
+          itemId
+        ) || [];
+
+      matchingRows.push(
         row
+      );
+
+      existingRowsByItemId.set(
+        itemId,
+        matchingRows
       );
     }
 
@@ -692,20 +707,56 @@ const prepareSalesOrderItems =
           );
         }
 
-        const existingRow =
-          (
-            row._id &&
-            existingByRowId.get(
-              String(
-                row._id
-              )
-            )
-          ) ||
-          existingByItemId.get(
-            String(
-              item._id
-            )
+        let existingRow =
+          null;
+
+        const requestedRowId =
+          idOf(
+            row._id
           );
+
+        if (
+          requestedRowId &&
+          existingByRowId.has(
+            requestedRowId
+          )
+        ) {
+          existingRow =
+            existingByRowId.get(
+              requestedRowId
+            );
+
+          usedExistingRowIds.add(
+            requestedRowId
+          );
+        } else {
+          const matchingRows =
+            existingRowsByItemId.get(
+              String(
+                item._id
+              )
+            ) || [];
+
+          existingRow =
+            matchingRows.find(
+              (candidate) =>
+                !usedExistingRowIds.has(
+                  String(
+                    candidate._id
+                  )
+                )
+            ) || null;
+
+          if (
+            existingRow
+          ) {
+            usedExistingRowIds.add(
+              String(
+                existingRow._id
+              )
+            );
+          }
+        }
 
         const quantity =
           cleanNumber(
@@ -1266,7 +1317,8 @@ router.post(
           salesOrderNo,
 
           ...buildCustomerSnapshot(
-            customer
+            customer,
+            body.customerNTN
           ),
 
           orderDate:
@@ -1443,7 +1495,9 @@ router.put(
       Object.assign(
         order,
         buildCustomerSnapshot(
-          customer
+          customer,
+          body.customerNTN ??
+            order.customerNTN
         )
       );
 

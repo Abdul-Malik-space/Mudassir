@@ -99,6 +99,12 @@ const deliveryChallanItemSchema = new mongoose.Schema(
       min: [0, "Cartons cannot be negative"],
     },
 
+    rolls: {
+      type: Number,
+      default: 0,
+      min: [0, "Rolls cannot be negative"],
+    },
+
     quantity: {
       type: Number,
       required: [true, "Delivery quantity is required"],
@@ -235,6 +241,75 @@ const deliveryChallanSchema = new mongoose.Schema(
       default: "",
     },
 
+    companyName: {
+      type: String,
+      trim: true,
+      default: "URWA PACKAGES",
+      maxlength: [
+        150,
+        "Company name cannot exceed 150 characters",
+      ],
+    },
+
+    companyLogo: {
+      type: String,
+      trim: true,
+      default: "/logo.png",
+      maxlength: [
+        1000,
+        "Company logo path cannot exceed 1000 characters",
+      ],
+    },
+
+    documentNo: {
+      type: String,
+      trim: true,
+      uppercase: true,
+      default: "UP-DC-01 / 01",
+      maxlength: [
+        100,
+        "Document number cannot exceed 100 characters",
+      ],
+    },
+
+    issueNo: {
+      type: String,
+      trim: true,
+      default: "01",
+      maxlength: [
+        30,
+        "Issue number cannot exceed 30 characters",
+      ],
+    },
+
+    revisionNo: {
+      type: String,
+      trim: true,
+      default: "00",
+      maxlength: [
+        30,
+        "Revision number cannot exceed 30 characters",
+      ],
+    },
+
+    documentIssueDate: {
+      type: String,
+      trim: true,
+      default: todayDate,
+
+      validate: {
+        validator(value) {
+          return (
+            !value ||
+            /^\d{4}-\d{2}-\d{2}$/.test(value)
+          );
+        },
+
+        message:
+          "Document issue date format must be YYYY-MM-DD",
+      },
+    },
+
     challanDate: {
       type: String,
       required: [true, "Challan date is required"],
@@ -333,6 +408,12 @@ const deliveryChallanSchema = new mongoose.Schema(
     },
 
     totalCartons: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+
+    totalRolls: {
       type: Number,
       default: 0,
       min: 0,
@@ -496,6 +577,36 @@ deliveryChallanSchema.pre("validate", function () {
     this.referenceNo
   );
 
+  this.companyName = cleanText(
+    this.companyName,
+    "URWA PACKAGES"
+  );
+
+  this.companyLogo = cleanText(
+    this.companyLogo,
+    "/logo.png"
+  );
+
+  this.documentNo = cleanText(
+    this.documentNo,
+    "UP-DC-01 / 01"
+  ).toUpperCase();
+
+  this.issueNo = cleanText(
+    this.issueNo,
+    "01"
+  );
+
+  this.revisionNo = cleanText(
+    this.revisionNo,
+    "00"
+  );
+
+  this.documentIssueDate = cleanText(
+    this.documentIssueDate,
+    todayDate()
+  );
+
   this.challanDate = cleanText(
     this.challanDate,
     todayDate()
@@ -598,6 +709,10 @@ deliveryChallanSchema.pre("validate", function () {
         item.cartons
       );
 
+      item.rolls = cleanNumber(
+        item.rolls
+      );
+
       item.quantity = cleanNumber(
         item.quantity
       );
@@ -648,6 +763,16 @@ deliveryChallanSchema.pre("validate", function () {
         sum +
         cleanNumber(
           item.cartons
+        ),
+      0
+    );
+
+  this.totalRolls =
+    this.items.reduce(
+      (sum, item) =>
+        sum +
+        cleanNumber(
+          item.rolls
         ),
       0
     );

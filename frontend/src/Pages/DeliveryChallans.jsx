@@ -216,6 +216,16 @@ const emptyForm = (
   customerAddress: "",
   deliveryAddress: "",
   attentionTo: "",
+  companyName:
+    "URWA PACKAGES",
+  companyLogo:
+    "/logo.png",
+  documentNo:
+    "UP-DC-01 / 01",
+  issueNo: "01",
+  revisionNo: "00",
+  documentIssueDate:
+    todayDate(),
   challanDate:
     todayDate(),
   dispatchDate:
@@ -400,6 +410,19 @@ const DeliveryChallans =
                 sum +
                 numberValue(
                   item.cartons
+                ),
+              0
+            ),
+
+          rolls:
+            form.items.reduce(
+              (
+                sum,
+                item
+              ) =>
+                sum +
+                numberValue(
+                  item.rolls
                 ),
               0
             ),
@@ -767,6 +790,10 @@ const DeliveryChallans =
               item.cartons ||
               "",
 
+            rolls:
+              item.rolls ||
+              "",
+
             grossWeight:
               item.grossWeight ||
               "",
@@ -888,6 +915,35 @@ const DeliveryChallans =
           challan.attentionTo ||
           "",
 
+        companyName:
+          challan.companyName ||
+          "URWA PACKAGES",
+
+        companyLogo:
+          challan.companyLogo ||
+          "/logo.png",
+
+        documentNo:
+          challan.documentNo ||
+          "UP-DC-01 / 01",
+
+        issueNo:
+          challan.issueNo ||
+          "01",
+
+        revisionNo:
+          challan.revisionNo ||
+          "00",
+
+        documentIssueDate:
+          String(
+            challan.documentIssueDate ||
+              todayDate()
+          ).slice(
+            0,
+            10
+          ),
+
         challanDate:
           String(
             challan.challanDate ||
@@ -1002,6 +1058,12 @@ const DeliveryChallans =
               cartons:
                 String(
                   item.cartons ??
+                    ""
+                ),
+
+              rolls:
+                String(
+                  item.rolls ??
                     ""
                 ),
 
@@ -1149,6 +1211,24 @@ const DeliveryChallans =
         referenceNo:
           form.referenceNo.trim(),
 
+        companyName:
+          form.companyName.trim(),
+
+        companyLogo:
+          form.companyLogo.trim(),
+
+        documentNo:
+          form.documentNo.trim(),
+
+        issueNo:
+          form.issueNo.trim(),
+
+        revisionNo:
+          form.revisionNo.trim(),
+
+        documentIssueDate:
+          form.documentIssueDate,
+
         customerName:
           form.customerName.trim(),
 
@@ -1219,6 +1299,11 @@ const DeliveryChallans =
                 cartons:
                   numberValue(
                     item.cartons
+                  ),
+
+                rolls:
+                  numberValue(
+                    item.rolls
                   ),
 
                 grossWeight:
@@ -1482,7 +1567,7 @@ const DeliveryChallans =
           window.open(
             "",
             "_blank",
-            "width=1100,height=850"
+            "width=900,height=1000"
           );
 
         if (!printWindow) {
@@ -1493,59 +1578,191 @@ const DeliveryChallans =
           return;
         }
 
-        const rows =
-          (
-            challan.items || []
-          )
+        const companyName =
+          String(
+            challan.companyName ||
+              "URWA PACKAGES"
+          ).trim();
+
+        const rawLogo =
+          String(
+            challan.companyLogo ||
+              "/logo.png"
+          ).trim();
+
+        let logoUrl =
+          rawLogo;
+
+        try {
+          if (
+            !/^(data:|blob:|https?:\/\/)/i.test(
+              rawLogo
+            )
+          ) {
+            logoUrl =
+              new URL(
+                rawLogo.startsWith(
+                  "/"
+                )
+                  ? rawLogo
+                  : `/${rawLogo}`,
+                window.location.origin
+              ).href;
+          }
+        } catch {
+          logoUrl =
+            `${window.location.origin}/logo.png`;
+        }
+
+        const logoInitials =
+          companyName
+            .split(/\s+/)
+            .filter(Boolean)
+            .slice(0, 2)
             .map(
-              (
-                item,
-                index
-              ) => `
-                <tr>
-                  <td>${index + 1}</td>
+              (word) =>
+                word.charAt(0)
+            )
+            .join("")
+            .toUpperCase() ||
+          "UP";
 
-                  <td>
-                    <b>${safeText(
+        const printNumber = (
+          value,
+          suffix = ""
+        ) =>
+          numberValue(value) > 0
+            ? `${formatQuantity(
+                value
+              )}${suffix}`
+            : "";
+
+        const actualItems =
+          challan.items || [];
+
+        const actualRows =
+          actualItems
+            .map(
+              (item) => `
+                <tr class="data-row">
+                  <td class="particulars">${safeText(
+                    item.description ||
                       item.itemName ||
-                        item.description
-                    )}</b><br />
-
-                    <span>${safeText(
-                      item.itemCode ||
-                        ""
-                    )}</span>
-                  </td>
+                      ""
+                  )}</td>
 
                   <td>${safeText(
                     item.size ||
                       ""
                   )}</td>
 
-                  <td class="number">${formatQuantity(
+                  <td class="center">${printNumber(
                     item.cartons
                   )}</td>
 
-                  <td class="number">${formatQuantity(
-                    item.quantity
+                  <td class="center">${printNumber(
+                    item.rolls
                   )}</td>
 
-                  <td>${safeText(
-                    item.unit ||
-                      ""
+                  <td class="right">${printNumber(
+                    item.grossWeight,
+                    " kg"
                   )}</td>
 
-                  <td class="number">${formatQuantity(
-                    item.grossWeight
-                  )}</td>
-
-                  <td class="number">${formatQuantity(
-                    item.netWeight
+                  <td class="right">${printNumber(
+                    item.netWeight,
+                    " kg"
                   )}</td>
                 </tr>
               `
             )
             .join("");
+
+        const minimumRows =
+          15;
+
+        const blankRows =
+          Array.from({
+            length:
+              Math.max(
+                minimumRows -
+                  actualItems.length,
+                0
+              ),
+          })
+            .map(
+              () => `
+                <tr class="blank-row">
+                  <td>&nbsp;</td>
+                  <td></td>
+                  <td></td>
+                  <td></td>
+                  <td></td>
+                  <td></td>
+                </tr>
+              `
+            )
+            .join("");
+
+        const rows =
+          actualRows +
+          blankRows;
+
+        const totalCartons =
+          challan.totalCartons ??
+          actualItems.reduce(
+            (
+              sum,
+              item
+            ) =>
+              sum +
+              numberValue(
+                item.cartons
+              ),
+            0
+          );
+
+        const totalRolls =
+          challan.totalRolls ??
+          actualItems.reduce(
+            (
+              sum,
+              item
+            ) =>
+              sum +
+              numberValue(
+                item.rolls
+              ),
+            0
+          );
+
+        const totalGrossWeight =
+          challan.totalGrossWeight ??
+          actualItems.reduce(
+            (
+              sum,
+              item
+            ) =>
+              sum +
+              numberValue(
+                item.grossWeight
+              ),
+            0
+          );
+
+        const totalNetWeight =
+          challan.totalNetWeight ??
+          actualItems.reduce(
+            (
+              sum,
+              item
+            ) =>
+              sum +
+              numberValue(
+                item.netWeight
+              ),
+            0
+          );
 
         printWindow.document.write(`
           <!doctype html>
@@ -1555,13 +1772,14 @@ const DeliveryChallans =
               <meta charset="utf-8" />
 
               <title>${safeText(
-                challan.challanNo
+                challan.challanNo ||
+                  "Delivery Challan"
               )}</title>
 
               <style>
                 @page {
                   size: A4 portrait;
-                  margin: 10mm;
+                  margin: 10mm 12mm;
                 }
 
                 * {
@@ -1569,193 +1787,551 @@ const DeliveryChallans =
                 }
 
                 body {
-                  font-family: Arial, sans-serif;
-                  color: #111827;
                   margin: 0;
+                  color: #000;
+                  background: #fff;
+                  font-family: Arial, Helvetica, sans-serif;
                   font-size: 11px;
                 }
 
-                h1 {
-                  text-align: center;
-                  margin: 0 0 4px;
-                  font-size: 22px;
+                .page {
+                  width: 100%;
+                  max-width: 190mm;
+                  margin: 0 auto;
                 }
 
-                h2 {
+                .document-header {
+                  width: 86%;
+                  margin: 0 auto 30px;
+                  border-collapse: collapse;
+                  table-layout: fixed;
+                }
+
+                .document-header td {
+                  border: 1px solid #000;
+                  padding: 0;
+                  vertical-align: middle;
+                }
+
+                .logo-cell {
+                  width: 18%;
+                  height: 64px;
                   text-align: center;
-                  margin: 0 0 20px;
+                }
+
+                .company-logo {
+                  display: block;
+                  max-width: 66px;
+                  max-height: 58px;
+                  margin: auto;
+                  object-fit: contain;
+                }
+
+                .logo-fallback {
+                  display: none;
+                  width: 100%;
+                  height: 62px;
+                  align-items: center;
+                  justify-content: center;
+                  font-size: 30px;
+                  font-weight: 900;
+                }
+
+                .title-cell {
+                  width: 58%;
+                  text-align: center;
+                  padding: 5px 8px !important;
+                }
+
+                .company-name {
+                  font-size: 15px;
+                  font-weight: 800;
+                  letter-spacing: 0.2px;
+                  text-transform: uppercase;
+                }
+
+                .document-title {
+                  margin-top: 14px;
                   font-size: 16px;
+                  font-weight: 800;
                 }
 
-                .grid {
+                .document-cell {
+                  width: 24%;
+                  padding: 5px 7px !important;
+                  font-size: 9px;
+                  font-weight: 700;
+                  line-height: 1.2;
+                }
+
+                .top-info {
+                  width: 86%;
+                  margin: 0 auto 22px;
+                  font-size: 11px;
+                  font-weight: 700;
+                }
+
+                .info-row {
                   display: grid;
                   grid-template-columns: 1fr 1fr;
-                  border: 1px solid #111827;
+                  align-items: center;
+                  min-height: 26px;
                 }
 
-                .cell {
-                  padding: 8px;
-                  border-bottom: 1px solid #111827;
+                .info-row.single {
+                  grid-template-columns: 1fr;
                 }
 
-                .cell:nth-child(odd) {
-                  border-right: 1px solid #111827;
-                }
-
-                table {
-                  width: 100%;
-                  border-collapse: collapse;
-                  margin-top: 16px;
-                }
-
-                th,
-                td {
-                  border: 1px solid #111827;
-                  padding: 7px;
-                  vertical-align: top;
-                }
-
-                th {
-                  background: #e5e7eb;
-                  text-transform: uppercase;
-                  font-size: 10px;
-                }
-
-                .number {
+                .right-info {
                   text-align: right;
                 }
 
-                .signatures {
-                  display: grid;
-                  grid-template-columns: repeat(3, 1fr);
-                  gap: 30px;
-                  margin-top: 70px;
+                .value-line {
+                  display: inline-block;
+                  min-width: 95px;
+                  margin-left: 5px;
+                  border-bottom: 1px solid #000;
+                  padding: 0 3px 2px;
+                  font-weight: 500;
                 }
 
-                .signature {
-                  border-top: 1px solid #111827;
+                .attention-block {
+                  margin-top: 9px;
+                  line-height: 1.8;
+                }
+
+                .items-table {
+                  width: 88%;
+                  margin: 0 auto;
+                  border-collapse: collapse;
+                  table-layout: fixed;
+                  font-size: 9px;
+                }
+
+                .items-table th,
+                .items-table td {
+                  border: 1px solid #000;
+                  height: 18px;
+                  padding: 2px 4px;
+                  vertical-align: middle;
+                }
+
+                .items-table th {
+                  height: 20px;
+                  font-size: 8px;
+                  font-weight: 800;
                   text-align: center;
-                  padding-top: 6px;
+                }
+
+                .items-table th:nth-child(1),
+                .items-table td:nth-child(1) {
+                  width: 31%;
+                }
+
+                .items-table th:nth-child(2),
+                .items-table td:nth-child(2) {
+                  width: 16%;
+                }
+
+                .items-table th:nth-child(3),
+                .items-table td:nth-child(3) {
+                  width: 14%;
+                }
+
+                .items-table th:nth-child(4),
+                .items-table td:nth-child(4) {
+                  width: 11%;
+                }
+
+                .items-table th:nth-child(5),
+                .items-table td:nth-child(5) {
+                  width: 14%;
+                }
+
+                .items-table th:nth-child(6),
+                .items-table td:nth-child(6) {
+                  width: 14%;
+                }
+
+                .particulars {
+                  text-align: left;
+                }
+
+                .center {
+                  text-align: center;
+                }
+
+                .right {
+                  text-align: right;
+                }
+
+                .blank-row td {
+                  height: 18px;
+                }
+
+                .total-row td {
+                  height: 20px;
+                  font-weight: 800;
+                }
+
+                .total-label {
+                  text-align: center;
+                }
+
+                .remarks {
+                  width: 88%;
+                  min-height: 28px;
+                  margin: 8px auto 0;
+                  font-size: 9px;
+                }
+
+                .signature-area {
+                  width: 86%;
+                  margin: 14px auto 0;
+                  font-size: 11px;
+                  font-weight: 700;
+                }
+
+                .signature-row {
+                  display: grid;
+                  grid-template-columns: 90px 1fr 48px 100px;
+                  gap: 0;
+                  align-items: end;
+                  min-height: 38px;
+                }
+
+                .signature-row.final {
+                  grid-template-columns: 45px 1fr 86px 1fr;
+                }
+
+                .signature-line {
+                  min-height: 18px;
+                  border-bottom: 1px solid #000;
+                  padding: 0 5px 2px;
+                  font-weight: 500;
+                }
+
+                .signature-date {
+                  text-align: center;
+                }
+
+                @media print {
+                  body {
+                    -webkit-print-color-adjust: exact;
+                    print-color-adjust: exact;
+                  }
                 }
               </style>
             </head>
 
             <body>
-              <h1>Delivery Challan</h1>
-
-              <h2>${safeText(
-                challan.challanNo
-              )}</h2>
-
-              <div class="grid">
-                <div class="cell">
-                  <b>Sales Order:</b>
-                  ${safeText(
-                    challan.salesOrderNo
-                  )}
-                </div>
-
-                <div class="cell">
-                  <b>Challan Date:</b>
-                  ${safeText(
-                    formatDate(
-                      challan.challanDate
-                    )
-                  )}
-                </div>
-
-                <div class="cell">
-                  <b>Customer:</b>
-                  ${safeText(
-                    challan.customerName
-                  )}
-                </div>
-
-                <div class="cell">
-                  <b>PO No:</b>
-                  ${safeText(
-                    challan.poNo ||
-                      "-"
-                  )}
-                </div>
-
-                <div class="cell">
-                  <b>Delivery Address:</b>
-                  ${safeText(
-                    challan.deliveryAddress ||
-                      challan.customerAddress ||
-                      "-"
-                  )}
-                </div>
-
-                <div class="cell">
-                  <b>Contact:</b>
-                  ${safeText(
-                    challan.customerPhone ||
-                      "-"
-                  )}
-                </div>
-
-                <div class="cell">
-                  <b>Vehicle:</b>
-                  ${safeText(
-                    challan.vehicleNo ||
-                      "-"
-                  )}
-                </div>
-
-                <div class="cell">
-                  <b>Driver:</b>
-                  ${safeText(
-                    challan.driverName ||
-                      "-"
-                  )}
-                </div>
-              </div>
-
-              <table>
-                <thead>
+              <div class="page">
+                <table class="document-header">
                   <tr>
-                    <th>#</th>
-                    <th>Finished Good</th>
-                    <th>Size</th>
-                    <th>Cartons</th>
-                    <th>Quantity</th>
-                    <th>Unit</th>
-                    <th>Gross Weight</th>
-                    <th>Net Weight</th>
+                    <td class="logo-cell">
+                      <img
+                        class="company-logo"
+                        src="${safeText(
+                          logoUrl
+                        )}"
+                        alt="${safeText(
+                          companyName
+                        )}"
+                        onerror="this.style.display='none';document.getElementById('logoFallback').style.display='flex';"
+                      />
+
+                      <div
+                        id="logoFallback"
+                        class="logo-fallback"
+                      >
+                        ${safeText(
+                          logoInitials
+                        )}
+                      </div>
+                    </td>
+
+                    <td class="title-cell">
+                      <div class="company-name">
+                        ${safeText(
+                          companyName
+                        )}
+                      </div>
+
+                      <div class="document-title">
+                        DELIVERY CHALLAN
+                      </div>
+                    </td>
+
+                    <td class="document-cell">
+                      <div>
+                        ${safeText(
+                          challan.documentNo ||
+                            "UP-DC-01 / 01"
+                        )}
+                      </div>
+
+                      <div>
+                        Issue:
+                        ${safeText(
+                          challan.issueNo ||
+                            "01"
+                        )},
+                        Rev:
+                        ${safeText(
+                          challan.revisionNo ||
+                            "00"
+                        )}
+                      </div>
+
+                      <div>
+                        Doc. Issued:
+                        ${safeText(
+                          formatDate(
+                            challan.documentIssueDate ||
+                              challan.challanDate
+                          )
+                        )}
+                      </div>
+                    </td>
                   </tr>
-                </thead>
+                </table>
 
-                <tbody>
-                  ${rows}
-                </tbody>
-              </table>
+                <div class="top-info">
+                  <div class="info-row">
+                    <div>
+                      S.NO:
+                      <span class="value-line">${safeText(
+                        challan.challanNo ||
+                          ""
+                      )}</span>
+                    </div>
 
-              <p>
-                <b>Remarks:</b>
-                ${safeText(
-                  challan.remarks ||
-                    "-"
-                )}
-              </p>
+                    <div></div>
+                  </div>
 
-              <div class="signatures">
-                <div class="signature">
-                  Prepared By
+                  <div class="info-row">
+                    <div>
+                      DATED:
+                      <span class="value-line">${safeText(
+                        formatDate(
+                          challan.challanDate
+                        )
+                      )}</span>
+                    </div>
+
+                    <div class="right-info">
+                      PO #
+                      <span class="value-line">${safeText(
+                        challan.poNo ||
+                          ""
+                      )}</span>
+                    </div>
+                  </div>
+
+                  <div class="attention-block">
+                    <div>
+                      ATTN:
+                      <span class="value-line">${safeText(
+                        challan.attentionTo ||
+                          challan.customerName ||
+                          ""
+                      )}</span>
+                    </div>
+
+                    <div>
+                      ${safeText(
+                        challan.customerName ||
+                          ""
+                      )}
+                    </div>
+                  </div>
                 </div>
 
-                <div class="signature">
-                  Dispatched By
+                <table class="items-table">
+                  <thead>
+                    <tr>
+                      <th>PARTICULARS</th>
+                      <th>SIZE</th>
+                      <th>Carton</th>
+                      <th>Rolls</th>
+                      <th>Gross Weight</th>
+                      <th>Net Weight</th>
+                    </tr>
+                  </thead>
+
+                  <tbody>
+                    ${rows}
+
+                    <tr class="total-row">
+                      <td class="total-label">
+                        TOTAL
+                      </td>
+
+                      <td></td>
+
+                      <td class="center">
+                        ${printNumber(
+                          totalCartons,
+                          " ctn"
+                        )}
+                      </td>
+
+                      <td class="center">
+                        ${printNumber(
+                          totalRolls,
+                          " roll"
+                        )}
+                      </td>
+
+                      <td class="right">
+                        ${printNumber(
+                          totalGrossWeight,
+                          " kg"
+                        )}
+                      </td>
+
+                      <td class="right">
+                        ${printNumber(
+                          totalNetWeight,
+                          " kg"
+                        )}
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+
+                <div class="remarks">
+                  ${
+                    challan.remarks
+                      ? `<b>Remarks:</b> ${safeText(
+                          challan.remarks
+                        )}`
+                      : ""
+                  }
                 </div>
 
-                <div class="signature">
-                  Received By
+                <div class="signature-area">
+                  <div class="signature-row">
+                    <div>PREPARED BY:</div>
+
+                    <div class="signature-line">
+                      ${safeText(
+                        challan.preparedBy ||
+                          ""
+                      )}
+                    </div>
+
+                    <div class="signature-date">
+                      DATE:
+                    </div>
+
+                    <div class="signature-line">
+                      ${safeText(
+                        formatDate(
+                          challan.challanDate
+                        )
+                      )}
+                    </div>
+                  </div>
+
+                  <div class="signature-row">
+                    <div>DISPATCH BY:</div>
+
+                    <div class="signature-line">
+                      ${safeText(
+                        challan.dispatchedBy ||
+                          ""
+                      )}
+                    </div>
+
+                    <div class="signature-date">
+                      DATE:
+                    </div>
+
+                    <div class="signature-line">
+                      ${safeText(
+                        challan.dispatchDate
+                          ? formatDate(
+                              challan.dispatchDate
+                            )
+                          : ""
+                      )}
+                    </div>
+                  </div>
+
+                  <div class="signature-row">
+                    <div>RECEIVED BY:</div>
+
+                    <div class="signature-line">
+                      ${safeText(
+                        challan.receivedBy ||
+                          ""
+                      )}
+                    </div>
+
+                    <div class="signature-date">
+                      DATE:
+                    </div>
+
+                    <div class="signature-line">
+                      ${safeText(
+                        challan.receivedDate
+                          ? formatDate(
+                              challan.receivedDate
+                            )
+                          : ""
+                      )}
+                    </div>
+                  </div>
+
+                  <div class="signature-row final">
+                    <div>NAME:</div>
+
+                    <div class="signature-line">
+                      ${safeText(
+                        challan.receivedBy ||
+                          ""
+                      )}
+                    </div>
+
+                    <div>DESIGNATION:</div>
+
+                    <div class="signature-line">
+                      ${safeText(
+                        challan.receiverDesignation ||
+                          ""
+                      )}
+                    </div>
+                  </div>
                 </div>
               </div>
 
               <script>
-                window.print();
+                const logo =
+                  document.querySelector(
+                    ".company-logo"
+                  );
+
+                const startPrint =
+                  () =>
+                    setTimeout(
+                      () =>
+                        window.print(),
+                      250
+                    );
+
+                if (
+                  logo &&
+                  !logo.complete
+                ) {
+                  logo.onload =
+                    startPrint;
+
+                  logo.onerror =
+                    startPrint;
+                } else {
+                  startPrint();
+                }
               </script>
             </body>
           </html>
@@ -1802,6 +2378,129 @@ const DeliveryChallans =
           </div>
 
           <div className="space-y-7 rounded-b-xl border-x border-b bg-white p-5 md:p-7">
+            <Section title="Print Header">
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+                <Field label="Company Name">
+                  <input
+                    value={
+                      form.companyName
+                    }
+                    onChange={(
+                      event
+                    ) =>
+                      updateField(
+                        "companyName",
+                        event.target.value
+                      )
+                    }
+                    className={
+                      inputClass
+                    }
+                  />
+                </Field>
+
+                <Field
+                  label="Company Logo Path / URL"
+                  wide
+                >
+                  <input
+                    value={
+                      form.companyLogo
+                    }
+                    onChange={(
+                      event
+                    ) =>
+                      updateField(
+                        "companyLogo",
+                        event.target.value
+                      )
+                    }
+                    placeholder="/logo.png"
+                    className={
+                      inputClass
+                    }
+                  />
+                </Field>
+
+                <Field label="Document Number">
+                  <input
+                    value={
+                      form.documentNo
+                    }
+                    onChange={(
+                      event
+                    ) =>
+                      updateField(
+                        "documentNo",
+                        event.target.value
+                      )
+                    }
+                    className={
+                      inputClass
+                    }
+                  />
+                </Field>
+
+                <Field label="Issue Number">
+                  <input
+                    value={
+                      form.issueNo
+                    }
+                    onChange={(
+                      event
+                    ) =>
+                      updateField(
+                        "issueNo",
+                        event.target.value
+                      )
+                    }
+                    className={
+                      inputClass
+                    }
+                  />
+                </Field>
+
+                <Field label="Revision Number">
+                  <input
+                    value={
+                      form.revisionNo
+                    }
+                    onChange={(
+                      event
+                    ) =>
+                      updateField(
+                        "revisionNo",
+                        event.target.value
+                      )
+                    }
+                    className={
+                      inputClass
+                    }
+                  />
+                </Field>
+
+                <Field label="Document Issue Date">
+                  <input
+                    type="date"
+                    value={
+                      form.documentIssueDate
+                    }
+                    onChange={(
+                      event
+                    ) =>
+                      updateField(
+                        "documentIssueDate",
+                        event.target.value
+                      )
+                    }
+                    className={
+                      inputClass
+                    }
+                  />
+                </Field>
+              </div>
+            </Section>
+
             <Section title="Sales Order">
               <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
                 <Field label="Challan Number">
@@ -2026,7 +2725,7 @@ const DeliveryChallans =
 
             <Section title="Finished Goods">
               <div className="overflow-x-auto rounded-xl border">
-                <table className="w-full min-w-[1180px] text-left text-xs">
+                <table className="w-full min-w-[1280px] text-left text-xs">
                   <thead className="bg-slate-800 text-white">
                     <tr>
                       <th className="p-3">
@@ -2062,6 +2761,10 @@ const DeliveryChallans =
                       </th>
 
                       <th className="p-3 text-right">
+                        Rolls
+                      </th>
+
+                      <th className="p-3 text-right">
                         Gross Wt.
                       </th>
 
@@ -2080,7 +2783,7 @@ const DeliveryChallans =
                     0 ? (
                       <tr>
                         <td
-                          colSpan="11"
+                          colSpan="12"
                           className="p-8 text-center text-slate-400"
                         >
                           Select a sales order.
@@ -2205,6 +2908,29 @@ const DeliveryChallans =
                                 min="0"
                                 step="any"
                                 value={
+                                  item.rolls
+                                }
+                                onChange={(
+                                  event
+                                ) =>
+                                  updateItem(
+                                    index,
+                                    "rolls",
+                                    event.target.value
+                                  )
+                                }
+                                className={
+                                  inputClass
+                                }
+                              />
+                            </td>
+
+                            <td className="p-3">
+                              <input
+                                type="number"
+                                min="0"
+                                step="any"
+                                value={
                                   item.grossWeight
                                 }
                                 onChange={(
@@ -2268,11 +2994,18 @@ const DeliveryChallans =
                 </table>
               </div>
 
-              <div className="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
+              <div className="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-5">
                 <SummaryBox
                   label="Cartons"
                   value={formatQuantity(
                     totals.cartons
+                  )}
+                />
+
+                <SummaryBox
+                  label="Rolls"
+                  value={formatQuantity(
+                    totals.rolls
                   )}
                 />
 
