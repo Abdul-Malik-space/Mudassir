@@ -1,857 +1,2761 @@
 const express = require("express");
-const mongoose = require("mongoose");
-
 const router = express.Router();
 
-const Item = require("../models/Item");
-const StockLedger = require("../models/StockLedger");
-const Counter = require("../models/Counter");
+const Invoice = require("../models/Invoice");
 
-const { postStockMovement } = require("../utils/stockService");
+const DeliveryChallan = require(
+  "../models/DeliveryChallan"
+);
 
-const RAW_MATERIAL_GODOWN = "Raw Material Godown";
-const FINISHED_GOODS_GODOWN = "Finished Goods Godown";
+const SalesOrder = require(
+  "../models/SalesOrder"
+);
 
-const VALID_ITEM_TYPES = [
-  "Raw Material",
-  "Packing Material",
-  "Finished Good",
-  "Consumable",
-  "Service",
+const Counter = require(
+  "../models/Counter"
+);
+
+const COMPANY_PROFILES =
+  Invoice.COMPANY_PROFILES || {
+    topical: {
+      key: "topical",
+      name:
+        "TOPICAL PACKAGING PVT. LTD.",
+      shortName:
+        "Topical Packaging",
+      templateType:
+        "detailed",
+      codePrefix:
+        "TP-INV",
+      address:
+        "21-Km, Ferozepur Road, Lahore, Pakistan",
+      phone:
+        "+92 321 9970676",
+      salesTaxRegNo:
+        "32-77-8762-085-29",
+      nationalTaxNo:
+        "6620209-3",
+    },
+
+    alKaram: {
+      key: "alKaram",
+      name:
+        "AL-KARAM TRADERS",
+      shortName:
+        "Al-Karam Traders",
+      templateType:
+        "compact",
+      codePrefix:
+        "AK-INV",
+      address:
+        "Office #17, 3rd Floor, Gohar Centre, Wahdat Road, Lahore",
+      phone:
+        "0423 5912858 | 0333 8295065",
+      salesTaxRegNo: "",
+      nationalTaxNo: "",
+    },
+  };
+
+const allowedStatuses = [
+  "Draft",
+  "Issued",
+  "Paid",
+  "Cancelled",
 ];
 
-const VALID_STATUSES = ["Active", "Inactive"];
+const allowedTaxTypes = [
+  "without-tax",
+  "with-tax",
+];
 
-const ITEM_TYPE_ALIASES = {
-  RAW_MATERIAL: "Raw Material",
-  RAWMATERIAL: "Raw Material",
+const allowedTextTypes = [
+  "",
+  "with-text",
+  "without-text",
+];
 
-  PACKING_MATERIAL: "Packing Material",
-  PACKINGMATERIAL: "Packing Material",
+const eligibleChallanStatuses = [
+  "Dispatched",
+  "Received",
+];
 
-  FINISHED_GOOD: "Finished Good",
-  FINISHED_GOODS: "Finished Good",
-  FINISHEDGOOD: "Finished Good",
-  FINISHEDGOODS: "Finished Good",
-  FINISHED_PRODUCT: "Finished Good",
-  FINISHEDPRODUCT: "Finished Good",
+/*
+|--------------------------------------------------------------------------
+| Basic Helpers
+|--------------------------------------------------------------------------
+*/
 
-  CONSUMABLE: "Consumable",
-  CONSUMABLES: "Consumable",
-
-  SERVICE: "Service",
-  SERVICES: "Service",
-};
-
-const normalizeItemType = (value) => {
-  if (value === undefined || value === null || value === "") {
-    return "Raw Material";
+const normalizeProfileKey = (
+  value
+) => {
+  if (
+    typeof Invoice.normalizeProfileKey ===
+    "function"
+  ) {
+    return Invoice.normalizeProfileKey(
+      value
+    );
   }
 
-  const originalValue = String(value).trim();
+  const normalized = String(
+    value || ""
+  )
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_-]/g, "");
 
-  const normalizedKey = originalValue
-    .toUpperCase()
-    .replace(/[\s-]+/g, "_");
-
-  return ITEM_TYPE_ALIASES[normalizedKey] || originalValue;
+  return normalized === "alkaram"
+    ? "alKaram"
+    : "topical";
 };
 
-const normalizeStatus = (value) => {
-  if (value === undefined || value === null || value === "") {
-    return "Active";
-  }
+const getProfile = (value) => {
+  const key =
+    normalizeProfileKey(
+      value
+    );
 
-  const normalizedValue = String(value).trim().toLowerCase();
-
-  if (normalizedValue === "active") return "Active";
-  if (normalizedValue === "inactive") return "Inactive";
-
-  return String(value).trim();
+  return (
+    COMPANY_PROFILES[key] ||
+    COMPANY_PROFILES.topical
+  );
 };
 
-const nonNegativeNumber = (value, defaultValue = 0) => {
-  const number = Number(value);
+const cleanText = (
+  value,
+  fallback = ""
+) =>
+  String(
+    value ?? fallback
+  ).trim();
 
-  if (!Number.isFinite(number)) {
-    return defaultValue;
-  }
+const cleanNumber = (value) => {
+  const parsed = Number(
+    value || 0
+  );
 
-  return number < 0 ? 0 : number;
+  return Number.isFinite(
+    parsed
+  )
+    ? Math.max(parsed, 0)
+    : 0;
 };
 
-const getDefaultWarehouse = (itemType) => {
-  if (itemType === "Finished Good") {
-    return FINISHED_GOODS_GODOWN;
-  }
+const roundMoney = (value) =>
+  Math.round(
+    (Number(value || 0) +
+      Number.EPSILON) *
+      100
+  ) / 100;
 
-  if (itemType === "Service") {
+const getId = (value) => {
+  if (!value) {
     return "";
   }
 
-  return RAW_MATERIAL_GODOWN;
-};
-
-const isValidItemId = (id) => {
-  return mongoose.isValidObjectId(id);
-};
-
-const cleanCreatePayload = (body = {}) => {
-  const itemType = normalizeItemType(body.itemType);
-
-  const payload = {
-    code: body.code
-      ? String(body.code).trim().toUpperCase()
-      : undefined,
-
-    name: String(body.name || "").trim(),
-
-    itemType,
-
-    category:
-      String(body.category || "").trim() || "General",
-
-    brand: String(body.brand || "").trim(),
-
-    unit:
-      String(body.unit || "").trim() || "Pcs",
-
-    purchasePrice: nonNegativeNumber(body.purchasePrice),
-
-    salePrice: nonNegativeNumber(body.salePrice),
-
-    openingStock: nonNegativeNumber(body.openingStock),
-
-    minStock: nonNegativeNumber(body.minStock),
-
-    stockManaged: itemType !== "Service",
-
-    status: normalizeStatus(body.status),
-
-    notes: String(body.notes || "").trim(),
-  };
-
-  if (itemType === "Service") {
-    payload.stockManaged = false;
-    payload.openingStock = 0;
-    payload.minStock = 0;
-  }
-
-  return payload;
-};
-
-const cleanUpdatePayload = (body = {}) => {
-  const payload = {};
-
-  if (body.code !== undefined) {
-    payload.code = String(body.code || "")
-      .trim()
-      .toUpperCase();
-  }
-
-  if (body.name !== undefined) {
-    payload.name = String(body.name || "").trim();
-  }
-
-  if (body.itemType !== undefined) {
-    payload.itemType = normalizeItemType(body.itemType);
-  }
-
-  if (body.category !== undefined) {
-    payload.category =
-      String(body.category || "").trim() || "General";
-  }
-
-  if (body.brand !== undefined) {
-    payload.brand = String(body.brand || "").trim();
-  }
-
-  if (body.unit !== undefined) {
-    payload.unit =
-      String(body.unit || "").trim() || "Pcs";
-  }
-
-  if (body.purchasePrice !== undefined) {
-    payload.purchasePrice = nonNegativeNumber(
-      body.purchasePrice
+  if (
+    typeof value ===
+      "object" &&
+    value._id
+  ) {
+    return String(
+      value._id
     );
   }
 
-  if (body.salePrice !== undefined) {
-    payload.salePrice = nonNegativeNumber(
-      body.salePrice
-    );
-  }
-
-  if (body.minStock !== undefined) {
-    payload.minStock = nonNegativeNumber(body.minStock);
-  }
-
-  if (body.status !== undefined) {
-    payload.status = normalizeStatus(body.status);
-  }
-
-  if (body.notes !== undefined) {
-    payload.notes = String(body.notes || "").trim();
-  }
-
-  /*
-   * Opening stock update سے تبدیل نہیں ہوگا۔
-   * بعد کی stock corrections Manual Stock Adjustment سے ہوں گی۔
-   */
-  delete payload.openingStock;
-  delete payload.openingStockPosted;
-
-  return payload;
-};
-
-const getNextItemCode = async () => {
-  for (let attempt = 0; attempt < 10; attempt += 1) {
-    const counter = await Counter.findOneAndUpdate(
-      { name: "itemCode" },
-      { $inc: { seq: 1 } },
-      {
-        new: true,
-        upsert: true,
-        setDefaultsOnInsert: true,
-      }
-    );
-
-    const code = `ITM-${String(counter.seq).padStart(
-      4,
-      "0"
-    )}`;
-
-    const alreadyExists = await Item.exists({ code });
-
-    if (!alreadyExists) {
-      return code;
-    }
-  }
-
-  throw new Error("Unable to generate unique item code");
-};
-
-const getStockMap = async () => {
-  const rows = await StockLedger.aggregate([
-    {
-      $group: {
-        _id: "$item",
-        qtyIn: {
-          $sum: {
-            $ifNull: ["$qtyIn", 0],
-          },
-        },
-        qtyOut: {
-          $sum: {
-            $ifNull: ["$qtyOut", 0],
-          },
-        },
-      },
-    },
-  ]);
-
-  const stockMap = new Map();
-
-  rows.forEach((row) => {
-    const qtyIn = Number(row.qtyIn || 0);
-    const qtyOut = Number(row.qtyOut || 0);
-
-    stockMap.set(String(row._id), {
-      qtyIn,
-      qtyOut,
-      currentStock: qtyIn - qtyOut,
-    });
-  });
-
-  return stockMap;
-};
-
-const getItemWarehouseBalances = async (itemId) => {
-  const rows = await StockLedger.aggregate([
-    {
-      $match: {
-        item: new mongoose.Types.ObjectId(itemId),
-      },
-    },
-    {
-      $group: {
-        _id: {
-          $ifNull: ["$warehouse", "Unknown Warehouse"],
-        },
-        qtyIn: {
-          $sum: {
-            $ifNull: ["$qtyIn", 0],
-          },
-        },
-        qtyOut: {
-          $sum: {
-            $ifNull: ["$qtyOut", 0],
-          },
-        },
-      },
-    },
-    {
-      $sort: {
-        _id: 1,
-      },
-    },
-  ]);
-
-  return rows.map((row) => {
-    const qtyIn = Number(row.qtyIn || 0);
-    const qtyOut = Number(row.qtyOut || 0);
-
-    return {
-      warehouse: row._id,
-      qtyIn,
-      qtyOut,
-      currentStock: qtyIn - qtyOut,
-    };
-  });
+  return String(value);
 };
 
 /*
 |--------------------------------------------------------------------------
-| Preview Next Item Code
+| Amount in Words
 |--------------------------------------------------------------------------
 */
 
-router.get("/next-code", async (req, res) => {
-  try {
-    const counter = await Counter.findOne({
-      name: "itemCode",
-    });
+const numberToWordsBelowThousand = (
+  number
+) => {
+  const ones = [
+    "",
+    "One",
+    "Two",
+    "Three",
+    "Four",
+    "Five",
+    "Six",
+    "Seven",
+    "Eight",
+    "Nine",
+    "Ten",
+    "Eleven",
+    "Twelve",
+    "Thirteen",
+    "Fourteen",
+    "Fifteen",
+    "Sixteen",
+    "Seventeen",
+    "Eighteen",
+    "Nineteen",
+  ];
 
-    const nextSequence = counter
-      ? Number(counter.seq || 0) + 1
-      : 1;
+  const tens = [
+    "",
+    "",
+    "Twenty",
+    "Thirty",
+    "Forty",
+    "Fifty",
+    "Sixty",
+    "Seventy",
+    "Eighty",
+    "Ninety",
+  ];
 
-    return res.status(200).json({
-      success: true,
-      code: `ITM-${String(nextSequence).padStart(
+  let value =
+    Math.floor(number);
+
+  const parts = [];
+
+  if (value >= 100) {
+    parts.push(
+      `${
+        ones[
+          Math.floor(
+            value / 100
+          )
+        ]
+      } Hundred`
+    );
+
+    value %= 100;
+  }
+
+  if (value >= 20) {
+    parts.push(
+      tens[
+        Math.floor(
+          value / 10
+        )
+      ]
+    );
+
+    value %= 10;
+  }
+
+  if (value > 0) {
+    parts.push(
+      ones[value]
+    );
+  }
+
+  return parts.join(" ");
+};
+
+const amountToWords = (
+  amount
+) => {
+  let value =
+    Math.round(
+      cleanNumber(amount)
+    );
+
+  if (value === 0) {
+    return "Zero Rupees Only";
+  }
+
+  const parts = [];
+
+  const groups = [
+    {
+      value: 10000000,
+      label: "Crore",
+    },
+    {
+      value: 100000,
+      label: "Lakh",
+    },
+    {
+      value: 1000,
+      label: "Thousand",
+    },
+  ];
+
+  for (const group of groups) {
+    if (
+      value >= group.value
+    ) {
+      const count =
+        Math.floor(
+          value /
+            group.value
+        );
+
+      parts.push(
+        `${numberToWordsBelowThousand(
+          count
+        )} ${group.label}`
+      );
+
+      value %= group.value;
+    }
+  }
+
+  if (value > 0) {
+    parts.push(
+      numberToWordsBelowThousand(
+        value
+      )
+    );
+  }
+
+  return `${parts.join(
+    " "
+  )} Rupees Only`;
+};
+
+/*
+|--------------------------------------------------------------------------
+| Company-Specific Invoice Number
+|--------------------------------------------------------------------------
+*/
+
+const getCounterName = (
+  profileKey
+) =>
+  `invoiceNo:${profileKey}`;
+
+const getNextInvoiceNo = async (
+  companyProfile
+) => {
+  const profile =
+    getProfile(
+      companyProfile
+    );
+
+  let invoiceNo = "";
+
+  for (
+    let attempt = 0;
+    attempt < 10;
+    attempt += 1
+  ) {
+    const counter =
+      await Counter.findOneAndUpdate(
+        {
+          name:
+            getCounterName(
+              profile.key
+            ),
+        },
+
+        {
+          $inc: {
+            seq: 1,
+          },
+        },
+
+        {
+          returnDocument:
+            "after",
+
+          upsert: true,
+
+          setDefaultsOnInsert:
+            true,
+        }
+      );
+
+    invoiceNo =
+      `${profile.codePrefix}-` +
+      String(
+        counter.seq
+      ).padStart(
         4,
         "0"
-      )}`,
-    });
-  } catch (error) {
-    console.error("Next Item Code Error:", error);
+      );
 
-    return res.status(500).json({
-      success: false,
-      message: "Item code generate nahi hua",
-      error: error.message,
-    });
+    const exists =
+      await Invoice.exists({
+        invoiceNo,
+      });
+
+    if (!exists) {
+      return invoiceNo;
+    }
   }
-});
+
+  throw new Error(
+    "Unable to generate a unique invoice number"
+  );
+};
+
+const peekNextInvoiceNo =
+  async (
+    companyProfile
+  ) => {
+    const profile =
+      getProfile(
+        companyProfile
+      );
+
+    const counter =
+      await Counter.findOne({
+        name:
+          getCounterName(
+            profile.key
+          ),
+      }).lean();
+
+    const nextSeq =
+      counter
+        ? Number(
+            counter.seq || 0
+          ) + 1
+        : 1;
+
+    return (
+      `${profile.codePrefix}-` +
+      String(
+        nextSeq
+      ).padStart(
+        4,
+        "0"
+      )
+    );
+  };
 
 /*
 |--------------------------------------------------------------------------
-| Add Item
+| Sales Order Item Matching
 |--------------------------------------------------------------------------
 */
 
-router.post("/add", async (req, res) => {
-  let createdItem = null;
+const getSalesOrderItem = (
+  invoiceItem,
+  salesOrder,
+  index
+) => {
+  const orderItems =
+    Array.isArray(
+      salesOrder?.items
+    )
+      ? salesOrder.items
+      : [];
 
-  try {
-    const payload = cleanCreatePayload(req.body);
+  const requestedSalesOrderItemId =
+    getId(
+      invoiceItem.salesOrderItemId
+    );
 
-    if (!payload.name) {
-      return res.status(400).json({
-        success: false,
-        message: "Item name required hai",
-      });
-    }
+  const requestedItemId =
+    getId(
+      invoiceItem.item
+    );
 
-    if (!VALID_ITEM_TYPES.includes(payload.itemType)) {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid item type",
-      });
-    }
+  const requestedDescription =
+    cleanText(
+      invoiceItem.description
+    ).toLowerCase();
 
-    if (!VALID_STATUSES.includes(payload.status)) {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid item status",
-      });
-    }
+  const requestedSize =
+    cleanText(
+      invoiceItem.size
+    ).toLowerCase();
 
-    if (!payload.code) {
-      payload.code = await getNextItemCode();
-    }
+  const exact =
+    orderItems.find(
+      (item) => {
+        const rowId =
+          getId(
+            item._id ||
+              item.salesOrderItemId
+          );
 
-    createdItem = await Item.create(payload);
+        const itemId =
+          getId(
+            item.item
+          );
 
-    let finalItem = createdItem;
+        const description =
+          cleanText(
+            item.description
+          ).toLowerCase();
 
-    /*
-     * Opening stock صرف initial system setup کے لیے ہے۔
-     * Regular stock GRN یا Production Receipt سے آئے گا۔
-     */
-    if (
-      createdItem.stockManaged &&
-      payload.openingStock > 0
-    ) {
-      const openingWarehouse = getDefaultWarehouse(
-        createdItem.itemType
-      );
+        const size =
+          cleanText(
+            item.size
+          ).toLowerCase();
 
-      await postStockMovement({
-        item: createdItem._id,
-        warehouse: openingWarehouse,
+        return (
+          (requestedSalesOrderItemId &&
+            rowId ===
+              requestedSalesOrderItemId) ||
+          (requestedItemId &&
+            itemId ===
+              requestedItemId) ||
+          (description ===
+              requestedDescription &&
+            size ===
+              requestedSize)
+        );
+      }
+    );
 
-        movementType: "Opening Stock",
+  return (
+    exact ||
+    orderItems[index] ||
+    null
+  );
+};
 
-        sourceModule: "Item Master",
-        referenceModel: "Item",
-        referenceId: createdItem._id,
-        referenceNo: createdItem.code,
+/*
+|--------------------------------------------------------------------------
+| Delivery Challan Item Matching
+|--------------------------------------------------------------------------
+*/
 
-        qtyIn: payload.openingStock,
-        qtyOut: 0,
+const findChallanItem = (
+  requestedItem,
+  challanItems,
+  index
+) => {
+  const deliveryChallanItemId =
+    getId(
+      requestedItem.deliveryChallanItemId
+    );
 
-        rate: payload.purchasePrice,
+  const salesOrderItemId =
+    getId(
+      requestedItem.salesOrderItemId
+    );
+
+  const itemId =
+    getId(
+      requestedItem.item
+    );
+
+  const description =
+    cleanText(
+      requestedItem.description
+    ).toLowerCase();
+
+  const size =
+    cleanText(
+      requestedItem.size
+    ).toLowerCase();
+
+  const exact =
+    challanItems.find(
+      (item) => {
+        const challanItemId =
+          getId(
+            item._id
+          );
+
+        const challanSalesOrderItemId =
+          getId(
+            item.salesOrderItemId
+          );
+
+        const challanItemMasterId =
+          getId(
+            item.item
+          );
+
+        const challanDescription =
+          cleanText(
+            item.description
+          ).toLowerCase();
+
+        const challanSize =
+          cleanText(
+            item.size
+          ).toLowerCase();
+
+        return (
+          (deliveryChallanItemId &&
+            challanItemId ===
+              deliveryChallanItemId) ||
+          (salesOrderItemId &&
+            challanSalesOrderItemId ===
+              salesOrderItemId) ||
+          (itemId &&
+            challanItemMasterId ===
+              itemId) ||
+          (challanDescription ===
+              description &&
+            challanSize === size)
+        );
+      }
+    );
+
+  return (
+    exact ||
+    challanItems[index] ||
+    null
+  );
+};
+
+const getMaximumInvoiceQuantity = (
+  challanItem,
+  requestedUnit
+) => {
+  const unit =
+    cleanText(
+      requestedUnit ||
+        challanItem.unit
+    ).toLowerCase();
+
+  const isWeightUnit = [
+    "kg",
+    "kgs",
+    "kilogram",
+    "kilograms",
+  ].includes(unit);
+
+  if (
+    isWeightUnit &&
+    cleanNumber(
+      challanItem.netWeight
+    ) > 0
+  ) {
+    return cleanNumber(
+      challanItem.netWeight
+    );
+  }
+
+  return cleanNumber(
+    challanItem.quantity
+  );
+};
+
+/*
+|--------------------------------------------------------------------------
+| Validate and Clean Invoice Items
+|--------------------------------------------------------------------------
+*/
+
+const cleanInvoiceItems = ({
+  items = [],
+  challan,
+  salesOrder,
+}) => {
+  const challanItems =
+    Array.isArray(
+      challan.items
+    )
+      ? challan.items
+      : [];
+
+  const requestedItems =
+    Array.isArray(items) &&
+    items.length
+      ? items
+      : challanItems;
+
+  const cleanItems = [];
+
+  requestedItems.forEach(
+    (
+      requestedItem,
+      index
+    ) => {
+      if (
+        !requestedItem ||
+        !cleanText(
+          requestedItem.description
+        )
+      ) {
+        return;
+      }
+
+      const challanItem =
+        findChallanItem(
+          requestedItem,
+          challanItems,
+          index
+        );
+
+      if (!challanItem) {
+        throw new Error(
+          `Item "${cleanText(
+            requestedItem.description
+          )}" was not found in the selected delivery challan`
+        );
+      }
+
+      const salesOrderItem =
+        getSalesOrderItem(
+          {
+            ...requestedItem,
+
+            salesOrderItemId:
+              requestedItem.salesOrderItemId ||
+              challanItem.salesOrderItemId,
+
+            item:
+              requestedItem.item ||
+              challanItem.item,
+          },
+
+          salesOrder,
+
+          index
+        );
+
+      const quantity =
+        cleanNumber(
+          requestedItem.quantity !==
+          undefined
+            ? requestedItem.quantity
+            : challanItem.quantity
+        );
+
+      if (quantity <= 0) {
+        return;
+      }
+
+      const unit =
+        cleanText(
+          requestedItem.unit ||
+            challanItem.unit ||
+            "Rolls"
+        );
+
+      const maximumQuantity =
+        getMaximumInvoiceQuantity(
+          challanItem,
+          unit
+        );
+
+      if (
+        maximumQuantity > 0 &&
+        quantity >
+          maximumQuantity
+      ) {
+        throw new Error(
+          `Invoice quantity for "${cleanText(
+            requestedItem.description
+          )}" cannot exceed delivery challan quantity ${maximumQuantity} ${unit}`
+        );
+      }
+
+      const unitPrice =
+        cleanNumber(
+          requestedItem.unitPrice !==
+              undefined &&
+            requestedItem.unitPrice !==
+              ""
+            ? requestedItem.unitPrice
+            : salesOrderItem?.unitPrice
+        );
+
+      const grossWeight =
+        cleanNumber(
+          requestedItem.grossWeight ??
+            challanItem.grossWeight
+        );
+
+      const netWeight =
+        cleanNumber(
+          requestedItem.netWeight ??
+            challanItem.netWeight
+        );
+
+      if (
+        grossWeight > 0 &&
+        netWeight >
+          grossWeight
+      ) {
+        throw new Error(
+          `Net weight cannot exceed gross weight for item "${cleanText(
+            requestedItem.description
+          )}"`
+        );
+      }
+
+      cleanItems.push({
+        item:
+          requestedItem.item ||
+          challanItem.item ||
+          salesOrderItem?.item ||
+          null,
+
+        deliveryChallanItemId:
+          challanItem._id ||
+          null,
+
+        salesOrderItemId:
+          requestedItem.salesOrderItemId ||
+          challanItem.salesOrderItemId ||
+          salesOrderItem?._id ||
+          null,
+
+        description:
+          cleanText(
+            requestedItem.description ||
+              challanItem.description
+          ),
+
+        size:
+          cleanText(
+            requestedItem.size ||
+              challanItem.size
+          ),
+
+        textType:
+          allowedTextTypes.includes(
+            requestedItem.textType
+          )
+            ? requestedItem.textType
+            : allowedTextTypes.includes(
+                  challanItem.textType
+                )
+              ? challanItem.textType
+              : "",
+
+        cartons:
+          cleanNumber(
+            requestedItem.cartons ??
+              challanItem.cartons
+          ),
+
+        rolls:
+          cleanNumber(
+            requestedItem.rolls ??
+              challanItem.rolls
+          ),
+
+        packing:
+          cleanText(
+            requestedItem.packing ||
+              requestedItem.cartons ||
+              challanItem.cartons ||
+              ""
+          ),
+
+        quantity,
+
+        unit,
+
+        unitPrice,
+
+        grossWeight,
+
+        netWeight,
+
+        amount:
+          roundMoney(
+            quantity *
+              unitPrice
+          ),
 
         remarks:
-          createdItem.itemType === "Finished Good"
-            ? "Initial finished goods opening stock"
-            : "Initial raw material opening stock",
-      });
-
-      finalItem = await Item.findByIdAndUpdate(
-        createdItem._id,
-        {
-          openingStockPosted: true,
-        },
-        {
-          new: true,
-          runValidators: true,
-        }
-      );
-    }
-
-    return res.status(201).json({
-      success: true,
-      message: "Item added successfully",
-      data: {
-        ...finalItem.toObject(),
-        defaultWarehouse: getDefaultWarehouse(
-          finalItem.itemType
-        ),
-      },
-    });
-  } catch (error) {
-    console.error("Item Add Error:", error);
-
-    /*
-     * Stock posting fail ہونے پر بغیر stock والا ادھورا
-     * نیا item remove کردیا جائے گا۔
-     */
-    if (createdItem && !createdItem.openingStockPosted) {
-      try {
-        const movementExists = await StockLedger.exists({
-          item: createdItem._id,
-        });
-
-        if (!movementExists) {
-          await Item.findByIdAndDelete(createdItem._id);
-        }
-      } catch (rollbackError) {
-        console.error(
-          "Item Rollback Error:",
-          rollbackError
-        );
-      }
-    }
-
-    if (error.code === 11000) {
-      return res.status(400).json({
-        success: false,
-        message: "Ye item code already used hai",
+          cleanText(
+            requestedItem.remarks
+          ),
       });
     }
+  );
 
-    return res.status(500).json({
-      success: false,
-      message: "Item save nahi hua",
-      error: error.message,
-    });
-  }
-});
+  return cleanItems;
+};
 
 /*
 |--------------------------------------------------------------------------
-| Get All Items
+| Invoice Totals
 |--------------------------------------------------------------------------
 */
 
-router.get("/all", async (req, res) => {
-  try {
-    const {
-      search = "",
-      status = "",
-      category = "",
-      itemType = "",
-      stockManaged = "",
-    } = req.query;
+const calculateTotals = ({
+  items = [],
+  taxType =
+    "without-tax",
+  taxRate = 0,
+  paidAmount = 0,
+}) => {
+  const finalTaxType =
+    allowedTaxTypes.includes(
+      taxType
+    )
+      ? taxType
+      : "without-tax";
 
-    const query = {};
+  const finalTaxRate =
+    finalTaxType ===
+    "with-tax"
+      ? cleanNumber(
+          taxRate || 18
+        )
+      : 0;
 
-    if (status && status !== "All") {
-      query.status = normalizeStatus(status);
-    }
-
-    if (category && category !== "All") {
-      query.category = category;
-    }
-
-    if (itemType && itemType !== "All") {
-      query.itemType = normalizeItemType(itemType);
-    }
-
-    if (stockManaged === "true") {
-      query.stockManaged = true;
-    }
-
-    if (stockManaged === "false") {
-      query.stockManaged = false;
-    }
-
-    if (search) {
-      query.$or = [
-        {
-          code: {
-            $regex: search,
-            $options: "i",
-          },
-        },
-        {
-          name: {
-            $regex: search,
-            $options: "i",
-          },
-        },
-        {
-          category: {
-            $regex: search,
-            $options: "i",
-          },
-        },
-        {
-          brand: {
-            $regex: search,
-            $options: "i",
-          },
-        },
-        {
-          itemType: {
-            $regex: search,
-            $options: "i",
-          },
-        },
-      ];
-    }
-
-    const items = await Item.find(query).sort({
-      createdAt: -1,
-    });
-
-    const stockMap = await getStockMap();
-
-    const itemsWithStock = items.map((item) => {
-      const stock = stockMap.get(String(item._id)) || {
-        qtyIn: 0,
-        qtyOut: 0,
-        currentStock: 0,
-      };
-
-      return {
-        ...item.toObject(),
-
-        qtyIn: stock.qtyIn,
-        qtyOut: stock.qtyOut,
-        currentStock: stock.currentStock,
-
-        defaultWarehouse: getDefaultWarehouse(
-          item.itemType
-        ),
-      };
-    });
-
-    /*
-     * Frontend پہلے سے direct array expect کرتا ہے۔
-     */
-    return res.status(200).json(itemsWithStock);
-  } catch (error) {
-    console.error("Items Load Error:", error);
-
-    return res.status(500).json({
-      success: false,
-      message: "Items load nahi huay",
-      error: error.message,
-    });
+  if (
+    finalTaxRate > 100
+  ) {
+    throw new Error(
+      "Sales tax rate cannot exceed 100 percent"
+    );
   }
-});
+
+  const subtotal =
+    roundMoney(
+      items.reduce(
+        (sum, item) =>
+          sum +
+          cleanNumber(
+            item.amount
+          ),
+        0
+      )
+    );
+
+  const salesTax =
+    finalTaxType ===
+    "with-tax"
+      ? roundMoney(
+          subtotal *
+            (finalTaxRate /
+              100)
+        )
+      : 0;
+
+  const grandTotal =
+    roundMoney(
+      subtotal +
+        salesTax
+    );
+
+  const finalPaidAmount =
+    roundMoney(
+      cleanNumber(
+        paidAmount
+      )
+    );
+
+  if (
+    finalPaidAmount >
+    grandTotal
+  ) {
+    throw new Error(
+      "Paid amount cannot exceed grand total"
+    );
+  }
+
+  const balance =
+    roundMoney(
+      grandTotal -
+        finalPaidAmount
+    );
+
+  let paymentStatus =
+    "Unpaid";
+
+  if (
+    grandTotal > 0 &&
+    balance <= 0
+  ) {
+    paymentStatus =
+      "Paid";
+  } else if (
+    finalPaidAmount > 0
+  ) {
+    paymentStatus =
+      "Partially Paid";
+  }
+
+  return {
+    totalCartons:
+      items.reduce(
+        (sum, item) =>
+          sum +
+          cleanNumber(
+            item.cartons
+          ),
+        0
+      ),
+
+    totalRolls:
+      items.reduce(
+        (sum, item) =>
+          sum +
+          cleanNumber(
+            item.rolls
+          ),
+        0
+      ),
+
+    totalQuantity:
+      items.reduce(
+        (sum, item) =>
+          sum +
+          cleanNumber(
+            item.quantity
+          ),
+        0
+      ),
+
+    totalGrossWeight:
+      items.reduce(
+        (sum, item) =>
+          sum +
+          cleanNumber(
+            item.grossWeight
+          ),
+        0
+      ),
+
+    totalNetWeight:
+      items.reduce(
+        (sum, item) =>
+          sum +
+          cleanNumber(
+            item.netWeight
+          ),
+        0
+      ),
+
+    subtotal,
+    taxType:
+      finalTaxType,
+    taxRate:
+      finalTaxRate,
+    salesTax,
+    grandTotal,
+    paidAmount:
+      finalPaidAmount,
+    balance,
+    paymentStatus,
+
+    amountInWords:
+      amountToWords(
+        grandTotal
+      ),
+  };
+};
 
 /*
 |--------------------------------------------------------------------------
-| Get Single Item
+| Populate Invoice
 |--------------------------------------------------------------------------
 */
 
-router.get("/:id", async (req, res) => {
-  try {
-    if (!isValidItemId(req.params.id)) {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid item ID",
-      });
+const populateInvoice = (
+  query
+) =>
+  query
+    .populate(
+      "deliveryChallan",
+
+      [
+        "challanNo",
+        "challanDate",
+        "dispatchDate",
+        "status",
+        "invoiceStatus",
+        "companyProfile",
+        "companyName",
+        "templateType",
+        "totalCartons",
+        "totalRolls",
+        "totalQuantity",
+        "totalGrossWeight",
+        "totalNetWeight",
+      ].join(" ")
+    )
+
+    .populate(
+      "salesOrder",
+
+      [
+        "salesOrderNo",
+        "orderDate",
+        "deliveryDate",
+        "status",
+        "poNo",
+        "taxType",
+        "items",
+      ].join(" ")
+    )
+
+    .populate(
+      "customer",
+
+      [
+        "customerName",
+        "phoneNumber",
+        "email",
+        "address",
+        "city",
+        "ntn",
+        "strn",
+        "customerNTN",
+        "customerSTRN",
+      ].join(" ")
+    )
+
+    .populate(
+      "items.item",
+
+      [
+        "code",
+        "name",
+        "unit",
+        "category",
+        "brand",
+        "purchasePrice",
+        "salePrice",
+      ].join(" ")
+    );
+
+/*
+|--------------------------------------------------------------------------
+| Sync Delivery Challan Invoice Status
+|--------------------------------------------------------------------------
+*/
+
+const syncChallanInvoiceStatus =
+  async (
+    deliveryChallanId
+  ) => {
+    if (!deliveryChallanId) {
+      return;
     }
 
-    const item = await Item.findById(req.params.id);
+    const activeInvoice =
+      await Invoice.exists({
+        deliveryChallan:
+          deliveryChallanId,
 
-    if (!item) {
-      return res.status(404).json({
-        success: false,
-        message: "Item not found",
+        isActive: true,
       });
-    }
 
-    const warehouseBalances =
-      await getItemWarehouseBalances(req.params.id);
+    await DeliveryChallan.findByIdAndUpdate(
+      deliveryChallanId,
 
-    const totals = warehouseBalances.reduce(
-      (summary, row) => {
-        summary.qtyIn += Number(row.qtyIn || 0);
-        summary.qtyOut += Number(row.qtyOut || 0);
-        summary.currentStock += Number(
-          row.currentStock || 0
-        );
-
-        return summary;
-      },
       {
-        qtyIn: 0,
-        qtyOut: 0,
-        currentStock: 0,
+        invoiceStatus:
+          activeInvoice
+            ? "Invoiced"
+            : "Not Invoiced",
+      },
+
+      {
+        returnDocument:
+          "after",
+
+        runValidators:
+          true,
       }
     );
-
-    return res.status(200).json({
-      success: true,
-      data: {
-        ...item.toObject(),
-
-        qtyIn: totals.qtyIn,
-        qtyOut: totals.qtyOut,
-        currentStock: totals.currentStock,
-
-        defaultWarehouse: getDefaultWarehouse(
-          item.itemType
-        ),
-
-        warehouseBalances,
-      },
-    });
-  } catch (error) {
-    console.error("Single Item Load Error:", error);
-
-    return res.status(500).json({
-      success: false,
-      message: "Item load nahi hua",
-      error: error.message,
-    });
-  }
-});
+  };
 
 /*
 |--------------------------------------------------------------------------
-| Update Item
+| Sync Sales Order Status
 |--------------------------------------------------------------------------
 */
 
-router.put("/update/:id", async (req, res) => {
-  try {
-    if (!isValidItemId(req.params.id)) {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid item ID",
-      });
+const syncSalesOrderStatus =
+  async (
+    salesOrderId
+  ) => {
+    if (!salesOrderId) {
+      return;
     }
 
-    const existingItem = await Item.findById(
-      req.params.id
-    );
-
-    if (!existingItem) {
-      return res.status(404).json({
-        success: false,
-        message: "Item not found",
-      });
-    }
-
-    const payload = cleanUpdatePayload(req.body);
-
-    if (
-      payload.name !== undefined &&
-      !payload.name
-    ) {
-      return res.status(400).json({
-        success: false,
-        message: "Item name required hai",
-      });
-    }
-
-    if (
-      payload.itemType !== undefined &&
-      !VALID_ITEM_TYPES.includes(payload.itemType)
-    ) {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid item type",
-      });
-    }
-
-    if (
-      payload.status !== undefined &&
-      !VALID_STATUSES.includes(payload.status)
-    ) {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid item status",
-      });
-    }
-
-    const finalItemType =
-      payload.itemType || existingItem.itemType;
-
-    /*
-     * Stock history بننے کے بعد Item Type تبدیل کرنے سے
-     * Raw Material اور Finished Goods warehouses mix ہوسکتے ہیں۔
-     */
-    if (
-      payload.itemType &&
-      payload.itemType !== existingItem.itemType
-    ) {
-      const hasStockMovement =
-        await StockLedger.exists({
-          item: existingItem._id,
-        });
-
-      if (hasStockMovement) {
-        return res.status(400).json({
-          success: false,
-          message:
-            "Is item ka stock ledger exist karta hai. Item type ab change nahi ho sakta.",
-        });
-      }
-    }
-
-    payload.stockManaged =
-      finalItemType !== "Service";
-
-    if (finalItemType === "Service") {
-      payload.stockManaged = false;
-      payload.minStock = 0;
-    }
-
-    if (!payload.code) {
-      delete payload.code;
-    }
-
-    const updatedItem =
-      await Item.findByIdAndUpdate(
-        req.params.id,
-        payload,
-        {
-          new: true,
-          runValidators: true,
-        }
+    const salesOrder =
+      await SalesOrder.findById(
+        salesOrderId
       );
 
-    return res.status(200).json({
-      success: true,
-      message: "Item updated successfully",
-      data: {
-        ...updatedItem.toObject(),
-
-        defaultWarehouse: getDefaultWarehouse(
-          updatedItem.itemType
-        ),
-      },
-    });
-  } catch (error) {
-    console.error("Item Update Error:", error);
-
-    if (error.code === 11000) {
-      return res.status(400).json({
-        success: false,
-        message: "Ye item code already used hai",
-      });
+    if (
+      !salesOrder ||
+      salesOrder.status ===
+        "Cancelled"
+    ) {
+      return;
     }
 
-    return res.status(500).json({
-      success: false,
-      message: "Item update nahi hua",
-      error: error.message,
-    });
-  }
-});
+    const activeChallans =
+      await DeliveryChallan.find({
+        salesOrder:
+          salesOrderId,
+
+        status: {
+          $ne: "Cancelled",
+        },
+      }).select(
+        "invoiceStatus status"
+      );
+
+    const totalOrdered =
+      (
+        salesOrder.items || []
+      ).reduce(
+        (sum, item) =>
+          sum +
+          cleanNumber(
+            item.quantity
+          ),
+        0
+      );
+
+    const totalDelivered =
+      (
+        salesOrder.items || []
+      ).reduce(
+        (sum, item) =>
+          sum +
+          cleanNumber(
+            item.deliveredQty
+          ),
+        0
+      );
+
+    const fullyDelivered =
+      totalOrdered > 0 &&
+      totalDelivered >=
+        totalOrdered;
+
+    const partiallyDelivered =
+      totalDelivered > 0 &&
+      totalDelivered <
+        totalOrdered;
+
+    const allChallansInvoiced =
+      activeChallans.length >
+        0 &&
+      activeChallans.every(
+        (challan) =>
+          challan.invoiceStatus ===
+          "Invoiced"
+      );
+
+    let nextStatus =
+      salesOrder.status;
+
+    if (
+      fullyDelivered &&
+      allChallansInvoiced
+    ) {
+      nextStatus =
+        "Invoiced";
+    } else if (
+      fullyDelivered
+    ) {
+      nextStatus =
+        "Delivered";
+    } else if (
+      partiallyDelivered
+    ) {
+      nextStatus =
+        "Partially Delivered";
+    } else if (
+      salesOrder.status !==
+      "Draft"
+    ) {
+      nextStatus =
+        "Confirmed";
+    }
+
+    await SalesOrder.findByIdAndUpdate(
+      salesOrderId,
+
+      {
+        status:
+          nextStatus,
+      },
+
+      {
+        returnDocument:
+          "after",
+
+        runValidators:
+          true,
+      }
+    );
+  };
+
+const syncRelatedStatuses =
+  async ({
+    deliveryChallanId,
+    salesOrderId,
+  }) => {
+    await syncChallanInvoiceStatus(
+      deliveryChallanId
+    );
+
+    await syncSalesOrderStatus(
+      salesOrderId
+    );
+  };
 
 /*
 |--------------------------------------------------------------------------
-| Delete Item
+| Next Invoice Number
 |--------------------------------------------------------------------------
 */
 
-router.delete("/delete/:id", async (req, res) => {
-  try {
-    if (!isValidItemId(req.params.id)) {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid item ID",
-      });
+router.get(
+  "/next-no",
+
+  async (req, res) => {
+    try {
+      const profile =
+        getProfile(
+          req.query
+            .companyProfile
+        );
+
+      const invoiceNo =
+        await peekNextInvoiceNo(
+          profile.key
+        );
+
+      return res
+        .status(200)
+        .json({
+          success: true,
+          invoiceNo,
+
+          companyProfile:
+            profile.key,
+
+          companyName:
+            profile.name,
+
+          templateType:
+            profile.templateType,
+        });
+    } catch (error) {
+      console.error(
+        "Invoice Next Number Error:",
+        error
+      );
+
+      return res
+        .status(500)
+        .json({
+          success: false,
+
+          message:
+            "Invoice number could not be generated",
+
+          error:
+            error.message,
+        });
     }
-
-    const item = await Item.findById(req.params.id);
-
-    if (!item) {
-      return res.status(404).json({
-        success: false,
-        message: "Item not found",
-      });
-    }
-
-    const hasStockMovement =
-      await StockLedger.exists({
-        item: item._id,
-      });
-
-    if (hasStockMovement) {
-      return res.status(400).json({
-        success: false,
-        message:
-          "Is item ka stock ledger exist karta hai. Delete ke bajaye item ko Inactive karein.",
-      });
-    }
-
-    await Item.findByIdAndDelete(item._id);
-
-    return res.status(200).json({
-      success: true,
-      message: "Item deleted successfully",
-    });
-  } catch (error) {
-    console.error("Item Delete Error:", error);
-
-    return res.status(500).json({
-      success: false,
-      message: "Item delete nahi hua",
-      error: error.message,
-    });
   }
-});
+);
+
+/*
+|--------------------------------------------------------------------------
+| Get All Invoices
+|--------------------------------------------------------------------------
+*/
+
+router.get(
+  "/all",
+
+  async (req, res) => {
+    try {
+      const {
+        search = "",
+        status = "",
+        companyProfile = "",
+        taxType = "",
+        customer = "",
+        deliveryChallan = "",
+        salesOrder = "",
+        paymentStatus = "",
+      } = req.query;
+
+      const query = {};
+
+      if (
+        status &&
+        status !== "All"
+      ) {
+        query.status =
+          status;
+      }
+
+      if (
+        companyProfile &&
+        companyProfile !==
+          "All"
+      ) {
+        query.companyProfile =
+          normalizeProfileKey(
+            companyProfile
+          );
+      }
+
+      if (
+        taxType &&
+        taxType !== "All"
+      ) {
+        query.taxType =
+          taxType;
+      }
+
+      if (customer) {
+        query.customer =
+          customer;
+      }
+
+      if (
+        deliveryChallan
+      ) {
+        query.deliveryChallan =
+          deliveryChallan;
+      }
+
+      if (salesOrder) {
+        query.salesOrder =
+          salesOrder;
+      }
+
+      if (
+        paymentStatus &&
+        paymentStatus !==
+          "All"
+      ) {
+        query.paymentStatus =
+          paymentStatus;
+      }
+
+      if (search) {
+        query.$or = [
+          {
+            invoiceNo: {
+              $regex:
+                search,
+
+              $options:
+                "i",
+            },
+          },
+
+          {
+            challanNo: {
+              $regex:
+                search,
+
+              $options:
+                "i",
+            },
+          },
+
+          {
+            salesOrderNo: {
+              $regex:
+                search,
+
+              $options:
+                "i",
+            },
+          },
+
+          {
+            customerName: {
+              $regex:
+                search,
+
+              $options:
+                "i",
+            },
+          },
+
+          {
+            customerPhone: {
+              $regex:
+                search,
+
+              $options:
+                "i",
+            },
+          },
+
+          {
+            poNo: {
+              $regex:
+                search,
+
+              $options:
+                "i",
+            },
+          },
+
+          {
+            companyName: {
+              $regex:
+                search,
+
+              $options:
+                "i",
+            },
+          },
+
+          {
+            "items.description": {
+              $regex:
+                search,
+
+              $options:
+                "i",
+            },
+          },
+        ];
+      }
+
+      const invoices =
+        await populateInvoice(
+          Invoice.find(
+            query
+          ).sort({
+            createdAt: -1,
+          })
+        );
+
+      return res
+        .status(200)
+        .json(invoices);
+    } catch (error) {
+      console.error(
+        "Invoices Load Error:",
+        error
+      );
+
+      return res
+        .status(500)
+        .json({
+          success: false,
+
+          message:
+            "Invoices could not be loaded",
+
+          error:
+            error.message,
+        });
+    }
+  }
+);
+
+/*
+|--------------------------------------------------------------------------
+| Get Single Invoice
+|--------------------------------------------------------------------------
+*/
+
+router.get(
+  "/:id",
+
+  async (req, res) => {
+    try {
+      const invoice =
+        await populateInvoice(
+          Invoice.findById(
+            req.params.id
+          )
+        );
+
+      if (!invoice) {
+        return res
+          .status(404)
+          .json({
+            success: false,
+
+            message:
+              "Invoice not found",
+          });
+      }
+
+      return res
+        .status(200)
+        .json({
+          success: true,
+
+          data:
+            invoice,
+        });
+    } catch (error) {
+      console.error(
+        "Invoice Single Load Error:",
+        error
+      );
+
+      return res
+        .status(500)
+        .json({
+          success: false,
+
+          message:
+            "Invoice could not be loaded",
+
+          error:
+            error.message,
+        });
+    }
+  }
+);
+
+/*
+|--------------------------------------------------------------------------
+| Add Invoice
+|--------------------------------------------------------------------------
+*/
+
+router.post(
+  "/add",
+
+  async (req, res) => {
+    let savedInvoice =
+      null;
+
+    try {
+      const {
+        deliveryChallan,
+        invoiceDate,
+      } = req.body;
+
+      if (
+        !deliveryChallan
+      ) {
+        return res
+          .status(400)
+          .json({
+            success: false,
+
+            message:
+              "Delivery Challan is required",
+          });
+      }
+
+      if (!invoiceDate) {
+        return res
+          .status(400)
+          .json({
+            success: false,
+
+            message:
+              "Invoice date is required",
+          });
+      }
+
+      const challan =
+        await DeliveryChallan.findById(
+          deliveryChallan
+        );
+
+      if (!challan) {
+        return res
+          .status(404)
+          .json({
+            success: false,
+
+            message:
+              "Delivery Challan not found",
+          });
+      }
+
+      if (
+        !eligibleChallanStatuses.includes(
+          challan.status
+        ) ||
+        challan.stockPosted !== true
+      ) {
+        return res
+          .status(400)
+          .json({
+            success: false,
+
+            message:
+              "Only a Dispatched or Received delivery challan with posted stock can be invoiced",
+          });
+      }
+
+      const activeInvoice =
+        await Invoice.findOne({
+          deliveryChallan:
+            challan._id,
+
+          isActive: true,
+        });
+
+      if (
+        activeInvoice
+      ) {
+        return res
+          .status(400)
+          .json({
+            success: false,
+
+            message:
+              "An active invoice already exists for this delivery challan",
+          });
+      }
+
+      const salesOrder =
+        await SalesOrder.findById(
+          challan.salesOrder
+        );
+
+      if (
+        !salesOrder
+      ) {
+        return res
+          .status(404)
+          .json({
+            success: false,
+
+            message:
+              "Sales Order not found",
+          });
+      }
+
+      const profile =
+        getProfile(
+          req.body.companyProfile ||
+            challan.companyProfile
+        );
+
+      const cleanItems =
+        cleanInvoiceItems({
+          items:
+            req.body.items,
+
+          challan,
+
+          salesOrder,
+        });
+
+      if (
+        !cleanItems.length
+      ) {
+        return res
+          .status(400)
+          .json({
+            success: false,
+
+            message:
+              "Add at least one valid invoice item",
+          });
+      }
+
+      const totals =
+        calculateTotals({
+          items:
+            cleanItems,
+
+          taxType:
+            req.body.taxType ||
+            salesOrder.taxType ||
+            "without-tax",
+
+          taxRate:
+            req.body.taxRate,
+
+          paidAmount:
+            req.body
+              .paidAmount,
+        });
+
+      const finalStatus =
+        totals.paymentStatus ===
+        "Paid"
+          ? "Paid"
+          : allowedStatuses.includes(
+                req.body.status
+              )
+            ? req.body
+                .status
+            : "Draft";
+
+      const invoiceNo =
+        await getNextInvoiceNo(
+          profile.key
+        );
+
+      const invoice =
+        new Invoice({
+          companyProfile:
+            profile.key,
+
+          companyName:
+            profile.name,
+
+          companyShortName:
+            profile.shortName,
+
+          companyAddress:
+            profile.address,
+
+          companyPhone:
+            profile.phone,
+
+          templateType:
+            profile.templateType,
+
+          invoiceNo,
+
+          deliveryChallan:
+            challan._id,
+
+          challanNo:
+            challan.challanNo,
+
+          salesOrder:
+            salesOrder._id,
+
+          salesOrderNo:
+            salesOrder.salesOrderNo,
+
+          customer:
+            challan.customer,
+
+          customerName:
+            challan.customerName,
+
+          customerPhone:
+            challan.customerPhone ||
+            "",
+
+          customerEmail:
+            challan.customerEmail ||
+            "",
+
+          customerAddress:
+            challan.deliveryAddress ||
+            challan.customerAddress ||
+            "",
+
+          customerCity:
+            challan.customerCity ||
+            "",
+
+          customerNTN:
+            req.body
+              .customerNTN ||
+            salesOrder.customerNTN ||
+            salesOrder.ntn ||
+            "",
+
+          customerSTRN:
+            req.body
+              .customerSTRN ||
+            salesOrder.customerSTRN ||
+            salesOrder.strn ||
+            "",
+
+          invoiceDate:
+            cleanText(
+              req.body.invoiceDate
+            ),
+
+          dueDate:
+            cleanText(
+              req.body.dueDate
+            ),
+
+          poNo:
+            cleanText(
+              req.body.poNo ||
+                challan.poNo ||
+                salesOrder.poNo
+            ),
+
+          taxType:
+            totals.taxType,
+
+          taxRate:
+            totals.taxRate,
+
+          salesTaxRegNo:
+            cleanText(
+              req.body
+                .salesTaxRegNo ||
+                profile.salesTaxRegNo
+            ),
+
+          nationalTaxNo:
+            cleanText(
+              req.body
+                .nationalTaxNo ||
+                profile.nationalTaxNo
+            ),
+
+          paymentTerms:
+            cleanText(
+              req.body
+                .paymentTerms,
+              "Due on Receipt"
+            ) ||
+            "Due on Receipt",
+
+          preparedBy:
+            cleanText(
+              req.body.preparedBy
+            ),
+
+          items:
+            cleanItems,
+
+          totalCartons:
+            totals.totalCartons,
+
+          totalRolls:
+            totals.totalRolls,
+
+          totalQuantity:
+            totals.totalQuantity,
+
+          totalGrossWeight:
+            totals.totalGrossWeight,
+
+          totalNetWeight:
+            totals.totalNetWeight,
+
+          subtotal:
+            totals.subtotal,
+
+          salesTax:
+            totals.salesTax,
+
+          grandTotal:
+            totals.grandTotal,
+
+          paidAmount:
+            totals.paidAmount,
+
+          balance:
+            totals.balance,
+
+          paymentStatus:
+            totals.paymentStatus,
+
+          amountInWords:
+            totals.amountInWords,
+
+          status:
+            finalStatus,
+
+          remarks:
+            cleanText(
+              req.body.remarks
+            ),
+        });
+
+      savedInvoice =
+        await invoice.save();
+
+      await syncRelatedStatuses({
+        deliveryChallanId:
+          challan._id,
+
+        salesOrderId:
+          salesOrder._id,
+      });
+
+      const populatedInvoice =
+        await populateInvoice(
+          Invoice.findById(
+            savedInvoice._id
+          )
+        );
+
+      return res
+        .status(201)
+        .json({
+          success: true,
+
+          message:
+            "Invoice created successfully",
+
+          data:
+            populatedInvoice,
+        });
+    } catch (error) {
+      console.error(
+        "Invoice Add Error:",
+        error
+      );
+
+      if (
+        savedInvoice?._id
+      ) {
+        const deliveryChallanId =
+          savedInvoice.deliveryChallan;
+
+        const salesOrderId =
+          savedInvoice.salesOrder;
+
+        await Invoice.findByIdAndDelete(
+          savedInvoice._id
+        );
+
+        try {
+          await syncRelatedStatuses({
+            deliveryChallanId,
+            salesOrderId,
+          });
+        } catch (
+          syncError
+        ) {
+          console.error(
+            "Invoice rollback status sync error:",
+            syncError
+          );
+        }
+      }
+
+      if (
+        error.code === 11000
+      ) {
+        return res
+          .status(400)
+          .json({
+            success: false,
+
+            message:
+              "Invoice number or delivery challan is already in use",
+
+            error:
+              error.message,
+          });
+      }
+
+      return res
+        .status(400)
+        .json({
+          success: false,
+
+          message:
+            "Invoice could not be saved",
+
+          error:
+            error.message,
+        });
+    }
+  }
+);
+
+/*
+|--------------------------------------------------------------------------
+| Update Invoice
+|--------------------------------------------------------------------------
+*/
+
+router.put(
+  "/update/:id",
+
+  async (req, res) => {
+    try {
+      const invoice =
+        await Invoice.findById(
+          req.params.id
+        );
+
+      if (!invoice) {
+        return res
+          .status(404)
+          .json({
+            success: false,
+
+            message:
+              "Invoice not found",
+          });
+      }
+
+      if (
+        invoice.status ===
+        "Cancelled"
+      ) {
+        return res
+          .status(400)
+          .json({
+            success: false,
+
+            message:
+              "A cancelled invoice cannot be updated",
+          });
+      }
+
+      const oldChallanId =
+        invoice.deliveryChallan;
+
+      const oldSalesOrderId =
+        invoice.salesOrder;
+
+      const challan =
+        await DeliveryChallan.findById(
+          req.body
+            .deliveryChallan ||
+            invoice.deliveryChallan
+        );
+
+      if (!challan) {
+        return res
+          .status(404)
+          .json({
+            success: false,
+
+            message:
+              "Delivery Challan not found",
+          });
+      }
+
+      if (
+        !eligibleChallanStatuses.includes(
+          challan.status
+        ) ||
+        challan.stockPosted !== true
+      ) {
+        return res
+          .status(400)
+          .json({
+            success: false,
+
+            message:
+              "Only a Dispatched or Received delivery challan with posted stock can be invoiced",
+          });
+      }
+
+      const otherInvoice =
+        await Invoice.findOne({
+          deliveryChallan:
+            challan._id,
+
+          isActive: true,
+
+          _id: {
+            $ne:
+              invoice._id,
+          },
+        });
+
+      if (otherInvoice) {
+        return res
+          .status(400)
+          .json({
+            success: false,
+
+            message:
+              "Another active invoice already exists for this delivery challan",
+          });
+      }
+
+      const salesOrder =
+        await SalesOrder.findById(
+          challan.salesOrder
+        );
+
+      if (
+        !salesOrder
+      ) {
+        return res
+          .status(404)
+          .json({
+            success: false,
+
+            message:
+              "Sales Order not found",
+          });
+      }
+
+      const profile =
+        getProfile(
+          req.body.companyProfile ||
+            invoice.companyProfile ||
+            challan.companyProfile
+        );
+
+      const cleanItems =
+        cleanInvoiceItems({
+          items:
+            req.body.items ||
+            invoice.items,
+
+          challan,
+
+          salesOrder,
+        });
+
+      if (
+        !cleanItems.length
+      ) {
+        return res
+          .status(400)
+          .json({
+            success: false,
+
+            message:
+              "Add at least one valid invoice item",
+          });
+      }
+
+      const totals =
+        calculateTotals({
+          items:
+            cleanItems,
+
+          taxType:
+            req.body.taxType ||
+            invoice.taxType,
+
+          taxRate:
+            req.body.taxRate !==
+            undefined
+              ? req.body.taxRate
+              : invoice.taxRate,
+
+          paidAmount:
+            req.body.paidAmount !==
+            undefined
+              ? req.body.paidAmount
+              : invoice.paidAmount,
+        });
+
+      const finalStatus =
+        totals.paymentStatus ===
+        "Paid"
+          ? "Paid"
+          : allowedStatuses.includes(
+                req.body.status
+              )
+            ? req.body.status
+            : invoice.status;
+
+      invoice.companyProfile =
+        profile.key;
+
+      invoice.companyName =
+        profile.name;
+
+      invoice.companyShortName =
+        profile.shortName;
+
+      invoice.companyAddress =
+        profile.address;
+
+      invoice.companyPhone =
+        profile.phone;
+
+      invoice.templateType =
+        profile.templateType;
+
+      invoice.deliveryChallan =
+        challan._id;
+
+      invoice.challanNo =
+        challan.challanNo;
+
+      invoice.salesOrder =
+        salesOrder._id;
+
+      invoice.salesOrderNo =
+        salesOrder.salesOrderNo;
+
+      invoice.customer =
+        challan.customer;
+
+      invoice.customerName =
+        challan.customerName;
+
+      invoice.customerPhone =
+        challan.customerPhone ||
+        "";
+
+      invoice.customerEmail =
+        challan.customerEmail ||
+        "";
+
+      invoice.customerAddress =
+        challan.deliveryAddress ||
+        challan.customerAddress ||
+        "";
+
+      invoice.customerCity =
+        challan.customerCity ||
+        "";
+
+      invoice.customerNTN =
+        cleanText(
+          req.body.customerNTN ??
+            invoice.customerNTN
+        );
+
+      invoice.customerSTRN =
+        cleanText(
+          req.body.customerSTRN ??
+            invoice.customerSTRN
+        );
+
+      invoice.invoiceDate =
+        cleanText(
+          req.body.invoiceDate ||
+            invoice.invoiceDate
+        );
+
+      invoice.dueDate =
+        cleanText(
+          req.body.dueDate ??
+            invoice.dueDate
+        );
+
+      invoice.poNo =
+        cleanText(
+          req.body.poNo ||
+            challan.poNo ||
+            salesOrder.poNo ||
+            invoice.poNo
+        );
+
+      invoice.taxType =
+        totals.taxType;
+
+      invoice.taxRate =
+        totals.taxRate;
+
+      invoice.salesTaxRegNo =
+        cleanText(
+          req.body.salesTaxRegNo ??
+            invoice.salesTaxRegNo ??
+            profile.salesTaxRegNo
+        );
+
+      invoice.nationalTaxNo =
+        cleanText(
+          req.body.nationalTaxNo ??
+            invoice.nationalTaxNo ??
+            profile.nationalTaxNo
+        );
+
+      invoice.paymentTerms =
+        cleanText(
+          req.body.paymentTerms ??
+            invoice.paymentTerms,
+          "Due on Receipt"
+        ) || "Due on Receipt";
+
+      invoice.preparedBy =
+        cleanText(
+          req.body.preparedBy ??
+            invoice.preparedBy
+        );
+
+      invoice.items =
+        cleanItems;
+
+      invoice.totalCartons =
+        totals.totalCartons;
+
+      invoice.totalRolls =
+        totals.totalRolls;
+
+      invoice.totalQuantity =
+        totals.totalQuantity;
+
+      invoice.totalGrossWeight =
+        totals.totalGrossWeight;
+
+      invoice.totalNetWeight =
+        totals.totalNetWeight;
+
+      invoice.subtotal =
+        totals.subtotal;
+
+      invoice.salesTax =
+        totals.salesTax;
+
+      invoice.grandTotal =
+        totals.grandTotal;
+
+      invoice.paidAmount =
+        totals.paidAmount;
+
+      invoice.balance =
+        totals.balance;
+
+      invoice.paymentStatus =
+        totals.paymentStatus;
+
+      invoice.amountInWords =
+        totals.amountInWords;
+
+      invoice.status =
+        finalStatus;
+
+      invoice.remarks =
+        cleanText(
+          req.body.remarks ??
+            invoice.remarks
+        );
+
+      const savedInvoice =
+        await invoice.save();
+
+      await syncRelatedStatuses({
+        deliveryChallanId:
+          oldChallanId,
+
+        salesOrderId:
+          oldSalesOrderId,
+      });
+
+      await syncRelatedStatuses({
+        deliveryChallanId:
+          challan._id,
+
+        salesOrderId:
+          salesOrder._id,
+      });
+
+      const populatedInvoice =
+        await populateInvoice(
+          Invoice.findById(
+            savedInvoice._id
+          )
+        );
+
+      return res
+        .status(200)
+        .json({
+          success: true,
+
+          message:
+            "Invoice updated successfully",
+
+          data:
+            populatedInvoice,
+        });
+    } catch (error) {
+      console.error(
+        "Invoice Update Error:",
+        error
+      );
+
+      if (
+        error.code === 11000
+      ) {
+        return res
+          .status(400)
+          .json({
+            success: false,
+
+            message:
+              "Invoice number or delivery challan is already in use",
+
+            error:
+              error.message,
+          });
+      }
+
+      return res
+        .status(400)
+        .json({
+          success: false,
+
+          message:
+            "Invoice could not be updated",
+
+          error:
+            error.message,
+        });
+    }
+  }
+);
+
+/*
+|--------------------------------------------------------------------------
+| Update Payment
+|--------------------------------------------------------------------------
+*/
+
+router.patch(
+  "/payment/:id",
+
+  async (req, res) => {
+    try {
+      const invoice =
+        await Invoice.findById(
+          req.params.id
+        );
+
+      if (!invoice) {
+        return res
+          .status(404)
+          .json({
+            success: false,
+
+            message:
+              "Invoice not found",
+          });
+      }
+
+      if (
+        invoice.status ===
+        "Cancelled"
+      ) {
+        return res
+          .status(400)
+          .json({
+            success: false,
+
+            message:
+              "Payment cannot be updated for a cancelled invoice",
+          });
+      }
+
+      const paidAmount =
+        roundMoney(
+          cleanNumber(
+            req.body
+              .paidAmount
+          )
+        );
+
+      if (
+        paidAmount >
+        cleanNumber(
+          invoice.grandTotal
+        )
+      ) {
+        return res
+          .status(400)
+          .json({
+            success: false,
+
+            message:
+              "Paid amount cannot exceed grand total",
+          });
+      }
+
+      invoice.paidAmount =
+        paidAmount;
+
+      invoice.balance =
+        roundMoney(
+          invoice.grandTotal -
+            paidAmount
+        );
+
+      if (
+        invoice.grandTotal >
+          0 &&
+        invoice.balance <= 0
+      ) {
+        invoice.paymentStatus =
+          "Paid";
+
+        invoice.status =
+          "Paid";
+      } else if (
+        paidAmount > 0
+      ) {
+        invoice.paymentStatus =
+          "Partially Paid";
+
+        if (
+          invoice.status ===
+          "Paid"
+        ) {
+          invoice.status =
+            "Issued";
+        }
+      } else {
+        invoice.paymentStatus =
+          "Unpaid";
+
+        if (
+          invoice.status ===
+          "Paid"
+        ) {
+          invoice.status =
+            "Issued";
+        }
+      }
+
+      const savedInvoice =
+        await invoice.save();
+
+      return res
+        .status(200)
+        .json({
+          success: true,
+
+          message:
+            "Payment updated successfully",
+
+          data:
+            savedInvoice,
+        });
+    } catch (error) {
+      console.error(
+        "Invoice Payment Error:",
+        error
+      );
+
+      return res
+        .status(400)
+        .json({
+          success: false,
+
+          message:
+            "Payment could not be updated",
+
+          error:
+            error.message,
+        });
+    }
+  }
+);
+
+/*
+|--------------------------------------------------------------------------
+| Cancel Invoice
+|--------------------------------------------------------------------------
+*/
+
+router.patch(
+  "/cancel/:id",
+
+  async (req, res) => {
+    try {
+      const invoice =
+        await Invoice.findById(
+          req.params.id
+        );
+
+      if (!invoice) {
+        return res
+          .status(404)
+          .json({
+            success: false,
+
+            message:
+              "Invoice not found",
+          });
+      }
+
+      invoice.status =
+        "Cancelled";
+
+      invoice.isActive =
+        false;
+
+      const savedInvoice =
+        await invoice.save();
+
+      await syncRelatedStatuses({
+        deliveryChallanId:
+          invoice.deliveryChallan,
+
+        salesOrderId:
+          invoice.salesOrder,
+      });
+
+      return res
+        .status(200)
+        .json({
+          success: true,
+
+          message:
+            "Invoice cancelled successfully",
+
+          data:
+            savedInvoice,
+        });
+    } catch (error) {
+      console.error(
+        "Invoice Cancel Error:",
+        error
+      );
+
+      return res
+        .status(400)
+        .json({
+          success: false,
+
+          message:
+            "Invoice could not be cancelled",
+
+          error:
+            error.message,
+        });
+    }
+  }
+);
+
+/*
+|--------------------------------------------------------------------------
+| Delete Invoice
+|--------------------------------------------------------------------------
+*/
+
+router.delete(
+  "/delete/:id",
+
+  async (req, res) => {
+    try {
+      const invoice =
+        await Invoice.findById(
+          req.params.id
+        );
+
+      if (!invoice) {
+        return res
+          .status(404)
+          .json({
+            success: false,
+
+            message:
+              "Invoice not found",
+          });
+      }
+
+      const deliveryChallanId =
+        invoice.deliveryChallan;
+
+      const salesOrderId =
+        invoice.salesOrder;
+
+      await Invoice.findByIdAndDelete(
+        req.params.id
+      );
+
+      await syncRelatedStatuses({
+        deliveryChallanId,
+        salesOrderId,
+      });
+
+      return res
+        .status(200)
+        .json({
+          success: true,
+
+          message:
+            "Invoice deleted successfully",
+        });
+    } catch (error) {
+      console.error(
+        "Invoice Delete Error:",
+        error
+      );
+
+      return res
+        .status(500)
+        .json({
+          success: false,
+
+          message:
+            "Invoice could not be deleted",
+
+          error:
+            error.message,
+        });
+    }
+  }
+);
 
 module.exports = router;

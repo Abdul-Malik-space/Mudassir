@@ -74,6 +74,11 @@ const allowedTextTypes = [
   "without-text",
 ];
 
+const eligibleChallanStatuses = [
+  "Dispatched",
+  "Received",
+];
+
 /*
 |--------------------------------------------------------------------------
 | Basic Helpers
@@ -1655,8 +1660,10 @@ router.post(
       }
 
       if (
-        challan.status ===
-        "Cancelled"
+        !eligibleChallanStatuses.includes(
+          challan.status
+        ) ||
+        challan.stockPosted !== true
       ) {
         return res
           .status(400)
@@ -1664,7 +1671,7 @@ router.post(
             success: false,
 
             message:
-              "A cancelled delivery challan cannot be invoiced",
+              "Only a Dispatched or Received delivery challan with posted stock can be invoiced",
           });
       }
 
@@ -1707,11 +1714,29 @@ router.post(
           });
       }
 
+      const customerId =
+        getId(
+          challan.customer
+        ) ||
+        getId(
+          salesOrder.customer
+        );
+
+      if (!customerId) {
+        return res
+          .status(400)
+          .json({
+            success: false,
+
+            message:
+              "Customer reference is missing from the Delivery Challan and Sales Order",
+          });
+      }
+
       const profile =
         getProfile(
-          challan.companyProfile ||
-            req.body
-              .companyProfile
+          req.body.companyProfile ||
+            challan.companyProfile
         );
 
       const cleanItems =
@@ -1806,7 +1831,7 @@ router.post(
             salesOrder.salesOrderNo,
 
           customer:
-            challan.customer,
+            customerId,
 
           customerName:
             challan.customerName,
@@ -2025,6 +2050,7 @@ router.post(
           success: false,
 
           message:
+            error.message ||
             "Invoice could not be saved",
 
           error:
@@ -2100,8 +2126,10 @@ router.put(
       }
 
       if (
-        challan.status ===
-        "Cancelled"
+        !eligibleChallanStatuses.includes(
+          challan.status
+        ) ||
+        challan.stockPosted !== true
       ) {
         return res
           .status(400)
@@ -2109,7 +2137,7 @@ router.put(
             success: false,
 
             message:
-              "A cancelled delivery challan cannot be invoiced",
+              "Only a Dispatched or Received delivery challan with posted stock can be invoiced",
           });
       }
 
@@ -2155,10 +2183,30 @@ router.put(
           });
       }
 
+      const customerId =
+        getId(
+          challan.customer
+        ) ||
+        getId(
+          salesOrder.customer
+        );
+
+      if (!customerId) {
+        return res
+          .status(400)
+          .json({
+            success: false,
+
+            message:
+              "Customer reference is missing from the Delivery Challan and Sales Order",
+          });
+      }
+
       const profile =
         getProfile(
-          challan.companyProfile ||
-            invoice.companyProfile
+          req.body.companyProfile ||
+            invoice.companyProfile ||
+            challan.companyProfile
         );
 
       const cleanItems =
@@ -2248,7 +2296,7 @@ router.put(
         salesOrder.salesOrderNo;
 
       invoice.customer =
-        challan.customer;
+        customerId;
 
       invoice.customerName =
         challan.customerName;
@@ -2448,6 +2496,7 @@ router.put(
           success: false,
 
           message:
+            error.message ||
             "Invoice could not be updated",
 
           error:

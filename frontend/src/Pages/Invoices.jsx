@@ -152,7 +152,11 @@ const apiRequest = async (url, options = {}) => {
   const data = await response.json();
 
   if (!response.ok || data?.success === false) {
-    throw new Error(data?.message || data?.error || "Request failed");
+    throw new Error(
+      data?.error ||
+        data?.message ||
+        "Request failed"
+    );
   }
 
   return data;
@@ -383,14 +387,35 @@ const Invoices = () => {
 
   const availableChallans = useMemo(() => {
     return challans.filter((challan) => {
-      const profileKey = resolveCompanyProfileKey(challan);
-      const matchesCompany = !form.companyProfile || profileKey === form.companyProfile;
-      const notInvoiced = challan.invoiceStatus !== "Invoiced";
-      const currentSelected = challan._id === form.deliveryChallan;
-      const validStatus = !["Cancelled"].includes(challan.status);
-      return matchesCompany && validStatus && (notInvoiced || currentSelected || !!editId);
+      const currentSelected =
+        String(challan._id || "") ===
+        String(form.deliveryChallan || "");
+
+      if (currentSelected) {
+        return true;
+      }
+
+      const validStatus = [
+        "Dispatched",
+        "Received",
+      ].includes(challan.status);
+
+      const stockPosted =
+        challan.stockPosted === true;
+
+      const notInvoiced =
+        challan.invoiceStatus !== "Invoiced";
+
+      return (
+        validStatus &&
+        stockPosted &&
+        notInvoiced
+      );
     });
-  }, [challans, form.companyProfile, form.deliveryChallan, editId]);
+  }, [
+    challans,
+    form.deliveryChallan,
+  ]);
 
   const totals = useMemo(() => {
     const subtotal = form.items.reduce((sum, item) => sum + calculateItemAmount(item), 0);
@@ -512,8 +537,10 @@ const Invoices = () => {
     return exactItem?.unitPrice ?? order.items[index]?.unitPrice ?? "";
   };
 
-  const handleChallanChange = async (challanId) => {
-    const challan = challans.find((item) => item._id === challanId);
+  const handleChallanChange = (challanId) => {
+    const challan = challans.find(
+      (item) => item._id === challanId
+    );
 
     if (!challan) {
       setForm((previous) => ({
@@ -527,50 +554,89 @@ const Invoices = () => {
       return;
     }
 
-    const profileKey = resolveCompanyProfileKey(challan);
+    const profileKey = form.companyProfile;
     const profile = COMPANY_PROFILES[profileKey];
-    const salesOrderId = challan.salesOrder?._id || challan.salesOrder || "";
-    const order = salesOrders.find((item) => item._id === salesOrderId);
 
-    let invoiceNo = form.invoiceNo;
-
-    if (!editId && form.companyProfile !== profileKey) {
-      try {
-        invoiceNo = await fetchNextNo(profileKey);
-      } catch (error) {
-        console.error("Invoice number loading error:", error);
-      }
+    if (!profile) {
+      alert("Select company profile first.");
+      return;
     }
+
+    const salesOrderId =
+      challan.salesOrder?._id ||
+      challan.salesOrder ||
+      "";
+
+    const order = salesOrders.find(
+      (item) => item._id === salesOrderId
+    );
 
     setForm((previous) => ({
       ...previous,
       companyProfile: profileKey,
-      companyName: challan.companyName || profile.name,
-      companyAddress: challan.companyAddress || profile.address,
-      companyPhone: challan.companyPhone || profile.phone,
-      templateType: challan.templateType || profile.templateType,
-      invoiceNo,
+      companyName: profile.name,
+      companyAddress: profile.address,
+      companyPhone: profile.phone,
+      templateType: profile.templateType,
       deliveryChallan: challan._id,
       poNo: challan.poNo || order?.poNo || "",
-      taxType: order?.taxType || previous.taxType || "without-tax",
-      salesTaxRegNo: previous.salesTaxRegNo || profile.salesTaxRegNo,
-      nationalTaxNo: previous.nationalTaxNo || profile.nationalTaxNo,
-      customerNTN: order?.customerNTN || order?.ntn || "",
-      customerSTRN: order?.customerSTRN || order?.strn || "",
+      taxType:
+        order?.taxType ||
+        previous.taxType ||
+        "without-tax",
+      salesTaxRegNo:
+        previous.salesTaxRegNo ||
+        profile.salesTaxRegNo,
+      nationalTaxNo:
+        previous.nationalTaxNo ||
+        profile.nationalTaxNo,
+      customerNTN:
+        order?.customerNTN ||
+        order?.ntn ||
+        "",
+      customerSTRN:
+        order?.customerSTRN ||
+        order?.strn ||
+        "",
       items:
         challan.items?.length > 0
           ? challan.items.map((item, index) => ({
-              description: item.description || "",
+              item:
+                item.item?._id ||
+                item.item ||
+                null,
+              deliveryChallanItemId:
+                item._id || null,
+              salesOrderItemId:
+                item.salesOrderItemId ||
+                null,
+              description:
+                item.description || "",
               size: item.size || "",
-              textType: getTextTypeValue(item),
+              textType:
+                getTextTypeValue(item),
               cartons: item.cartons || "",
               rolls: item.rolls || "",
-              packing: item.packing || item.cartons || "",
-              quantity: item.quantity || item.netWeight || "",
+              packing:
+                item.packing ||
+                item.cartons ||
+                "",
+              quantity:
+                item.quantity ||
+                item.netWeight ||
+                "",
               unit: item.unit || "Rolls",
-              unitPrice: getRateFromSalesOrder(item, index, order),
-              grossWeight: item.grossWeight || "",
-              netWeight: item.netWeight || "",
+              unitPrice:
+                getRateFromSalesOrder(
+                  item,
+                  index,
+                  order
+                ),
+              grossWeight:
+                item.grossWeight || "",
+              netWeight:
+                item.netWeight || "",
+              remarks: item.remarks || "",
             }))
           : [{ ...emptyItem }],
     }));

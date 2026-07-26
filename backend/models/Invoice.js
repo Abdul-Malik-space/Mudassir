@@ -1,79 +1,91 @@
 const mongoose = require("mongoose");
 
-const todayDate = () =>
-  new Date().toISOString().slice(0, 10);
+const COMPANY_PROFILES = {
+  topical: {
+    key: "topical",
+    name: "TOPICAL PACKAGING PVT. LTD.",
+    shortName: "Topical Packaging",
+    templateType: "detailed",
+    codePrefix: "TP-INV",
+    address: "21-Km, Ferozepur Road, Lahore, Pakistan",
+    phone: "+92 321 9970676",
+    salesTaxRegNo: "32-77-8762-085-29",
+    nationalTaxNo: "6620209-3",
+  },
 
-const cleanText = (value, fallback = "") => {
-  const text = String(value ?? "").trim();
-  return text || fallback;
+  alKaram: {
+    key: "alKaram",
+    name: "AL-KARAM TRADERS",
+    shortName: "Al-Karam Traders",
+    templateType: "compact",
+    codePrefix: "AK-INV",
+    address:
+      "Office #17, 3rd Floor, Gohar Centre, Wahdat Road, Lahore",
+    phone: "0423 5912858 | 0333 8295065",
+    salesTaxRegNo: "",
+    nationalTaxNo: "",
+  },
 };
 
-const cleanNumber = (value) => {
-  const number = Number(value);
+const normalizeProfileKey = (value) => {
+  const normalized = String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_-]/g, "");
 
-  return Number.isFinite(number)
-    ? Math.max(number, 0)
+  if (normalized === "alkaram") {
+    return "alKaram";
+  }
+
+  return "topical";
+};
+
+const cleanText = (value, fallback = "") =>
+  String(value ?? fallback).trim();
+
+const cleanNumber = (value) => {
+  const parsed = Number(value || 0);
+
+  return Number.isFinite(parsed)
+    ? Math.max(parsed, 0)
     : 0;
 };
 
 const roundMoney = (value) =>
   Math.round(
-    (cleanNumber(value) + Number.EPSILON) * 100
+    (Number(value || 0) + Number.EPSILON) * 100
   ) / 100;
+
+/*
+|--------------------------------------------------------------------------
+| Invoice Item Schema
+|--------------------------------------------------------------------------
+*/
 
 const invoiceItemSchema = new mongoose.Schema(
   {
     item: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Item",
-
-      required: [
-        true,
-        "Finished good item is required",
-      ],
-
-      index: true,
+      default: null,
     },
 
     deliveryChallanItemId: {
       type: mongoose.Schema.Types.ObjectId,
-
-      required: [
-        true,
-        "Delivery challan item reference is required",
-      ],
+      default: null,
     },
 
     salesOrderItemId: {
       type: mongoose.Schema.Types.ObjectId,
-
-      required: [
-        true,
-        "Sales order item reference is required",
-      ],
-    },
-
-    itemCode: {
-      type: String,
-      trim: true,
-      uppercase: true,
-      default: "",
-    },
-
-    itemName: {
-      type: String,
-      trim: true,
-      default: "",
+      default: null,
     },
 
     description: {
       type: String,
-
       required: [
         true,
         "Item description is required",
       ],
-
       trim: true,
     },
 
@@ -83,117 +95,116 @@ const invoiceItemSchema = new mongoose.Schema(
       default: "",
     },
 
+    textType: {
+      type: String,
+      enum: [
+        "",
+        "with-text",
+        "without-text",
+      ],
+      default: "",
+    },
+
     cartons: {
       type: Number,
       default: 0,
+      min: 0,
+    },
 
-      min: [
-        0,
-        "Cartons cannot be negative",
-      ],
+    rolls: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+
+    packing: {
+      type: String,
+      trim: true,
+      default: "",
     },
 
     quantity: {
       type: Number,
-
       required: [
         true,
-        "Invoice quantity is required",
+        "Quantity is required",
       ],
-
-      min: [
-        0.000001,
-        "Invoice quantity must be greater than zero",
-      ],
+      min: 0,
     },
 
     unit: {
       type: String,
       trim: true,
-      default: "Pcs",
+      default: "Rolls",
     },
 
     unitPrice: {
       type: Number,
-
       required: [
         true,
         "Unit price is required",
       ],
-
-      min: [
-        0,
-        "Unit price cannot be negative",
-      ],
+      min: 0,
     },
 
     grossWeight: {
       type: Number,
       default: 0,
-
-      min: [
-        0,
-        "Gross weight cannot be negative",
-      ],
+      min: 0,
     },
 
     netWeight: {
       type: Number,
       default: 0,
-
-      min: [
-        0,
-        "Net weight cannot be negative",
-      ],
+      min: 0,
     },
 
     amount: {
       type: Number,
       default: 0,
-
-      min: [
-        0,
-        "Amount cannot be negative",
-      ],
+      min: 0,
     },
 
     remarks: {
       type: String,
       trim: true,
       default: "",
-
-      maxlength: [
-        1000,
-        "Item remarks cannot exceed 1000 characters",
-      ],
     },
   },
   {
     _id: true,
-    versionKey: false,
   }
 );
 
+/*
+|--------------------------------------------------------------------------
+| Main Invoice Schema
+|--------------------------------------------------------------------------
+*/
+
 const invoiceSchema = new mongoose.Schema(
   {
-    invoiceNo: {
+    companyProfile: {
       type: String,
-
-      required: [
-        true,
-        "Invoice number is required",
+      enum: [
+        "topical",
+        "alKaram",
       ],
-
-      unique: true,
-      trim: true,
-      uppercase: true,
+      required: true,
+      default: "topical",
       index: true,
     },
 
     companyName: {
       type: String,
       trim: true,
-      default: "Muddasir Packages",
+      required: true,
+    },
+
+    companyShortName: {
+      type: String,
+      trim: true,
+      default: "",
     },
 
     companyAddress: {
@@ -208,86 +219,69 @@ const invoiceSchema = new mongoose.Schema(
       default: "",
     },
 
-    companyNTN: {
+    templateType: {
       type: String,
-      trim: true,
-      default: "",
+      enum: [
+        "detailed",
+        "compact",
+      ],
+      required: true,
     },
 
-    companySTRN: {
+    invoiceNo: {
       type: String,
+      required: true,
+      unique: true,
       trim: true,
-      default: "",
+      uppercase: true,
+      index: true,
     },
 
     deliveryChallan: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "DeliveryChallan",
-
       required: [
         true,
-        "Delivery challan is required",
+        "Delivery Challan is required",
       ],
-
       index: true,
     },
 
     challanNo: {
       type: String,
-
-      required: [
-        true,
-        "Delivery challan number is required",
-      ],
-
+      required: true,
       trim: true,
-      uppercase: true,
     },
 
     salesOrder: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "SalesOrder",
-
       required: [
         true,
-        "Sales order is required",
+        "Sales Order is required",
       ],
-
       index: true,
     },
 
     salesOrderNo: {
       type: String,
-
-      required: [
-        true,
-        "Sales order number is required",
-      ],
-
+      required: true,
       trim: true,
-      uppercase: true,
     },
 
     customer: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Customer",
-
       required: [
         true,
         "Customer is required",
       ],
-
       index: true,
     },
 
     customerName: {
       type: String,
-
-      required: [
-        true,
-        "Customer name is required",
-      ],
-
+      required: true,
       trim: true,
     },
 
@@ -300,7 +294,6 @@ const invoiceSchema = new mongoose.Schema(
     customerEmail: {
       type: String,
       trim: true,
-      lowercase: true,
       default: "",
     },
 
@@ -330,25 +323,10 @@ const invoiceSchema = new mongoose.Schema(
 
     invoiceDate: {
       type: String,
-
       required: [
         true,
         "Invoice date is required",
       ],
-
-      default: todayDate,
-
-      validate: {
-        validator(value) {
-          return /^\d{4}-\d{2}-\d{2}$/.test(
-            value
-          );
-        },
-
-        message:
-          "Invoice date format must be YYYY-MM-DD",
-      },
-
       index: true,
     },
 
@@ -356,20 +334,6 @@ const invoiceSchema = new mongoose.Schema(
       type: String,
       trim: true,
       default: "",
-
-      validate: {
-        validator(value) {
-          return (
-            !value ||
-            /^\d{4}-\d{2}-\d{2}$/.test(
-              value
-            )
-          );
-        },
-
-        message:
-          "Due date format must be YYYY-MM-DD",
-      },
     },
 
     poNo: {
@@ -378,36 +342,33 @@ const invoiceSchema = new mongoose.Schema(
       default: "",
     },
 
-    referenceNo: {
-      type: String,
-      trim: true,
-      default: "",
-    },
-
     taxType: {
       type: String,
-
       enum: [
         "without-tax",
         "with-tax",
       ],
-
       default: "without-tax",
+      index: true,
     },
 
     taxRate: {
       type: Number,
       default: 0,
+      min: 0,
+      max: 100,
+    },
 
-      min: [
-        0,
-        "Tax rate cannot be negative",
-      ],
+    salesTaxRegNo: {
+      type: String,
+      trim: true,
+      default: "",
+    },
 
-      max: [
-        100,
-        "Tax rate cannot exceed 100",
-      ],
+    nationalTaxNo: {
+      type: String,
+      trim: true,
+      default: "",
     },
 
     paymentTerms: {
@@ -423,9 +384,7 @@ const invoiceSchema = new mongoose.Schema(
     },
 
     items: {
-      type: [
-        invoiceItemSchema,
-      ],
+      type: [invoiceItemSchema],
 
       validate: {
         validator(items) {
@@ -441,6 +400,12 @@ const invoiceSchema = new mongoose.Schema(
     },
 
     totalCartons: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+
+    totalRolls: {
       type: Number,
       default: 0,
       min: 0,
@@ -494,32 +459,44 @@ const invoiceSchema = new mongoose.Schema(
       min: 0,
     },
 
+    amountInWords: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+
     paymentStatus: {
       type: String,
-
       enum: [
         "Unpaid",
         "Partially Paid",
         "Paid",
       ],
-
       default: "Unpaid",
       index: true,
     },
 
     status: {
       type: String,
-
       enum: [
         "Draft",
         "Issued",
         "Paid",
         "Cancelled",
       ],
-
       default: "Draft",
       index: true,
     },
+
+    /*
+    |--------------------------------------------------------------------------
+    | Active invoice indicator
+    |--------------------------------------------------------------------------
+    |
+    | A cancelled invoice becomes inactive.
+    | This allows another invoice to be created from the same challan later.
+    |
+    */
 
     isActive: {
       type: Boolean,
@@ -527,51 +504,407 @@ const invoiceSchema = new mongoose.Schema(
       index: true,
     },
 
-    issuedAt: {
-      type: Date,
-      default: null,
-    },
-
-    cancelledAt: {
-      type: Date,
-      default: null,
-    },
-
-    cancelReason: {
-      type: String,
-      trim: true,
-      default: "",
-
-      maxlength: [
-        1000,
-        "Cancel reason cannot exceed 1000 characters",
-      ],
-    },
-
     remarks: {
       type: String,
       trim: true,
       default: "",
-
-      maxlength: [
-        2000,
-        "Remarks cannot exceed 2000 characters",
-      ],
     },
   },
   {
     timestamps: true,
-    versionKey: false,
-
-    toJSON: {
-      virtuals: true,
-    },
-
-    toObject: {
-      virtuals: true,
-    },
   }
 );
+
+/*
+|--------------------------------------------------------------------------
+| Normalize Invoice Before Validation
+|--------------------------------------------------------------------------
+*/
+
+const normalizeInvoice = (invoice) => {
+  const profileKey =
+    normalizeProfileKey(
+      invoice.companyProfile
+    );
+
+  const profile =
+    COMPANY_PROFILES[profileKey];
+
+  invoice.companyProfile =
+    profile.key;
+
+  invoice.companyName =
+    profile.name;
+
+  invoice.companyShortName =
+    profile.shortName;
+
+  invoice.companyAddress =
+    profile.address;
+
+  invoice.companyPhone =
+    profile.phone;
+
+  invoice.templateType =
+    profile.templateType;
+
+  invoice.invoiceNo =
+    cleanText(
+      invoice.invoiceNo
+    ).toUpperCase();
+
+  invoice.challanNo =
+    cleanText(
+      invoice.challanNo
+    );
+
+  invoice.salesOrderNo =
+    cleanText(
+      invoice.salesOrderNo
+    );
+
+  invoice.customerName =
+    cleanText(
+      invoice.customerName
+    );
+
+  invoice.customerPhone =
+    cleanText(
+      invoice.customerPhone
+    );
+
+  invoice.customerEmail =
+    cleanText(
+      invoice.customerEmail
+    );
+
+  invoice.customerAddress =
+    cleanText(
+      invoice.customerAddress
+    );
+
+  invoice.customerCity =
+    cleanText(
+      invoice.customerCity
+    );
+
+  invoice.customerNTN =
+    cleanText(
+      invoice.customerNTN
+    );
+
+  invoice.customerSTRN =
+    cleanText(
+      invoice.customerSTRN
+    );
+
+  invoice.invoiceDate =
+    cleanText(
+      invoice.invoiceDate
+    );
+
+  invoice.dueDate =
+    cleanText(
+      invoice.dueDate
+    );
+
+  invoice.poNo =
+    cleanText(
+      invoice.poNo
+    );
+
+  invoice.paymentTerms =
+    cleanText(
+      invoice.paymentTerms,
+      "Due on Receipt"
+    ) || "Due on Receipt";
+
+  invoice.preparedBy =
+    cleanText(
+      invoice.preparedBy
+    );
+
+  invoice.remarks =
+    cleanText(
+      invoice.remarks
+    );
+
+  invoice.taxType =
+    invoice.taxType === "with-tax"
+      ? "with-tax"
+      : "without-tax";
+
+  invoice.taxRate =
+    invoice.taxType === "with-tax"
+      ? cleanNumber(
+          invoice.taxRate
+        )
+      : 0;
+
+  invoice.salesTaxRegNo =
+    cleanText(
+      invoice.salesTaxRegNo,
+      profile.salesTaxRegNo
+    );
+
+  invoice.nationalTaxNo =
+    cleanText(
+      invoice.nationalTaxNo,
+      profile.nationalTaxNo
+    );
+
+  const items = Array.isArray(
+    invoice.items
+  )
+    ? invoice.items
+    : [];
+
+  invoice.items = items.map(
+    (item) => {
+      const quantity =
+        cleanNumber(
+          item.quantity
+        );
+
+      const unitPrice =
+        cleanNumber(
+          item.unitPrice
+        );
+
+      const grossWeight =
+        cleanNumber(
+          item.grossWeight
+        );
+
+      const netWeight =
+        cleanNumber(
+          item.netWeight
+        );
+
+      if (
+        grossWeight > 0 &&
+        netWeight > grossWeight
+      ) {
+        throw new Error(
+          `Net weight cannot exceed gross weight for item "${cleanText(
+            item.description,
+            "Unnamed item"
+          )}"`
+        );
+      }
+
+      item.description =
+        cleanText(
+          item.description
+        );
+
+      item.size =
+        cleanText(
+          item.size
+        );
+
+      item.textType = [
+        "",
+        "with-text",
+        "without-text",
+      ].includes(
+        item.textType
+      )
+        ? item.textType
+        : "";
+
+      item.cartons =
+        cleanNumber(
+          item.cartons
+        );
+
+      item.rolls =
+        cleanNumber(
+          item.rolls
+        );
+
+      item.packing =
+        cleanText(
+          item.packing
+        );
+
+      item.quantity =
+        quantity;
+
+      item.unit =
+        cleanText(
+          item.unit,
+          "Rolls"
+        ) || "Rolls";
+
+      item.unitPrice =
+        unitPrice;
+
+      item.grossWeight =
+        grossWeight;
+
+      item.netWeight =
+        netWeight;
+
+      item.amount =
+        roundMoney(
+          quantity * unitPrice
+        );
+
+      item.remarks =
+        cleanText(
+          item.remarks
+        );
+
+      return item;
+    }
+  );
+
+  invoice.totalCartons =
+    invoice.items.reduce(
+      (sum, item) =>
+        sum +
+        cleanNumber(
+          item.cartons
+        ),
+      0
+    );
+
+  invoice.totalRolls =
+    invoice.items.reduce(
+      (sum, item) =>
+        sum +
+        cleanNumber(
+          item.rolls
+        ),
+      0
+    );
+
+  invoice.totalQuantity =
+    invoice.items.reduce(
+      (sum, item) =>
+        sum +
+        cleanNumber(
+          item.quantity
+        ),
+      0
+    );
+
+  invoice.totalGrossWeight =
+    invoice.items.reduce(
+      (sum, item) =>
+        sum +
+        cleanNumber(
+          item.grossWeight
+        ),
+      0
+    );
+
+  invoice.totalNetWeight =
+    invoice.items.reduce(
+      (sum, item) =>
+        sum +
+        cleanNumber(
+          item.netWeight
+        ),
+      0
+    );
+
+  invoice.subtotal =
+    roundMoney(
+      invoice.items.reduce(
+        (sum, item) =>
+          sum +
+          cleanNumber(
+            item.amount
+          ),
+        0
+      )
+    );
+
+  invoice.salesTax =
+    invoice.taxType === "with-tax"
+      ? roundMoney(
+          invoice.subtotal *
+            (invoice.taxRate /
+              100)
+        )
+      : 0;
+
+  invoice.grandTotal =
+    roundMoney(
+      invoice.subtotal +
+        invoice.salesTax
+    );
+
+  invoice.paidAmount =
+    cleanNumber(
+      invoice.paidAmount
+    );
+
+  if (
+    invoice.paidAmount >
+    invoice.grandTotal
+  ) {
+    throw new Error(
+      "Paid amount cannot exceed grand total"
+    );
+  }
+
+  invoice.balance =
+    roundMoney(
+      invoice.grandTotal -
+        invoice.paidAmount
+    );
+
+  if (
+    invoice.grandTotal > 0 &&
+    invoice.balance <= 0
+  ) {
+    invoice.paymentStatus =
+      "Paid";
+  } else if (
+    invoice.paidAmount > 0
+  ) {
+    invoice.paymentStatus =
+      "Partially Paid";
+  } else {
+    invoice.paymentStatus =
+      "Unpaid";
+  }
+
+  if (
+    invoice.status !==
+      "Cancelled" &&
+    invoice.paymentStatus ===
+      "Paid"
+  ) {
+    invoice.status = "Paid";
+  }
+
+  invoice.isActive =
+    invoice.status !==
+    "Cancelled";
+};
+
+/*
+|--------------------------------------------------------------------------
+| Model Middleware
+|--------------------------------------------------------------------------
+*/
+
+invoiceSchema.pre(
+  "validate",
+  function preValidate() {
+    normalizeInvoice(this);
+  }
+);
+
+/*
+|--------------------------------------------------------------------------
+| Indexes
+|--------------------------------------------------------------------------
+*/
 
 invoiceSchema.index(
   {
@@ -591,8 +924,8 @@ invoiceSchema.index(
 );
 
 invoiceSchema.index({
-  customer: 1,
-  invoiceDate: -1,
+  companyProfile: 1,
+  createdAt: -1,
 });
 
 invoiceSchema.index({
@@ -600,387 +933,20 @@ invoiceSchema.index({
   status: 1,
 });
 
-invoiceSchema.pre(
-  "validate",
-  function () {
-    this.invoiceNo =
-      cleanText(
-        this.invoiceNo
-      ).toUpperCase();
+invoiceSchema.index({
+  customer: 1,
+  invoiceDate: -1,
+});
 
-    this.companyName =
-      cleanText(
-        this.companyName,
-        "Muddasir Packages"
-      );
-
-    this.companyAddress =
-      cleanText(
-        this.companyAddress
-      );
-
-    this.companyPhone =
-      cleanText(
-        this.companyPhone
-      );
-
-    this.companyNTN =
-      cleanText(
-        this.companyNTN
-      );
-
-    this.companySTRN =
-      cleanText(
-        this.companySTRN
-      );
-
-    this.challanNo =
-      cleanText(
-        this.challanNo
-      ).toUpperCase();
-
-    this.salesOrderNo =
-      cleanText(
-        this.salesOrderNo
-      ).toUpperCase();
-
-    this.customerName =
-      cleanText(
-        this.customerName
-      );
-
-    this.customerPhone =
-      cleanText(
-        this.customerPhone
-      );
-
-    this.customerEmail =
-      cleanText(
-        this.customerEmail
-      ).toLowerCase();
-
-    this.customerAddress =
-      cleanText(
-        this.customerAddress
-      );
-
-    this.customerCity =
-      cleanText(
-        this.customerCity
-      );
-
-    this.customerNTN =
-      cleanText(
-        this.customerNTN
-      );
-
-    this.customerSTRN =
-      cleanText(
-        this.customerSTRN
-      );
-
-    this.invoiceDate =
-      cleanText(
-        this.invoiceDate,
-        todayDate()
-      );
-
-    this.dueDate =
-      cleanText(
-        this.dueDate
-      );
-
-    this.poNo =
-      cleanText(
-        this.poNo
-      );
-
-    this.referenceNo =
-      cleanText(
-        this.referenceNo
-      );
-
-    this.taxType =
-      this.taxType ===
-      "with-tax"
-        ? "with-tax"
-        : "without-tax";
-
-    this.taxRate =
-      this.taxType ===
-      "with-tax"
-        ? Math.min(
-            cleanNumber(
-              this.taxRate ||
-                18
-            ),
-            100
-          )
-        : 0;
-
-    this.paymentTerms =
-      cleanText(
-        this.paymentTerms,
-        "Due on Receipt"
-      );
-
-    this.preparedBy =
-      cleanText(
-        this.preparedBy
-      );
-
-    this.cancelReason =
-      cleanText(
-        this.cancelReason
-      );
-
-    this.remarks =
-      cleanText(
-        this.remarks
-      );
-
-    this.items = (
-      Array.isArray(
-        this.items
-      )
-        ? this.items
-        : []
-    ).map(
-      (item) => {
-        item.itemCode =
-          cleanText(
-            item.itemCode
-          ).toUpperCase();
-
-        item.itemName =
-          cleanText(
-            item.itemName
-          );
-
-        item.description =
-          cleanText(
-            item.description,
-            item.itemName
-          );
-
-        item.size =
-          cleanText(
-            item.size
-          );
-
-        item.cartons =
-          cleanNumber(
-            item.cartons
-          );
-
-        item.quantity =
-          cleanNumber(
-            item.quantity
-          );
-
-        item.unit =
-          cleanText(
-            item.unit,
-            "Pcs"
-          );
-
-        item.unitPrice =
-          roundMoney(
-            item.unitPrice
-          );
-
-        item.grossWeight =
-          cleanNumber(
-            item.grossWeight
-          );
-
-        item.netWeight =
-          cleanNumber(
-            item.netWeight
-          );
-
-        item.remarks =
-          cleanText(
-            item.remarks
-          );
-
-        if (
-          item.grossWeight >
-            0 &&
-          item.netWeight >
-            item.grossWeight
-        ) {
-          this.invalidate(
-            "items",
-            `Net weight cannot exceed gross weight for ${item.description}`
-          );
-        }
-
-        item.amount =
-          roundMoney(
-            item.quantity *
-              item.unitPrice
-          );
-
-        return item;
-      }
-    );
-
-    this.totalCartons =
-      this.items.reduce(
-        (
-          sum,
-          item
-        ) =>
-          sum +
-          cleanNumber(
-            item.cartons
-          ),
-        0
-      );
-
-    this.totalQuantity =
-      this.items.reduce(
-        (
-          sum,
-          item
-        ) =>
-          sum +
-          cleanNumber(
-            item.quantity
-          ),
-        0
-      );
-
-    this.totalGrossWeight =
-      this.items.reduce(
-        (
-          sum,
-          item
-        ) =>
-          sum +
-          cleanNumber(
-            item.grossWeight
-          ),
-        0
-      );
-
-    this.totalNetWeight =
-      this.items.reduce(
-        (
-          sum,
-          item
-        ) =>
-          sum +
-          cleanNumber(
-            item.netWeight
-          ),
-        0
-      );
-
-    this.subtotal =
-      roundMoney(
-        this.items.reduce(
-          (
-            sum,
-            item
-          ) =>
-            sum +
-            cleanNumber(
-              item.amount
-            ),
-          0
-        )
-      );
-
-    this.salesTax =
-      this.taxType ===
-      "with-tax"
-        ? roundMoney(
-            this.subtotal *
-              (
-                this.taxRate /
-                100
-              )
-          )
-        : 0;
-
-    this.grandTotal =
-      roundMoney(
-        this.subtotal +
-          this.salesTax
-      );
-
-    this.paidAmount =
-      roundMoney(
-        this.paidAmount
-      );
-
-    if (
-      this.paidAmount >
-      this.grandTotal
-    ) {
-      this.invalidate(
-        "paidAmount",
-        "Paid amount cannot exceed grand total"
-      );
-    }
-
-    this.balance =
-      roundMoney(
-        this.grandTotal -
-          this.paidAmount
-      );
-
-    if (
-      this.grandTotal >
-        0 &&
-      this.balance <= 0
-    ) {
-      this.paymentStatus =
-        "Paid";
-
-      if (
-        this.status !==
-        "Cancelled"
-      ) {
-        this.status =
-          "Paid";
-      }
-    } else if (
-      this.paidAmount > 0
-    ) {
-      this.paymentStatus =
-        "Partially Paid";
-
-      if (
-        this.status ===
-        "Paid"
-      ) {
-        this.status =
-          "Issued";
-      }
-    } else {
-      this.paymentStatus =
-        "Unpaid";
-
-      if (
-        this.status ===
-        "Paid"
-      ) {
-        this.status =
-          "Issued";
-      }
-    }
-
-    this.isActive =
-      this.status !==
-      "Cancelled";
-  }
+const Invoice = mongoose.model(
+  "Invoice",
+  invoiceSchema
 );
 
-module.exports =
-  mongoose.model(
-    "Invoice",
-    invoiceSchema
-  );
+Invoice.COMPANY_PROFILES =
+  COMPANY_PROFILES;
+
+Invoice.normalizeProfileKey =
+  normalizeProfileKey;
+
+module.exports = Invoice;
