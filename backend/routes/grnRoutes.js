@@ -52,9 +52,9 @@ const INSPECTION_STATUSES = [
   "Rejected",
 ];
 
-const GRN_ALLOWED_PO_STATUSES = [
-  "Ordered",
-  "Partially Received",
+const GRN_BLOCKED_PO_STATUSES = [
+  "Draft",
+  "Cancelled",
 ];
 
 const SUPPORTED_ITEM_TYPES = [
@@ -769,7 +769,7 @@ const loadPurchaseOrder =
     }
 
     if (
-      !GRN_ALLOWED_PO_STATUSES.includes(
+      GRN_BLOCKED_PO_STATUSES.includes(
         purchaseOrder.status
       )
     ) {
@@ -1823,8 +1823,8 @@ const getEligiblePurchaseOrders =
     const orders =
       await PurchaseOrder.find({
         status: {
-          $in:
-            GRN_ALLOWED_PO_STATUSES,
+          $nin:
+            GRN_BLOCKED_PO_STATUSES,
         },
       })
         .populate(
