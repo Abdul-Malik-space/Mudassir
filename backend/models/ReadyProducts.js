@@ -7,12 +7,12 @@ const numberValue = (value) => {
   const number = Number(value);
 
   return Number.isFinite(number)
-    ? number
+    ? Math.max(number, 0)
     : 0;
 };
 
 const textValue = (value, fallback = "") => {
-  const valueText = String(value || "").trim();
+  const valueText = String(value ?? "").trim();
 
   return valueText || fallback;
 };
@@ -57,7 +57,52 @@ const readyProductSchema = new mongoose.Schema(
       index: true,
     },
 
+    sourceType: {
+      type: String,
+      enum: [
+        "Sales Order",
+        "Internal Requirement",
+      ],
+      default: "Internal Requirement",
+      index: true,
+    },
+
+    salesOrder: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "SalesOrder",
+      default: null,
+      index: true,
+    },
+
+    salesOrderNo: {
+      type: String,
+      trim: true,
+      uppercase: true,
+      default: "",
+      index: true,
+    },
+
+    internalReference: {
+      type: String,
+      trim: true,
+      uppercase: true,
+      default: "",
+    },
+
+    customer: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Customer",
+      default: null,
+      index: true,
+    },
+
     customerName: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+
+    customerPO: {
       type: String,
       trim: true,
       default: "",
@@ -266,6 +311,12 @@ readyProductSchema.index({
   stockPosted: 1,
 });
 
+readyProductSchema.index({
+  sourceType: 1,
+  salesOrder: 1,
+  status: 1,
+});
+
 readyProductSchema.pre("validate", function () {
   this.readyNo = textValue(
     this.readyNo
@@ -279,8 +330,25 @@ readyProductSchema.pre("validate", function () {
     this.printingNo
   ).toUpperCase();
 
+  this.sourceType =
+    this.sourceType === "Sales Order"
+      ? "Sales Order"
+      : "Internal Requirement";
+
+  this.salesOrderNo = textValue(
+    this.salesOrderNo
+  ).toUpperCase();
+
+  this.internalReference = textValue(
+    this.internalReference
+  ).toUpperCase();
+
   this.customerName = textValue(
     this.customerName
+  );
+
+  this.customerPO = textValue(
+    this.customerPO
   );
 
   this.finishedGoodCode = textValue(
@@ -345,6 +413,16 @@ readyProductSchema.pre("validate", function () {
   this.rate = numberValue(
     this.rate
   );
+
+  if (
+    this.sourceType === "Sales Order" &&
+    !this.salesOrder
+  ) {
+    this.invalidate(
+      "salesOrder",
+      "Sales order is required for a Sales Order production output"
+    );
+  }
 
   const classifiedQty =
     this.passedQty +

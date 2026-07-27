@@ -207,8 +207,14 @@ const emptyForm = (
   challanNo = ""
 ) => ({
   challanNo,
+  sourceType:
+    "Sales Order",
+  sourceNo: "",
   salesOrder: "",
   salesOrderNo: "",
+  productionOutput: "",
+  productionJob: "",
+  jobNo: "",
   poNo: "",
   customerName: "",
   customerPhone: "",
@@ -279,6 +285,11 @@ const DeliveryChallans =
     ] = useState([]);
 
     const [
+      productionOutputs,
+      setProductionOutputs,
+    ] = useState([]);
+
+    const [
       form,
       setForm,
     ] = useState(
@@ -328,6 +339,7 @@ const DeliveryChallans =
           const [
             challanData,
             orderData,
+            outputData,
           ] =
             await Promise.all([
               apiRequest(
@@ -336,6 +348,10 @@ const DeliveryChallans =
 
               apiRequest(
                 `${API_DELIVERY}/eligible-sales-orders`
+              ),
+
+              apiRequest(
+                `${API_DELIVERY}/eligible-production-outputs`
               ),
             ]);
 
@@ -355,6 +371,17 @@ const DeliveryChallans =
               [
                 "orders",
                 "salesOrders",
+              ]
+            )
+          );
+
+          setProductionOutputs(
+            normalizeArray(
+              outputData,
+              [
+                "outputs",
+                "productionOutputs",
+                "readyProducts",
               ]
             )
           );
@@ -395,6 +422,24 @@ const DeliveryChallans =
         [
           salesOrders,
           form.salesOrder,
+        ]
+      );
+
+    const selectedOutput =
+      useMemo(
+        () =>
+          productionOutputs.find(
+            (output) =>
+              String(
+                output._id
+              ) ===
+              String(
+                form.productionOutput
+              )
+          ),
+        [
+          productionOutputs,
+          form.productionOutput,
         ]
       );
 
@@ -548,7 +593,11 @@ const DeliveryChallans =
               const searchable =
                 [
                   challan.challanNo,
+                  challan.sourceType,
+                  challan.sourceNo,
                   challan.salesOrderNo,
+                  challan.productionOutput?.readyNo,
+                  challan.productionJob?.jobNo,
                   challan.customerName,
                   challan.poNo,
                   challan.vehicleNo,
@@ -825,11 +874,28 @@ const DeliveryChallans =
         (current) => ({
           ...current,
 
+          sourceType:
+            "Sales Order",
+
+          sourceNo:
+            order.sourceNo ||
+            order.salesOrderNo ||
+            "",
+
           salesOrder:
             order._id,
 
           salesOrderNo:
             order.salesOrderNo ||
+            "",
+
+          productionOutput:
+            "",
+
+          productionJob:
+            "",
+
+          jobNo:
             "",
 
           poNo:
@@ -865,6 +931,286 @@ const DeliveryChallans =
       );
     };
 
+    const handleSourceTypeChange =
+      (
+        sourceType
+      ) => {
+        setForm(
+          (current) => ({
+            ...emptyForm(
+              current.challanNo
+            ),
+
+            sourceType,
+
+            challanDate:
+              current.challanDate,
+
+            dispatchDate:
+              current.dispatchDate,
+
+            companyName:
+              current.companyName,
+
+            companyLogo:
+              current.companyLogo,
+
+            documentNo:
+              current.documentNo,
+
+            issueNo:
+              current.issueNo,
+
+            revisionNo:
+              current.revisionNo,
+
+            documentIssueDate:
+              current.documentIssueDate,
+          })
+        );
+      };
+
+    const handleProductionOutputChange =
+      (
+        productionOutputId
+      ) => {
+        const output =
+          productionOutputs.find(
+            (row) =>
+              String(
+                row._id
+              ) ===
+              String(
+                productionOutputId
+              )
+          );
+
+        if (!output) {
+          setForm(
+            (current) => ({
+              ...current,
+
+              productionOutput:
+                "",
+
+              productionJob:
+                "",
+
+              jobNo:
+                "",
+
+              sourceNo:
+                "",
+
+              salesOrder:
+                "",
+
+              salesOrderNo:
+                "",
+
+              poNo:
+                "",
+
+              customerName:
+                "",
+
+              customerPhone:
+                "",
+
+              customerEmail:
+                "",
+
+              customerAddress:
+                "",
+
+              deliveryAddress:
+                "",
+
+              attentionTo:
+                "",
+
+              items: [],
+            })
+          );
+
+          return;
+        }
+
+        const items =
+          (
+            output.items ||
+            []
+          ).map(
+            (item) => ({
+              salesOrderItemId:
+                "",
+
+              productionOutput:
+                output._id,
+
+              productionJob:
+                idOf(
+                  output.productionJob
+                ),
+
+              item:
+                idOf(
+                  item.item
+                ),
+
+              itemCode:
+                item.itemCode ||
+                "",
+
+              itemName:
+                item.itemName ||
+                item.description ||
+                "",
+
+              description:
+                item.description ||
+                item.itemName ||
+                "",
+
+              size:
+                item.size ||
+                "",
+
+              orderedQty:
+                numberValue(
+                  item.orderedQty
+                ),
+
+              alreadyDeliveredQty:
+                numberValue(
+                  item.alreadyDeliveredQty
+                ),
+
+              pendingQty:
+                numberValue(
+                  item.pendingQty
+                ),
+
+              availableStock:
+                numberValue(
+                  item.availableStock
+                ),
+
+              quantity:
+                numberValue(
+                  item.quantity
+                ) > 0
+                  ? String(
+                      item.quantity
+                    )
+                  : "",
+
+              unit:
+                item.unit ||
+                "Pcs",
+
+              cartons:
+                item.cartons ||
+                "",
+
+              rolls:
+                item.rolls ||
+                "",
+
+              grossWeight:
+                item.grossWeight ||
+                "",
+
+              netWeight:
+                item.netWeight ||
+                "",
+
+              unitPrice:
+                numberValue(
+                  item.unitPrice
+                ),
+
+              remarks:
+                item.remarks ||
+                "",
+
+              warehouseId:
+                idOf(
+                  item.warehouseId
+                ),
+
+              warehouse:
+                "Finished Goods Godown",
+            })
+          );
+
+        setForm(
+          (current) => ({
+            ...current,
+
+            sourceType:
+              "Production Output",
+
+            sourceNo:
+              output.sourceNo ||
+              output.readyNo ||
+              "",
+
+            productionOutput:
+              output._id,
+
+            productionJob:
+              idOf(
+                output.productionJob
+              ),
+
+            jobNo:
+              output.jobNo ||
+              output.productionJob?.jobNo ||
+              "",
+
+            salesOrder:
+              idOf(
+                output.salesOrder
+              ),
+
+            salesOrderNo:
+              output.salesOrderNo ||
+              "",
+
+            poNo:
+              output.poNo ||
+              "",
+
+            customerName:
+              output.customerName ||
+              "",
+
+            customerPhone:
+              output.customerPhone ||
+              "",
+
+            customerEmail:
+              output.customerEmail ||
+              "",
+
+            customerAddress:
+              output.customerAddress ||
+              "",
+
+            deliveryAddress:
+              output.customerAddress ||
+              "",
+
+            attentionTo:
+              output.attentionTo ||
+              "",
+
+            items,
+          })
+        );
+      };
+
     const openEdit = (
       challan
     ) => {
@@ -875,6 +1221,35 @@ const DeliveryChallans =
       setForm({
         challanNo:
           challan.challanNo ||
+          "",
+
+        sourceType:
+          challan.sourceType ||
+          (
+            challan.productionOutput
+              ? "Production Output"
+              : "Sales Order"
+          ),
+
+        sourceNo:
+          challan.sourceNo ||
+          challan.salesOrderNo ||
+          challan.productionOutput?.readyNo ||
+          "",
+
+        productionOutput:
+          idOf(
+            challan.productionOutput
+          ),
+
+        productionJob:
+          idOf(
+            challan.productionJob
+          ),
+
+        jobNo:
+          challan.productionJob?.jobNo ||
+          challan.productionOutput?.jobNo ||
           "",
 
         salesOrder:
@@ -1001,6 +1376,18 @@ const DeliveryChallans =
                   item.salesOrderItemId
                 ),
 
+              productionOutput:
+                idOf(
+                  item.productionOutput ||
+                  challan.productionOutput
+                ),
+
+              productionJob:
+                idOf(
+                  item.productionJob ||
+                  challan.productionJob
+                ),
+
               item:
                 idOf(
                   item.item
@@ -1105,10 +1492,24 @@ const DeliveryChallans =
     const validateForm =
       () => {
         if (
+          form.sourceType ===
+            "Sales Order" &&
           !form.salesOrder
         ) {
           alert(
             "Please select a sales order."
+          );
+
+          return false;
+        }
+
+        if (
+          form.sourceType ===
+            "Production Output" &&
+          !form.productionOutput
+        ) {
+          alert(
+            "Please select a production output."
           );
 
           return false;
@@ -1166,7 +1567,7 @@ const DeliveryChallans =
             )
           ) {
             alert(
-              `${item.itemName}: delivery quantity cannot exceed pending quantity.`
+              `${item.itemName}: delivery quantity cannot exceed remaining source quantity.`
             );
 
             return false;
@@ -1196,8 +1597,23 @@ const DeliveryChallans =
 
     const buildPayload =
       () => ({
+        sourceType:
+          form.sourceType,
+
+        sourceNo:
+          form.sourceNo,
+
         salesOrder:
-          form.salesOrder,
+          form.salesOrder ||
+          null,
+
+        productionOutput:
+          form.productionOutput ||
+          null,
+
+        productionJob:
+          form.productionJob ||
+          null,
 
         challanDate:
           form.challanDate,
@@ -1277,7 +1693,18 @@ const DeliveryChallans =
             .map(
               (item) => ({
                 salesOrderItemId:
-                  item.salesOrderItemId,
+                  item.salesOrderItemId ||
+                  null,
+
+                productionOutput:
+                  item.productionOutput ||
+                  form.productionOutput ||
+                  null,
+
+                productionJob:
+                  item.productionJob ||
+                  form.productionJob ||
+                  null,
 
                 item:
                   item.item,
@@ -2128,6 +2555,38 @@ const DeliveryChallans =
                     </div>
                   </div>
 
+                  <div class="info-row">
+                    <div>
+                      SOURCE:
+                      <span class="value-line">${safeText(
+                        challan.sourceNo ||
+                          challan.salesOrderNo ||
+                          challan.productionOutput?.readyNo ||
+                          ""
+                      )}</span>
+                    </div>
+
+                    <div class="right-info">
+                      ${safeText(
+                        challan.sourceType ||
+                          (
+                            challan.productionOutput
+                              ? "Production Output"
+                              : "Sales Order"
+                          )
+                      )}
+                      ${
+                        challan.productionJob?.jobNo ||
+                        challan.productionOutput?.jobNo
+                          ? ` / JOB: ${safeText(
+                              challan.productionJob?.jobNo ||
+                                challan.productionOutput?.jobNo
+                            )}`
+                          : ""
+                      }
+                    </div>
+                  </div>
+
                   <div class="attention-block">
                     <div>
                       ATTN:
@@ -2501,7 +2960,7 @@ const DeliveryChallans =
               </div>
             </Section>
 
-            <Section title="Sales Order">
+            <Section title="Source and Customer">
               <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
                 <Field label="Challan Number">
                   <input
@@ -2514,18 +2973,17 @@ const DeliveryChallans =
                 </Field>
 
                 <Field
-                  label="Sales Order"
+                  label="Source Type"
                   required
-                  wide
                 >
                   <select
                     value={
-                      form.salesOrder
+                      form.sourceType
                     }
                     onChange={(
                       event
                     ) =>
-                      handleSalesOrderChange(
+                      handleSourceTypeChange(
                         event.target.value
                       )
                     }
@@ -2538,32 +2996,136 @@ const DeliveryChallans =
                       inputClass
                     }
                   >
-                    <option value="">
-                      Select Sales Order
+                    <option value="Sales Order">
+                      Sales Order
                     </option>
 
-                    {salesOrders.map(
-                      (order) => (
-                        <option
-                          key={
-                            order._id
-                          }
-                          value={
-                            order._id
-                          }
-                        >
-                          {
-                            order.salesOrderNo
-                          }{" "}
-                          —{" "}
-                          {
-                            order.customerName
-                          }
-                        </option>
-                      )
-                    )}
+                    <option value="Production Output">
+                      Production Output
+                    </option>
                   </select>
                 </Field>
+
+                {form.sourceType ===
+                "Sales Order" ? (
+                  <Field
+                    label="Sales Order"
+                    required
+                    wide
+                  >
+                    <select
+                      value={
+                        form.salesOrder
+                      }
+                      onChange={(
+                        event
+                      ) =>
+                        handleSalesOrderChange(
+                          event.target.value
+                        )
+                      }
+                      disabled={
+                        Boolean(
+                          editId
+                        )
+                      }
+                      className={
+                        inputClass
+                      }
+                    >
+                      <option value="">
+                        Select Sales Order
+                      </option>
+
+                      {salesOrders.map(
+                        (order) => (
+                          <option
+                            key={
+                              order._id
+                            }
+                            value={
+                              order._id
+                            }
+                          >
+                            {
+                              order.salesOrderNo
+                            }{" "}
+                            —{" "}
+                            {
+                              order.customerName
+                            }
+                          </option>
+                        )
+                      )}
+                    </select>
+                  </Field>
+                ) : (
+                  <Field
+                    label="Production Output"
+                    required
+                    wide
+                  >
+                    <select
+                      value={
+                        form.productionOutput
+                      }
+                      onChange={(
+                        event
+                      ) =>
+                        handleProductionOutputChange(
+                          event.target.value
+                        )
+                      }
+                      disabled={
+                        Boolean(
+                          editId
+                        )
+                      }
+                      className={
+                        inputClass
+                      }
+                    >
+                      <option value="">
+                        Select Production Output
+                      </option>
+
+                      {productionOutputs.map(
+                        (output) => (
+                          <option
+                            key={
+                              output._id
+                            }
+                            value={
+                              output._id
+                            }
+                          >
+                            {
+                              output.readyNo ||
+                              output.sourceNo
+                            }{" "}
+                            —{" "}
+                            {
+                              output.jobNo
+                            }{" "}
+                            —{" "}
+                            {
+                              output.items?.[0]?.itemName ||
+                              "Finished Good"
+                            }{" "}
+                            | Remaining:{" "}
+                            {formatQuantity(
+                              output.items?.[0]?.pendingQty
+                            )}{" "}
+                            {
+                              output.items?.[0]?.unit ||
+                              ""
+                            }
+                          </option>
+                        )
+                      )}
+                    </select>
+                  </Field>
+                )}
 
                 <Field
                   label="Challan Date"
@@ -2608,12 +3170,26 @@ const DeliveryChallans =
                   />
                 </Field>
 
-                <Field label="Customer">
+                <Field
+                  label="Customer"
+                  required
+                >
                   <input
                     value={
                       form.customerName
                     }
-                    readOnly
+                    onChange={(
+                      event
+                    ) =>
+                      updateField(
+                        "customerName",
+                        event.target.value
+                      )
+                    }
+                    readOnly={
+                      form.sourceType ===
+                      "Sales Order"
+                    }
                     className={
                       inputClass
                     }
@@ -2704,7 +3280,18 @@ const DeliveryChallans =
                     value={
                       form.customerPhone
                     }
-                    readOnly
+                    onChange={(
+                      event
+                    ) =>
+                      updateField(
+                        "customerPhone",
+                        event.target.value
+                      )
+                    }
+                    readOnly={
+                      form.sourceType ===
+                      "Sales Order"
+                    }
                     className={
                       inputClass
                     }
@@ -2733,15 +3320,24 @@ const DeliveryChallans =
                       </th>
 
                       <th className="p-3 text-right">
-                        Ordered
+                        {form.sourceType ===
+                        "Production Output"
+                          ? "Output Qty"
+                          : "Ordered"}
                       </th>
 
                       <th className="p-3 text-right">
-                        Delivered
+                        {form.sourceType ===
+                        "Production Output"
+                          ? "Dispatched"
+                          : "Delivered"}
                       </th>
 
                       <th className="p-3 text-right">
-                        Pending
+                        {form.sourceType ===
+                        "Production Output"
+                          ? "Remaining"
+                          : "Pending"}
                       </th>
 
                       <th className="p-3 text-right">
@@ -2786,7 +3382,10 @@ const DeliveryChallans =
                           colSpan="12"
                           className="p-8 text-center text-slate-400"
                         >
-                          Select a sales order.
+                          {form.sourceType ===
+                          "Production Output"
+                            ? "Select a production output."
+                            : "Select a sales order."}
                         </td>
                       </tr>
                     ) : (
@@ -2797,7 +3396,9 @@ const DeliveryChallans =
                         ) => (
                           <tr
                             key={
-                              item.salesOrderItemId
+                              item.salesOrderItemId ||
+                              item.productionOutput ||
+                              `${item.item}-${index}`
                             }
                             className="border-t"
                           >
@@ -3387,7 +3988,7 @@ const DeliveryChallans =
                   </th>
 
                   <th className="p-4">
-                    Sales Order
+                    Source
                   </th>
 
                   <th className="p-4">
@@ -3475,11 +4076,21 @@ const DeliveryChallans =
                           <td className="p-4">
                             <div className="font-semibold">
                               {
-                                challan.salesOrderNo
+                                challan.sourceNo ||
+                                challan.salesOrderNo ||
+                                challan.productionOutput?.readyNo ||
+                                "-"
                               }
                             </div>
 
                             <div className="text-[10px] text-slate-500">
+                              {challan.sourceType ||
+                                (
+                                  challan.productionOutput
+                                    ? "Production Output"
+                                    : "Sales Order"
+                                )}
+                              {" • "}
                               PO:{" "}
                               {challan.poNo ||
                                 "-"}

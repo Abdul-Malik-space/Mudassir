@@ -29,7 +29,21 @@ const deliveryChallanItemSchema = new mongoose.Schema(
 
     salesOrderItemId: {
       type: mongoose.Schema.Types.ObjectId,
-      required: [true, "Sales order item reference is required"],
+      default: null,
+    },
+
+    productionOutput: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "ReadyProduct",
+      default: null,
+      index: true,
+    },
+
+    productionJob: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "ProductionItem",
+      default: null,
+      index: true,
     },
 
     warehouseId: {
@@ -170,25 +184,58 @@ const deliveryChallanSchema = new mongoose.Schema(
       uppercase: true,
     },
 
+    sourceType: {
+      type: String,
+      enum: [
+        "Sales Order",
+        "Production Output",
+      ],
+      default: "Sales Order",
+      required: true,
+      index: true,
+    },
+
+    sourceNo: {
+      type: String,
+      trim: true,
+      uppercase: true,
+      default: "",
+      index: true,
+    },
+
     salesOrder: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "SalesOrder",
-      required: [true, "Sales order is required"],
+      default: null,
       index: true,
     },
 
     salesOrderNo: {
       type: String,
-      required: [true, "Sales order number is required"],
       trim: true,
       uppercase: true,
+      default: "",
+      index: true,
+    },
+
+    productionOutput: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "ReadyProduct",
+      default: null,
+      index: true,
+    },
+
+    productionJob: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "ProductionItem",
+      default: null,
       index: true,
     },
 
     customer: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Customer",
-      required: [true, "Customer is required"],
+      default: null,
       index: true,
     },
 
@@ -521,8 +568,20 @@ const deliveryChallanSchema = new mongoose.Schema(
 );
 
 deliveryChallanSchema.index({
+  sourceType: 1,
   salesOrder: 1,
   status: 1,
+});
+
+deliveryChallanSchema.index({
+  sourceType: 1,
+  productionOutput: 1,
+  status: 1,
+});
+
+deliveryChallanSchema.index({
+  productionJob: 1,
+  challanDate: -1,
 });
 
 deliveryChallanSchema.index({
@@ -540,9 +599,64 @@ deliveryChallanSchema.pre("validate", function () {
     this.challanNo
   ).toUpperCase();
 
+  this.sourceType =
+    this.sourceType === "Production Output"
+      ? "Production Output"
+      : "Sales Order";
+
+  this.sourceNo = cleanText(
+    this.sourceNo,
+    this.sourceType === "Sales Order"
+      ? this.salesOrderNo
+      : ""
+  ).toUpperCase();
+
   this.salesOrderNo = cleanText(
     this.salesOrderNo
   ).toUpperCase();
+
+  if (
+    this.sourceType === "Sales Order"
+  ) {
+    if (!this.salesOrder) {
+      this.invalidate(
+        "salesOrder",
+        "Sales order is required for a Sales Order delivery challan"
+      );
+    }
+
+    if (!this.salesOrderNo) {
+      this.invalidate(
+        "salesOrderNo",
+        "Sales order number is required for a Sales Order delivery challan"
+      );
+    }
+
+    this.sourceNo =
+      this.sourceNo ||
+      this.salesOrderNo;
+  } else {
+    if (!this.productionOutput) {
+      this.invalidate(
+        "productionOutput",
+        "Production output is required for a Production Output delivery challan"
+      );
+    }
+
+    if (!this.productionJob) {
+      this.invalidate(
+        "productionJob",
+        "Production job is required for a Production Output delivery challan"
+      );
+    }
+
+    if (!this.sourceNo) {
+      this.invalidate(
+        "sourceNo",
+        "Production output number is required"
+      );
+    }
+  }
 
   this.customerName = cleanText(
     this.customerName
@@ -741,6 +855,35 @@ deliveryChallanSchema.pre("validate", function () {
       item.remarks = cleanText(
         item.remarks
       );
+
+      if (
+        this.sourceType === "Sales Order" &&
+        !item.salesOrderItemId
+      ) {
+        this.invalidate(
+          "items",
+          `Sales order item reference is required for ${item.description}`
+        );
+      }
+
+      if (
+        this.sourceType === "Production Output"
+      ) {
+        item.productionOutput =
+          item.productionOutput ||
+          this.productionOutput;
+
+        item.productionJob =
+          item.productionJob ||
+          this.productionJob;
+
+        if (!item.productionOutput) {
+          this.invalidate(
+            "items",
+            `Production output reference is required for ${item.description}`
+          );
+        }
+      }
 
       if (
         item.netWeight >

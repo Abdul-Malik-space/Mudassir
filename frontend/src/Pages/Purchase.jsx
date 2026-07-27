@@ -1,742 +1,1250 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useMemo, useState } from "react";
 import {
-  PencilSquareIcon, TrashIcon, PlusIcon, XMarkIcon,
-  ShoppingBagIcon, UserIcon, MagnifyingGlassIcon,
-  CheckCircleIcon, ClockIcon, DocumentTextIcon,
-  ChevronDownIcon, ArrowPathIcon, BanknotesIcon,
-  CalendarIcon, TagIcon
-} from '@heroicons/react/24/outline';
-import { CheckBadgeIcon, ExclamationTriangleIcon } from '@heroicons/react/24/solid';
+  Plus,
+  Trash2,
+  Printer,
+  Loader2,
+  FileText,
+  Edit2,
+  X,
+  Save,
+  ArrowLeft,
+  Search,
+  RotateCcw,
+} from "lucide-react";
 import { API_BASE_URL } from "../config/api";
 
-// ─── Static Constants ───────────────────────────────────────────────────────
-const STATIC_ITEMS = [
-  { id: 1, name: 'Corrugated Box A4' }, { id: 2, name: 'Kraft Paper Roll' },
-  { id: 3, name: 'Bubble Wrap Sheet' }, { id: 4, name: 'Foam Sheet 5mm' },
-  { id: 5, name: 'Cardboard Sheet' }, { id: 6, name: 'Packing Tape' },
-  { id: 7, name: 'Stretch Film' }, { id: 8, name: 'Wooden Pallet' },
-];
+const emptyItem = {
+  item: "",
+  description: "",
+  size: "",
+  cartons: "",
+  quantity: "",
+  unit: "Rolls",
+  unitPrice: "",
+  remarks: "",
+};
 
-const STATUS_OPTIONS = ['Pending', 'Received', 'Cancelled'];
-const PAYMENT_METHODS = ['Cash', 'Bank Transfer', 'Debit Card', 'Credit Card', 'Cheque'];
+const todayDate = () => new Date().toISOString().slice(0, 10);
 
-const emptyItem = () => ({ itemId: '', itemName: '', unit: '', rate: '', quantity: '', type: 'debit' });
+const money = (value) => `Rs. ${Number(value || 0).toLocaleString()}`;
 
-const PurchaseManager = () => {
-  // ─── States ─────────────────────────────────────────────────────────────────
-  const [purchases, setPurchases] = useState([]);
-  const [units, setUnits] = useState([]);
-  const [vendors, setVendors] = useState([]);
-  const [showForm, setShowForm] = useState(false);
-  const [editId, setEditId] = useState(null);
-  const [search, setSearch] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
+const RequiredLabel = ({ children }) => (
+  <label className="text-xs font-bold text-slate-600">
+    {children} <span className="text-red-600">*</span>
+  </label>
+);
 
-  const [formData, setFormData] = useState({
-    vendor: '',
-    date: new Date().toISOString().split('T')[0],
-    status: 'Pending',
-    poNumber: `PO-${Date.now().toString().slice(-6)}`,
-    paymentMethod: 'Cash',
-    paidAmount: '',
-    items: [emptyItem()],
+const NormalLabel = ({ children }) => (
+  <label className="text-xs font-bold text-slate-600">{children}</label>
+);
+
+const normalizeArray = (data, keys = []) => {
+  if (Array.isArray(data)) return data;
+
+  for (const key of keys) {
+    if (Array.isArray(data?.[key])) return data[key];
+  }
+
+  if (Array.isArray(data?.data)) return data.data;
+
+  return [];
+};
+
+const apiRequest = async (url, options = {}) => {
+  const { headers = {}, ...requestOptions } = options;
+
+  const response = await fetch(url, {
+    ...requestOptions,
+    headers: {
+      Accept: "application/json",
+      ...(requestOptions.body ? { "Content-Type": "application/json" } : {}),
+      ...headers,
+    },
   });
 
+  const data = await response.json().catch(() => ({}));
 
+  if (!response.ok || data?.success === false) {
+    throw new Error(
+      data?.error ||
+        data?.message ||
+        `Request failed with status ${response.status}`
+    );
+  }
 
+  return data;
+};
 
-const API_URL = `${API_BASE_URL}/purchases`;
+const getItemId = (item) =>
+  String(item?._id || item?.id || "");
 
-  // ─── Data Fetching ──────────────────────────────────────────────────────────
-  const fetchData = async () => {
-    setLoading(true);
+const getItemCode = (item) =>
+  String(
+    item?.code ||
+      item?.itemCode ||
+      item?.sku ||
+      item?.productCode ||
+      ""
+  ).trim();
+
+const getItemName = (item) =>
+  String(
+    item?.name ||
+      item?.itemName ||
+      item?.description ||
+      item?.title ||
+      ""
+  ).trim();
+
+const getItemUnit = (item) =>
+  String(
+    item?.unit ||
+      item?.uom ||
+      item?.measurementUnit ||
+      "Pcs"
+  ).trim();
+
+const getItemPurchasePrice = (item) => {
+  const value =
+    item?.purchasePrice ??
+    item?.purchaseRate ??
+    item?.costPrice ??
+    item?.rate ??
+    0;
+
+  const number = Number(value);
+
+  return Number.isFinite(number)
+    ? Math.max(number, 0)
+    : 0;
+};
+
+const getItemLabel = (item) => {
+  const code = getItemCode(item);
+  const name = getItemName(item);
+
+  if (code && name) {
+    return `${code} — ${name}`;
+  }
+
+  if (code || name) {
+    return code || name;
+  }
+
+  const id = getItemId(item);
+
+  return id
+    ? `Item ${id.slice(-6)}`
+    : "Unnamed Item";
+};
+
+const normalizeItemMaster = (item) => ({
+  ...item,
+  _id: getItemId(item),
+  code: getItemCode(item),
+  name: getItemName(item),
+  unit: getItemUnit(item),
+  purchasePrice: getItemPurchasePrice(item),
+  notes: String(item?.notes || item?.remarks || "").trim(),
+});
+
+const getDefaultForm = (purchaseOrderNo = "") => ({
+  purchaseOrderNo,
+  vendor: "",
+  orderDate: todayDate(),
+  expectedDate: "",
+  referenceNo: "",
+  taxType: "without-tax",
+  advance: "",
+  status: "Draft",
+  remarks: "",
+  items: [{ ...emptyItem }],
+});
+
+const PurchaseOrders = () => {
+  const [vendors, setVendors] = useState([]);
+  const [itemsMaster, setItemsMaster] = useState([]);
+  const [orders, setOrders] = useState([]);
+
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [vendorLoading, setVendorLoading] = useState(false);
+  const [itemLoading, setItemLoading] = useState(false);
+
+  const [showForm, setShowForm] = useState(false);
+  const [editId, setEditId] = useState(null);
+
+  const [searchTerm, setSearchTerm] = useState("");
+  const [statusFilter, setStatusFilter] = useState("All");
+
+  const [form, setForm] = useState(getDefaultForm());
+
+  const fetchVendors = async () => {
     try {
-      const [pRes, uRes, vRes] = await Promise.all([
-        fetch(`${API_URL}/all`),
-        fetch(`${API_BASE_URL}/units/all`),
-        fetch(`${API_BASE_URL}/vendors/all`)
-      ]);
+      setVendorLoading(true);
 
-      const pData = await pRes.json();
-      const uData = await uRes.json();
-      const vData = await vRes.json();
+      const data = await apiRequest(`${API_BASE_URL}/vendors/all`);
+      setVendors(normalizeArray(data, ["vendors"]));
+    } catch (error) {
+      console.error("Vendor loading error:", error);
+      alert(error.message || "Vendors load nahi huay");
+      setVendors([]);
+    } finally {
+      setVendorLoading(false);
+    }
+  };
 
-      setPurchases(Array.isArray(pData) ? pData : []);
-      setUnits(Array.isArray(uData) ? uData : []);
+  const fetchItems = async () => {
+    try {
+      setItemLoading(true);
 
-      // یہاں تبدیلی: اکثر API براہ راست Array بھیجتی ہے
-      console.log("Vendors Data:", vData); // کنسول میں چیک کریں ڈیٹا آ رہا ہے؟
-      setVendors(Array.isArray(vData) ? vData : (vData.vendors || []));
+      const data = await apiRequest(`${API_BASE_URL}/items/all`);
 
-    } catch (err) {
-      console.error('Fetch Error:', err);
+      const list = normalizeArray(data, [
+        "items",
+        "products",
+        "records",
+      ])
+        .map(normalizeItemMaster)
+        .filter(
+          (item) =>
+            item._id &&
+            item.status !== "Inactive"
+        )
+        .sort((a, b) =>
+          getItemLabel(a).localeCompare(
+            getItemLabel(b)
+          )
+        );
+
+      setItemsMaster(list);
+    } catch (error) {
+      console.error("Items loading error:", error);
+      alert(error.message || "Items load nahi huay");
+      setItemsMaster([]);
+    } finally {
+      setItemLoading(false);
+    }
+  };
+
+  const fetchOrders = async () => {
+    try {
+      setLoading(true);
+
+      const data = await apiRequest(`${API_BASE_URL}/purchase-orders/all`);
+      setOrders(normalizeArray(data, ["purchaseOrders", "orders"]));
+    } catch (error) {
+      console.error("Purchase order loading error:", error);
+      alert(error.message || "Purchase orders load nahi huay");
+      setOrders([]);
     } finally {
       setLoading(false);
     }
   };
 
-  const handlePrintInvoice = (p) => {
-    const printWindow = window.open('', '_blank');
-    const invoiceContent = `
-    <html>
-      <head>
-        <title>Invoice - ${p.poNumber}</title>
-        <style>
-          body { font-family: 'Inter', sans-serif; padding: 40px; color: #1e293b; }
-          .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #f1f5f9; padding-bottom: 20px; }
-          .vendor-info { margin: 20px 0; font-size: 14px; }
-          table { width: 100%; border-collapse: collapse; margin: 20px 0; }
-          th { background: #f8fafc; text-align: left; padding: 12px; font-size: 12px; text-transform: uppercase; color: #64748b; }
-          td { padding: 12px; border-bottom: 1px solid #f1f5f9; font-size: 14px; }
-          .totals { text-align: right; margin-top: 30px; }
-          .grand-total { font-size: 20px; font-weight: 900; color: #2563eb; }
-          .footer { margin-top: 50px; text-align: center; font-size: 12px; color: #94a3b8; }
-          @media print { .print-btn { display: none; } }
-        </style>
-      </head>
-      <body>
-        <div class="header">
-          <div>
-            <h1 style="margin:0; color:#2563eb;">PURCHASE INVOICE</h1>
-            <p style="margin:5px 0;">REF: #<b>${p.poNumber}</b></p>
-          </div>
-          <div style="text-align: right;">
-            <p>Date: ${new Date(p.date).toLocaleDateString()}</p>
-            <p>Status: <b>${p.status}</b></p>
-          </div>
-        </div>
-
-        <div class="vendor-info">
-          <h3 style="margin-bottom:5px;">Vendor:</h3>
-          <p style="margin:0; font-size: 18px; font-weight: bold;">${p.vendor}</p>
-        </div>
-
-        <table>
-          <thead>
-            <tr>
-              <th>Item Description</th>
-              <th>Qty</th>
-              <th>Rate</th>
-              <th>Amount</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${p.items.map(item => `
-              <tr>
-                <td>${item.itemName}</td>
-                <td>${item.quantity} ${item.unit}</td>
-                <td>Rs. ${Number(item.rate).toLocaleString()}</td>
-                <td>Rs. ${(item.quantity * item.rate).toLocaleString()}</td>
-              </tr>
-            `).join('')}
-          </tbody>
-        </table>
-
-        <div class="totals">
-          <p>Sub Total: Rs. ${Number(p.total).toLocaleString()}</p>
-          <p>Paid Amount: Rs. ${Number(p.paidAmount || 0).toLocaleString()}</p>
-          <div class="grand-total">Total Balance: Rs. ${(p.total - (p.paidAmount || 0)).toLocaleString()}</div>
-        </div>
-
-        <div class="footer">
-          <p>Thank you for your business!</p>
-          <button class="print-btn" onclick="window.print()" style="margin-top:20px; padding:10px 25px; background:#2563eb; color:white; border:none; border-radius:8px; cursor:pointer;">Print Invoice</button>
-        </div>
-      </body>
-    </html>
-  `;
-    printWindow.document.write(invoiceContent);
-    printWindow.document.close();
+  const fetchNextNo = async () => {
+    const data = await apiRequest(`${API_BASE_URL}/purchase-orders/next-no`);
+    return data.purchaseOrderNo || "";
   };
 
-  useEffect(() => { fetchData(); }, []);
+  useEffect(() => {
+    fetchVendors();
+    fetchItems();
+    fetchOrders();
+  }, []);
 
-  // ─── Calculations ───────────────────────────────────────────────────────────
-  const computeTotal = (items) =>
-    items.reduce((sum, it) => {
-      const val = (parseFloat(it.rate) || 0) * (parseFloat(it.quantity) || 0);
-      return it.type === 'credit' ? sum - val : sum + val;
+  const totals = useMemo(() => {
+    const subtotal = form.items.reduce((sum, item) => {
+      return sum + Number(item.quantity || 0) * Number(item.unitPrice || 0);
     }, 0);
 
-  const grandTotal = computeTotal(formData.items);
-  const paidAmt = parseFloat(formData.paidAmount) || 0;
-  const remaining = grandTotal - paidAmt;
+    const salesTax = form.taxType === "with-tax" ? subtotal * 0.18 : 0;
+    const grandTotal = subtotal + salesTax;
+    const balance = grandTotal - Number(form.advance || 0);
 
-  // ─── Handlers ───────────────────────────────────────────────────────────────
-  const updateItem = (idx, field, value) => {
-    const newItems = [...formData.items];
-    if (field === 'itemId') {
-      const found = STATIC_ITEMS.find(i => i.id === parseInt(value));
-      newItems[idx] = { ...newItems[idx], itemId: value, itemName: found?.name || '' };
-    } else {
-      newItems[idx] = { ...newItems[idx], [field]: value };
+    return {
+      subtotal,
+      salesTax,
+      grandTotal,
+      balance,
+    };
+  }, [form.items, form.taxType, form.advance]);
+
+  const stats = useMemo(() => {
+    return {
+      totalOrders: orders.length,
+      totalValue: orders.reduce((s, o) => s + Number(o.grandTotal || 0), 0),
+      taxValue: orders.reduce((s, o) => s + Number(o.salesTax || 0), 0),
+      balance: orders.reduce((s, o) => s + Number(o.balance || 0), 0),
+    };
+  }, [orders]);
+
+  const filteredOrders = useMemo(() => {
+    const keyword = searchTerm.trim().toLowerCase();
+
+    return orders.filter((order) => {
+      const matchesSearch =
+        !keyword ||
+        order.purchaseOrderNo?.toLowerCase().includes(keyword) ||
+        order.vendorName?.toLowerCase().includes(keyword) ||
+        order.vendorPhone?.toLowerCase().includes(keyword) ||
+        order.referenceNo?.toLowerCase().includes(keyword) ||
+        order.items?.some((item) =>
+          item.description?.toLowerCase().includes(keyword)
+        );
+
+      const matchesStatus =
+        statusFilter === "All" || order.status === statusFilter;
+
+      return matchesSearch && matchesStatus;
+    });
+  }, [orders, searchTerm, statusFilter]);
+
+  const openNewForm = async () => {
+    try {
+      setSaving(true);
+
+      await Promise.all([fetchVendors(), fetchItems()]);
+
+      const nextNo = await fetchNextNo();
+
+      setEditId(null);
+      setForm(getDefaultForm(nextNo));
+      setShowForm(true);
+    } catch (error) {
+      alert(error.message || "Purchase Order No load nahi hua");
+    } finally {
+      setSaving(false);
     }
-    setFormData({ ...formData, items: newItems });
   };
 
-  const handleSubmit = async (e) => {
-    if (e) e.preventDefault(); 
+  const closeForm = () => {
+    setShowForm(false);
+    setEditId(null);
+    setForm(getDefaultForm());
+  };
 
-    setSubmitting(true);
+  const updateItem = (index, field, value) => {
+    const updatedItems = [...form.items];
 
-  
-    const payload = {
-      ...formData,
-      total: grandTotal,
-      itemCount: formData.items.length
+    updatedItems[index] = {
+      ...updatedItems[index],
+      [field]: value,
     };
 
-    const url = editId ? `${API_URL}/update/${editId}` : `${API_URL}/add`;
+    setForm({
+      ...form,
+      items: updatedItems,
+    });
+  };
+
+  const handleItemSelect = (index, itemId) => {
+    const selectedItem = itemsMaster.find(
+      (item) =>
+        getItemId(item) ===
+        String(itemId)
+    );
+
+    const updatedItems = [...form.items];
+
+    if (!selectedItem) {
+      updatedItems[index] = {
+        ...updatedItems[index],
+        item: "",
+        description: "",
+        unit: "Pcs",
+        unitPrice: "",
+        remarks: "",
+      };
+
+      setForm({
+        ...form,
+        items: updatedItems,
+      });
+
+      return;
+    }
+
+    updatedItems[index] = {
+      ...updatedItems[index],
+      item: getItemId(selectedItem),
+      description: getItemName(selectedItem),
+      unit: getItemUnit(selectedItem),
+      unitPrice: getItemPurchasePrice(selectedItem),
+      remarks: selectedItem.notes || "",
+    };
+
+    setForm({
+      ...form,
+      items: updatedItems,
+    });
+  };
+
+  const addItemRow = () => {
+    setForm({
+      ...form,
+      items: [...form.items, { ...emptyItem }],
+    });
+  };
+
+  const removeItemRow = (index) => {
+    if (form.items.length === 1) return;
+
+    setForm({
+      ...form,
+      items: form.items.filter((_, i) => i !== index),
+    });
+  };
+
+  const validateForm = () => {
+    if (!form.purchaseOrderNo.trim()) {
+      alert("Purchase Order No required hai");
+      return false;
+    }
+
+    if (!form.vendor) {
+      alert("Vendor select karein");
+      return false;
+    }
+
+    if (!form.orderDate) {
+      alert("Order Date required hai");
+      return false;
+    }
+
+    if (Number(form.advance || 0) > totals.grandTotal) {
+      alert("Advance grand total se zyada nahi ho sakta");
+      return false;
+    }
+
+    const validItems = form.items.filter(
+      (item) =>
+        item.item &&
+        item.description?.trim() &&
+        Number(item.quantity || 0) > 0 &&
+        Number(item.unitPrice || 0) >= 0
+    );
+
+    if (validItems.length === 0) {
+      alert("Select at least one Item Master record and enter valid quantity and unit price.");
+      return false;
+    }
+
+    return true;
+  };
+
+  const buildPayload = () => {
+    const validItems = form.items
+      .filter(
+        (item) =>
+          item.item &&
+          item.description?.trim() &&
+          Number(item.quantity || 0) > 0 &&
+          Number(item.unitPrice || 0) >= 0
+      )
+      .map((item) => ({
+        _id: item._id || undefined,
+        item: item.item,
+        description: String(item.description || "").trim(),
+        size: String(item.size || "").trim(),
+        cartons: Number(item.cartons || 0),
+        quantity: Number(item.quantity || 0),
+        unit: String(item.unit || "Pcs").trim(),
+        unitPrice: Number(item.unitPrice || 0),
+        receivedQty: Number(item.receivedQty || 0),
+        pendingQty: Number(item.pendingQty || 0),
+        remarks: String(item.remarks || "").trim(),
+      }));
+
+    return {
+      purchaseOrderNo: form.purchaseOrderNo,
+      vendor: form.vendor,
+      orderDate: form.orderDate,
+      expectedDate: form.expectedDate,
+      referenceNo: form.referenceNo,
+      taxType: form.taxType,
+      advance: Number(form.advance || 0),
+      status: form.status,
+      remarks: form.remarks,
+      items: validItems,
+    };
+  };
+
+  const handleSubmit = async () => {
+    if (!validateForm()) return;
 
     try {
-      const res = await fetch(url, {
-        method: editId ? 'PUT' : 'POST',
-        headers: { 'Content-Type': 'application/json' },
+      setSaving(true);
+
+      const payload = buildPayload();
+
+      const url = editId
+        ? `${API_BASE_URL}/purchase-orders/update/${editId}`
+        : `${API_BASE_URL}/purchase-orders/add`;
+
+      const method = editId ? "PUT" : "POST";
+
+      await apiRequest(url, {
+        method,
         body: JSON.stringify(payload),
       });
 
-      if (res.ok) {
-        // 1. ڈیٹا بیس اپڈیٹ کریں
-        await fetchData();
-
-        // 2. انوائس ونڈو کھولیں (بغیر الگ بٹن دبائے)
-        handlePrintInvoice(payload);
-
-        // 3. فارم بند کریں
-        setShowForm(false);
-
-      } else {
-        alert('Error saving order');
-      }
-    } catch (err) {
-      console.error(err);
-      alert('Failed to connect to server');
+      await fetchOrders();
+      closeForm();
+    } catch (error) {
+      alert(error.message || "Purchase order save nahi hua");
     } finally {
-      setSubmitting(false);
+      setSaving(false);
     }
   };
-  // ─── Helper Components ─────────────────────────────────────────────────────
-  const StatusBadge = ({ status }) => {
-    const styles = {
-      Received: 'bg-emerald-50 text-emerald-700 border-emerald-200 ring-emerald-500/20',
-      Pending: 'bg-amber-50 text-amber-700 border-amber-200 ring-amber-500/20',
-      Cancelled: 'bg-rose-50 text-rose-700 border-rose-200 ring-rose-500/20',
-    };
+
+  const handleEdit = async (order) => {
+    await Promise.all([fetchVendors(), fetchItems()]);
+
+    setEditId(order._id);
+
+    setForm({
+      purchaseOrderNo: order.purchaseOrderNo || "",
+      vendor: order.vendor?._id || order.vendor || "",
+      orderDate: order.orderDate || todayDate(),
+      expectedDate: order.expectedDate || "",
+      referenceNo: order.referenceNo || "",
+      taxType: order.taxType || "without-tax",
+      advance: order.advance || "",
+      status: order.status || "Draft",
+      remarks: order.remarks || "",
+      items: order.items?.length
+        ? order.items.map((row) => ({
+            _id: row._id || "",
+            item: row.item?._id || row.item || "",
+            description:
+              row.description ||
+              getItemName(row.item) ||
+              "",
+            size: row.size || "",
+            cartons: row.cartons || "",
+            quantity: row.quantity || "",
+            unit:
+              row.unit ||
+              getItemUnit(row.item) ||
+              "Pcs",
+            unitPrice:
+              row.unitPrice ??
+              getItemPurchasePrice(row.item) ??
+              "",
+            receivedQty: row.receivedQty || 0,
+            pendingQty: row.pendingQty || 0,
+            remarks: row.remarks || "",
+          }))
+        : [{ ...emptyItem }],
+    });
+
+    setShowForm(true);
+  };
+
+  const handleDelete = async (id) => {
+    if (!window.confirm("Are you sure you want to delete this purchase order?")) {
+      return;
+    }
+
+    try {
+      await apiRequest(`${API_BASE_URL}/purchase-orders/delete/${id}`, {
+        method: "DELETE",
+      });
+
+      await fetchOrders();
+    } catch (error) {
+      alert(error.message || "Purchase order delete nahi hua");
+    }
+  };
+
+  const getVendorName = (order) => {
     return (
-      <span className={`px-2.5 py-1 rounded-md text-[10px] font-black uppercase border ring-1 ${styles[status] || styles.Pending}`}>
-        {status}
-      </span>
+      order.vendorName ||
+      order.vendor?.vendorName ||
+      order.vendor?.name ||
+      "N/A"
     );
   };
 
-  // ─── FORM VIEW ────────────────────────────────────────────────────────────────
-  if (showForm) return (
-    <div className="min-h-screen bg-[#f8fafc] pb-20">
-      {/* Sticky Form Header */}
-      <div className="sticky top-0 z-30 bg-white/80 backdrop-blur-md border-b border-slate-200 px-4 py-4 mb-6">
-        <div className="max-w-5xl mx-auto flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <button onClick={() => setShowForm(false)} className="p-2 hover:bg-slate-100 rounded-full transition-colors">
-              <XMarkIcon className="w-6 h-6 text-slate-500" />
-            </button>
+  const getVendorPhone = (order) => {
+    return (
+      order.vendorPhone ||
+      order.vendor?.phoneNumber ||
+      order.vendor?.phone ||
+      ""
+    );
+  };
+
+  const printOrder = (order) => {
+    const taxLabel =
+      order.taxType === "with-tax" ? "With Sales Tax 18%" : "Without Sales Tax";
+
+    const rows = order.items
+      .map(
+        (item, index) => `
+          <tr>
+            <td>${index + 1}</td>
+            <td>${item.description || ""}</td>
+            <td>${item.size || ""}</td>
+            <td>${item.cartons || ""}</td>
+            <td>${item.quantity || ""}</td>
+            <td>${item.unit || ""}</td>
+            <td>${Number(item.unitPrice || 0).toLocaleString()}</td>
+            <td>${Number(
+              item.amount ||
+                Number(item.quantity || 0) * Number(item.unitPrice || 0)
+            ).toLocaleString()}</td>
+          </tr>
+        `
+      )
+      .join("");
+
+    const printWindow = window.open("", "_blank");
+
+    printWindow.document.write(`
+      <html>
+        <head>
+          <title>${order.purchaseOrderNo}</title>
+          <style>
+            body { font-family: Arial, sans-serif; padding: 30px; color: #111827; }
+            .top { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid #111827; padding-bottom: 12px; }
+            h1 { margin: 0; font-size: 30px; }
+            h2 { text-align: center; margin: 24px 0 18px; text-decoration: underline; }
+            .small { font-size: 12px; color: #374151; line-height: 1.7; }
+            .box { border: 1px solid #111827; padding: 10px; margin: 12px 0; line-height: 1.7; font-size: 13px; }
+            table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+            th, td { border: 1px solid #111827; padding: 7px; font-size: 12px; text-align: left; }
+            th { background: #f3f4f6; }
+            .totals { width: 320px; margin-left: auto; margin-top: 14px; }
+            .totals div { display: flex; justify-content: space-between; border-bottom: 1px solid #d1d5db; padding: 6px 0; }
+            .sign { margin-top: 70px; display: flex; justify-content: space-between; }
+          </style>
+        </head>
+
+        <body>
+          <div class="top">
             <div>
-              <h1 className="text-xl font-black text-slate-900 tracking-tight">
-                {editId ? 'Modify Purchase Order' : 'Create New Purchase'}
-              </h1>
-              {/* <p className="text-xs text-slate-500 font-medium">{formData.poNumber}</p> */}
+              <h1>Urwa Packages</h1>
+              <div class="small">Purchase Order</div>
+            </div>
+
+            <div class="small">
+              <b>Purchase Order No:</b> ${order.purchaseOrderNo || ""}<br/>
+              <b>Date:</b> ${order.orderDate || ""}<br/>
+              <b>Expected Date:</b> ${order.expectedDate || ""}<br/>
+              <b>Tax:</b> ${taxLabel}<br/>
+              <b>Status:</b> ${order.status || ""}
             </div>
           </div>
-          <div className="hidden md:flex items-center gap-3">
-            <div className="text-right mr-4">
-              <p className="text-[10px] font-bold text-slate-400 uppercase">Grand Total</p>
-              <p className="text-lg font-black text-blue-600">Rs. {grandTotal.toLocaleString()}</p>
+
+          <h2>PURCHASE ORDER</h2>
+
+          <div class="box">
+            <b>Vendor Name:</b> ${getVendorName(order)}<br/>
+            <b>Phone:</b> ${getVendorPhone(order)}<br/>
+            <b>Reference No:</b> ${order.referenceNo || ""}
+          </div>
+
+          <table>
+            <thead>
+              <tr>
+                <th>Sr</th>
+                <th>Description</th>
+                <th>Size</th>
+                <th>Cartons</th>
+                <th>Qty</th>
+                <th>Unit</th>
+                <th>Unit Price</th>
+                <th>Amount</th>
+              </tr>
+            </thead>
+            <tbody>${rows}</tbody>
+          </table>
+
+          <div class="totals">
+            <div><span>Subtotal</span><b>${money(order.subtotal)}</b></div>
+            <div><span>Sales Tax ${order.taxRate || 0}%</span><b>${money(
+      order.salesTax
+    )}</b></div>
+            <div><span>Grand Total</span><b>${money(order.grandTotal)}</b></div>
+            <div><span>Advance</span><b>${money(order.advance)}</b></div>
+            <div><span>Balance</span><b>${money(order.balance)}</b></div>
+          </div>
+
+          <p><b>Remarks:</b> ${order.remarks || ""}</p>
+
+          <div class="sign">
+            <div>Prepared By: __________________</div>
+            <div>Approved By: __________________</div>
+          </div>
+
+          <script>window.print();</script>
+        </body>
+      </html>
+    `);
+
+    printWindow.document.close();
+  };
+
+  if (showForm) {
+    return (
+      <div className="w-full space-y-6">
+        <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-5">
+          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 border-b border-slate-200 pb-4">
+            <div>
+              <button
+                onClick={closeForm}
+                className="inline-flex items-center gap-2 text-sm text-slate-600 hover:text-slate-900 mb-3"
+              >
+                <ArrowLeft size={17} />
+                Back to Purchase Orders
+              </button>
+
+              <h1 className="text-2xl font-bold text-slate-900">
+                {editId ? "Edit Purchase Order" : "New Purchase Order"}
+              </h1>
+
+              {/* <p className="text-sm text-slate-500 mt-1">
+                Vendor select karein aur Item Master se purchase items choose karein.
+              </p> */}
             </div>
-            <button onClick={handleSubmit} disabled={submitting} className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2.5 rounded-xl font-bold shadow-lg shadow-blue-200 flex items-center gap-2 disabled:opacity-50">
-              {submitting ? <ArrowPathIcon className="w-5 h-5 animate-spin" /> : <CheckBadgeIcon className="w-5 h-5" />}
-              {editId ? 'Update Order' : 'Save Order'}
+
+            <button
+              onClick={closeForm}
+              className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-xl border border-slate-200 hover:bg-slate-50"
+            >
+              <X size={18} />
+              Cancel
             </button>
+          </div>
+
+          <div className="pt-5 space-y-6">
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+              <div>
+                <RequiredLabel>Purchase Order No</RequiredLabel>
+                <input
+                  value={form.purchaseOrderNo}
+                  onChange={(e) =>
+                    setForm({ ...form, purchaseOrderNo: e.target.value })
+                  }
+                  className="w-full border rounded-lg px-3 py-2 mt-1"
+                  placeholder="PO-0001"
+                />
+              </div>
+
+              <div>
+                <RequiredLabel>Vendor</RequiredLabel>
+                <select
+                  value={form.vendor}
+                  onChange={(e) => setForm({ ...form, vendor: e.target.value })}
+                  className="w-full border rounded-lg px-3 py-2 mt-1"
+                >
+                  <option value="">
+                    {vendorLoading ? "Loading vendors..." : "Select Vendor"}
+                  </option>
+
+                  {vendors.map((vendor) => (
+                    <option key={vendor._id} value={vendor._id}>
+                      {vendor.vendorName || vendor.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <RequiredLabel>Order Date</RequiredLabel>
+                <input
+                  type="date"
+                  value={form.orderDate}
+                  onChange={(e) =>
+                    setForm({ ...form, orderDate: e.target.value })
+                  }
+                  className="w-full border rounded-lg px-3 py-2 mt-1"
+                />
+              </div>
+
+              <div>
+                <NormalLabel>Expected Date</NormalLabel>
+                <input
+                  type="date"
+                  value={form.expectedDate}
+                  onChange={(e) =>
+                    setForm({ ...form, expectedDate: e.target.value })
+                  }
+                  className="w-full border rounded-lg px-3 py-2 mt-1"
+                />
+              </div>
+
+              <div>
+                <NormalLabel>Reference No</NormalLabel>
+                <input
+                  value={form.referenceNo}
+                  onChange={(e) =>
+                    setForm({ ...form, referenceNo: e.target.value })
+                  }
+                  className="w-full border rounded-lg px-3 py-2 mt-1"
+                  placeholder="Vendor quotation / reference no"
+                />
+              </div>
+
+              <div>
+                <RequiredLabel>Tax Type</RequiredLabel>
+                <select
+                  value={form.taxType}
+                  onChange={(e) =>
+                    setForm({ ...form, taxType: e.target.value })
+                  }
+                  className="w-full border rounded-lg px-3 py-2 mt-1"
+                >
+                  <option value="without-tax">Without Tax</option>
+                  <option value="with-tax">With Sales Tax 18%</option>
+                </select>
+              </div>
+
+              <div>
+                <NormalLabel>Advance</NormalLabel>
+                <input
+                  type="number"
+                  value={form.advance}
+                  onChange={(e) =>
+                    setForm({ ...form, advance: e.target.value })
+                  }
+                  className="w-full border rounded-lg px-3 py-2 mt-1"
+                  placeholder="0"
+                />
+              </div>
+
+              <div>
+                <RequiredLabel>Status</RequiredLabel>
+                <select
+                  value={form.status}
+                  onChange={(e) => setForm({ ...form, status: e.target.value })}
+                  className="w-full border rounded-lg px-3 py-2 mt-1"
+                >
+                  <option>Draft</option>
+                  <option>Ordered</option>
+                  <option>Partially Received</option>
+                  <option>Received</option>
+                  <option>Cancelled</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="border rounded-xl overflow-hidden">
+              <div className="bg-slate-50 px-4 py-3 flex justify-between items-center">
+                <div>
+                  <h3 className="font-bold">Purchase Items</h3>
+                  {/* <p className="text-xs text-slate-500">
+                    Item Master se item select karein. Quantity aur price required hain.
+                  </p> */}
+                </div>
+
+                <button
+                  onClick={addItemRow}
+                  className="text-sm bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg"
+                >
+                  Add Row
+                </button>
+              </div>
+
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="bg-white border-b text-slate-600">
+                      <th className="p-2 text-left">
+                        Item <span className="text-red-600">*</span>
+                      </th>
+                      <th className="p-2 text-left">Description</th>
+                      <th className="p-2 text-left">Size</th>
+                      <th className="p-2 text-left">Cartons</th>
+                      <th className="p-2 text-left">
+                        Qty <span className="text-red-600">*</span>
+                      </th>
+                      <th className="p-2 text-left">Unit</th>
+                      <th className="p-2 text-left">
+                        Unit Price <span className="text-red-600">*</span>
+                      </th>
+                      <th className="p-2 text-right">Amount</th>
+                      <th className="p-2"></th>
+                    </tr>
+                  </thead>
+
+                  <tbody>
+                    {form.items.map((item, index) => (
+                      <tr key={index} className="border-b">
+                        <td className="p-2 min-w-[240px]">
+                          <select
+                            value={item.item || ""}
+                            onChange={(e) =>
+                              handleItemSelect(index, e.target.value)
+                            }
+                            className="w-full border rounded px-2 py-1.5"
+                          >
+                            <option value="">
+                              {itemLoading ? "Loading items..." : "Select Item"}
+                            </option>
+
+                            {itemsMaster.map((masterItem) => (
+                              <option
+                                key={getItemId(masterItem)}
+                                value={getItemId(masterItem)}
+                              >
+                                {getItemLabel(masterItem)}
+                              </option>
+                            ))}
+                          </select>
+                        </td>
+
+                        <td className="p-2 min-w-[220px]">
+                          <input
+                            value={item.description}
+                            onChange={(e) =>
+                              updateItem(index, "description", e.target.value)
+                            }
+                            className="w-full border rounded px-2 py-1.5"
+                            placeholder="Raw material / item name"
+                          />
+                        </td>
+
+                        <td className="p-2 min-w-[140px]">
+                          <input
+                            value={item.size}
+                            onChange={(e) =>
+                              updateItem(index, "size", e.target.value)
+                            }
+                            className="w-full border rounded px-2 py-1.5"
+                            placeholder='2" x 72 Yards'
+                          />
+                        </td>
+
+                        <td className="p-2 min-w-[100px]">
+                          <input
+                            type="number"
+                            value={item.cartons}
+                            onChange={(e) =>
+                              updateItem(index, "cartons", e.target.value)
+                            }
+                            className="w-full border rounded px-2 py-1.5"
+                            placeholder="5"
+                          />
+                        </td>
+
+                        <td className="p-2 min-w-[100px]">
+                          <input
+                            type="number"
+                            value={item.quantity}
+                            onChange={(e) =>
+                              updateItem(index, "quantity", e.target.value)
+                            }
+                            className="w-full border rounded px-2 py-1.5"
+                            placeholder="450"
+                          />
+                        </td>
+
+                        <td className="p-2 min-w-[100px]">
+                          <input
+                            value={item.unit}
+                            onChange={(e) =>
+                              updateItem(index, "unit", e.target.value)
+                            }
+                            className="w-full border rounded px-2 py-1.5"
+                            placeholder="Pcs"
+                          />
+                        </td>
+
+                        <td className="p-2 min-w-[120px]">
+                          <input
+                            type="number"
+                            value={item.unitPrice}
+                            onChange={(e) =>
+                              updateItem(index, "unitPrice", e.target.value)
+                            }
+                            className="w-full border rounded px-2 py-1.5"
+                            placeholder="190"
+                          />
+                        </td>
+
+                        <td className="p-2 text-right font-bold">
+                          {money(
+                            Number(item.quantity || 0) *
+                              Number(item.unitPrice || 0)
+                          )}
+                        </td>
+
+                        <td className="p-2 text-center">
+                          <button
+                            onClick={() => removeItemRow(index)}
+                            className="p-2 bg-red-50 text-red-600 rounded-lg"
+                          >
+                            <Trash2 size={15} />
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+              <div>
+                <NormalLabel>Remarks</NormalLabel>
+                <textarea
+                  value={form.remarks}
+                  onChange={(e) => setForm({ ...form, remarks: e.target.value })}
+                  className="w-full border rounded-lg px-3 py-2 mt-1 min-h-[150px]"
+                  placeholder="Any purchase instruction..."
+                />
+              </div>
+
+              <div className="bg-slate-50 rounded-xl p-5 space-y-3">
+                <div className="flex justify-between">
+                  <span>Subtotal</span>
+                  <b>{money(totals.subtotal)}</b>
+                </div>
+
+                <div className="flex justify-between">
+                  <span>
+                    Sales Tax {form.taxType === "with-tax" ? "18%" : "0%"}
+                  </span>
+                  <b>{money(totals.salesTax)}</b>
+                </div>
+
+                <div className="flex justify-between text-lg border-t pt-3">
+                  <span>Grand Total</span>
+                  <b>{money(totals.grandTotal)}</b>
+                </div>
+
+                <div className="flex justify-between">
+                  <span>Advance</span>
+                  <b>{money(form.advance)}</b>
+                </div>
+
+                <div className="flex justify-between text-red-600">
+                  <span>Balance</span>
+                  <b>{money(totals.balance)}</b>
+                </div>
+              </div>
+            </div>
+
+            <div className="border-t pt-5 flex justify-end gap-3">
+              <button onClick={closeForm} className="px-5 py-2.5 rounded-xl border">
+                Cancel
+              </button>
+
+              <button
+                onClick={handleSubmit}
+                disabled={saving}
+                className="px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-semibold flex items-center gap-2 disabled:opacity-60"
+              >
+                {saving ? (
+                  <Loader2 className="animate-spin" size={18} />
+                ) : (
+                  <Save size={18} />
+                )}
+                {saving ? "Saving..." : "Save Purchase Order"}
+              </button>
+            </div>
           </div>
         </div>
       </div>
+    );
+  }
 
-      <div className="max-w-5xl mx-auto px-4">
-        <form onSubmit={handleSubmit} className="space-y-6">
-          {/* Section: Basic Info */}
-          {/* Section: Basic Info */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            <div className="md:col-span-2 bg-white rounded-3xl p-6 shadow-sm border border-slate-200">
-              <div className="flex items-center gap-2 mb-6">
-                <UserIcon className="w-5 h-5 text-blue-500" />
-                <h3 className="text-sm font-black text-slate-800 uppercase tracking-wider">Vendor & Contact Details</h3>
-              </div>
+  return (
+    <div className="w-full space-y-6">
+      <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-5 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-bold text-slate-900 flex items-center gap-2">
+            <FileText className="text-blue-600" size={26} />
+            Purchase Orders
+          </h1>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-                {/* Supplier Selection */}
-                {/* Supplier Selection */}
-                <div className="space-y-1.5">
-                  <label className="text-[11px] font-black text-slate-500 uppercase ml-1">Select Supplier</label>
-                  <div className="relative">
-                    <select
-                      value={formData.vendor}
-                      onChange={e => setFormData({ ...formData, vendor: e.target.value })}
-                      className="w-full pl-4 pr-10 py-3 bg-slate-50 border border-slate-200 rounded-2xl text-sm focus:ring-4 focus:ring-blue-50 outline-none transition-all appearance-none font-semibold"
-                      required
-                    >
-                      <option value="">Choose a vendor...</option>
-                     
-                      {vendors.map(v => (
-                        <option key={v._id} value={v.name}>
-                          {v.name}
-                        </option>
-                      ))}
-                    </select>
-                    <ChevronDownIcon className="w-5 h-5 absolute right-3 top-3 text-slate-400 pointer-events-none" />
-                  </div>
-                </div>
+          <p className="text-sm text-slate-500 mt-1">
+            Vendor purchase booking, item master selection, tax and balance tracking
+          </p>
+        </div>
 
-                {/* Phone Number Field */}
-                <div className="space-y-1.5">
-                  <label className="text-[11px] font-black text-slate-500 uppercase ml-1">Phone Number</label>
-                  <div className="relative">
-                    <input
-                      type="tel"
-                      placeholder="+92 300 1234567"
-                      value={formData.vendorPhone || ''}
-                      onChange={e => setFormData({ ...formData, vendorPhone: e.target.value })}
-                      className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl text-sm focus:ring-4 focus:ring-blue-50 outline-none transition-all font-semibold"
-                    />
-                  </div>
-                </div>
+        <button
+          onClick={openNewForm}
+          disabled={saving}
+          className="inline-flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-xl font-semibold shadow-sm disabled:opacity-60"
+        >
+          {saving ? <Loader2 className="animate-spin" size={18} /> : <Plus size={18} />}
+          New Purchase Order
+        </button>
+      </div>
 
-                {/* Order Date */}
-                <div className="space-y-1.5">
-                  <label className="text-[11px] font-black text-slate-500 uppercase ml-1">Order Date</label>
-                  <div className="relative">
-                    <input
-                      type="date"
-                      value={formData.date}
-                      onChange={e => setFormData({ ...formData, date: e.target.value })}
-                      className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl text-sm focus:ring-4 focus:ring-blue-50 outline-none transition-all font-semibold"
-                      required
-                    />
-                  </div>
-                </div>
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <div className="bg-white rounded-xl border p-4">
+          <p className="text-xs text-slate-500">Total Orders</p>
+          <h3 className="text-2xl font-bold">{stats.totalOrders}</h3>
+        </div>
 
-                {/* Address or Location (Extra Field for completeness) */}
-                <div className="space-y-1.5">
-                  <label className="text-[11px] font-black text-slate-500 uppercase ml-1">Vendor Address (Optional)</label>
-                  <input
-                    type="text"
-                    placeholder="Shop #, City, etc."
-                    value={formData.vendorAddress || ''}
-                    onChange={e => setFormData({ ...formData, vendorAddress: e.target.value })}
-                    className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl text-sm focus:ring-4 focus:ring-blue-50 outline-none transition-all font-semibold"
-                  />
-                </div>
-              </div>
-            </div>
+        <div className="bg-white rounded-xl border p-4">
+          <p className="text-xs text-slate-500">Total Value</p>
+          <h3 className="text-2xl font-bold">{money(stats.totalValue)}</h3>
+        </div>
 
-            {/* Status Section */}
-            <div className="bg-white rounded-3xl p-6 shadow-sm border border-slate-200">
-              <div className="flex items-center gap-2 mb-6">
-                <TagIcon className="w-5 h-5 text-blue-500" />
-                <h3 className="text-sm font-black text-slate-800 uppercase tracking-wider">Status</h3>
-              </div>
-              <div className="space-y-4">
-                {STATUS_OPTIONS.map(opt => (
-                  <button
-                    key={opt}
-                    type="button"
-                    onClick={() => setFormData({ ...formData, status: opt })}
-                    className={`w-full py-3 px-4 rounded-2xl border text-sm font-bold transition-all flex items-center justify-between ${formData.status === opt ? 'border-blue-600 bg-blue-50 text-blue-700 shadow-sm' : 'border-slate-100 bg-slate-50 text-slate-500 hover:border-slate-300'
-                      }`}
-                  >
-                    {opt}
-                    {formData.status === opt && <CheckCircleIcon className="w-5 h-5" />}
-                  </button>
-                ))}
-              </div>
-            </div>
+        <div className="bg-white rounded-xl border p-4">
+          <p className="text-xs text-slate-500">Tax Value</p>
+          <h3 className="text-2xl font-bold">{money(stats.taxValue)}</h3>
+        </div>
+
+        <div className="bg-white rounded-xl border p-4">
+          <p className="text-xs text-slate-500">Balance</p>
+          <h3 className="text-2xl font-bold">{money(stats.balance)}</h3>
+        </div>
+      </div>
+
+      <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
+        <div className="p-4 border-b border-slate-100 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
+          <div>
+            <h3 className="font-bold text-slate-900">Purchase Order List</h3>
+            {/* <p className="text-xs text-slate-500">
+              All purchase orders from MongoDB
+            </p> */}
           </div>
 
-          {/* Section: Items Table */}
-          <div className="bg-white rounded-3xl shadow-sm border border-slate-200 overflow-hidden">
-            <div className="bg-slate-50/50 px-6 py-4 border-b border-slate-100 flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <ShoppingBagIcon className="w-5 h-5 text-slate-400" />
-                <h3 className="text-sm font-black text-slate-800 uppercase tracking-wider">Purchase Items</h3>
-              </div>
-              <button
-                type="button"
-                onClick={() => setFormData({ ...formData, items: [...formData.items, emptyItem()] })}
-                className="bg-white hover:bg-slate-50 text-blue-600 border border-slate-200 px-4 py-2 rounded-xl text-xs font-black flex items-center gap-2 shadow-sm transition-all"
-              >
-                <PlusIcon className="w-4 h-4 stroke-[3]" /> Add Row
-              </button>
+          <div className="flex flex-col sm:flex-row gap-2">
+            <div className="relative">
+              <Search
+                size={16}
+                className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
+              />
+              <input
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="pl-9 pr-3 py-2 border rounded-lg text-sm w-full sm:w-72"
+                placeholder="Search order, vendor, item..."
+              />
             </div>
 
-            <div className="p-6 space-y-4">
-              {formData.items.map((item, idx) => (
-                <div key={idx} className="group relative grid grid-cols-1 md:grid-cols-12 gap-4 p-4 rounded-2xl border border-slate-100 bg-slate-50/30 hover:bg-white hover:border-blue-200 hover:shadow-md transition-all">
-                  <div className="md:col-span-4">
-                    <label className="md:hidden text-[10px] font-bold text-slate-400 uppercase mb-1 block">Item Name</label>
-                    <select
-                      value={item.itemId}
-                      onChange={e => updateItem(idx, 'itemId', e.target.value)}
-                      className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm font-semibold outline-none focus:border-blue-500 transition-colors"
-                      required
-                    >
-                      <option value="">Select Item...</option>
-                      {STATIC_ITEMS.map(i => <option key={i.id} value={i.id}>{i.name}</option>)}
-                    </select>
-                  </div>
+            <select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value)}
+              className="px-3 py-2 border rounded-lg text-sm"
+            >
+              <option>All</option>
+              <option>Draft</option>
+              <option>Ordered</option>
+              <option>Partially Received</option>
+              <option>Received</option>
+              <option>Cancelled</option>
+            </select>
 
-                  <div className="md:col-span-2">
-                    <label className="md:hidden text-[10px] font-bold text-slate-400 uppercase mb-1 block">Unit</label>
-                    <select
-                      value={item.unit}
-                      onChange={e => updateItem(idx, 'unit', e.target.value)}
-                      className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm font-semibold outline-none focus:border-blue-500"
-                    >
-                      <option value="">Unit</option>
-                      {['pcs', 'kg', 'box', 'roll', 'sheet'].map(u => <option key={u} value={u}>{u}</option>)}
-                    </select>
-                  </div>
-
-                  <div className="md:col-span-2">
-                    <label className="md:hidden text-[10px] font-bold text-slate-400 uppercase mb-1 block">Purchase Rate</label>
-                    <input
-                      type="number"
-                      placeholder="Rate"
-                      value={item.rate}
-                      onChange={e => updateItem(idx, 'rate', e.target.value)}
-                      className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm font-semibold outline-none focus:border-blue-500"
-                    />
-                  </div>
-
-                  <div className="md:col-span-2">
-                    <label className="md:hidden text-[10px]  font-bold text-slate-400 uppercase mb-1 block">Qty</label>
-                    <input
-                      type="number"
-                      placeholder="Qty"
-                      value={item.quantity}
-                      onChange={e => updateItem(idx, 'quantity', e.target.value)}
-                      className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm font-semibold outline-none focus:border-blue-500"
-                    />
-                  </div>
-
-                  <div className="md:col-span-2 flex bg-white rounded-xl border border-slate-200 p-1">
-                    <button
-                      type="button"
-                      onClick={() => updateItem(idx, 'type', 'debit')}
-                      className={`flex-1 py-1.5 text-[10px] font-black rounded-lg transition-all ${item.type === 'debit' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-400'}`}
-                    >DR</button>
-                    <button
-                      type="button"
-                      onClick={() => updateItem(idx, 'type', 'credit')}
-                      className={`flex-1 py-1.5 text-[10px] font-black rounded-lg transition-all ${item.type === 'credit' ? 'bg-rose-500 text-white shadow-sm' : 'text-slate-400'}`}
-                    >CR</button>
-                  </div>
-
-                  <div className="md:col-span-1 flex items-center justify-center">
-                    {/* <button
-                      type="button"
-                      onClick={() => setFormData({ ...formData, items: formData.items.filter((_, i) => i !== idx) })}
-                      disabled={formData.items.length === 1}
-                      className="p-2 text-slate-300 hover:text-rose-500 hover:bg-rose-50 rounded-xl transition-all disabled:opacity-0"
-                    >
-                      <TrashIcon className="w-5 h-5" />
-                    </button> */}
-                  </div>
-
-                  {/* Subtotal Indicator */}
-                  {item.rate && item.quantity && (
-                    <div className="md:absolute -bottom-3 right-8 px-3 py-1 bg-white border border-slate-100 rounded-full shadow-sm">
-                      <p className={`text-[10px] font-black ${item.type === 'credit' ? 'text-rose-500' : 'text-blue-600'}`}>
-                        {item.type === 'credit' ? '-' : '+'} Rs. {(item.rate * item.quantity).toLocaleString()}
-                      </p>
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
+            <button
+              onClick={fetchOrders}
+              className="inline-flex items-center justify-center gap-2 text-sm px-3 py-2 rounded-lg border hover:bg-slate-50"
+            >
+              <RotateCcw size={15} />
+              Refresh
+            </button>
           </div>
+        </div>
 
-          {/* Section: Payment Summary */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div className="bg-white rounded-3xl p-6 shadow-sm border border-slate-200">
-              <div className="flex items-center gap-2 mb-6">
-                <BanknotesIcon className="w-5 h-5 text-blue-500" />
-                <h3 className="text-sm font-black text-slate-800 uppercase tracking-wider">Payment Details</h3>
-              </div>
-              <div className="space-y-5">
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-1.5">
-                    <label className="text-[11px] font-black text-slate-500 uppercase ml-1">Method</label>
-                    <select
-                      value={formData.paymentMethod}
-                      onChange={e => setFormData({ ...formData, paymentMethod: e.target.value })}
-                      className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-semibold outline-none"
-                    >
-                      {PAYMENT_METHODS.map(m => <option key={m} value={m}>{m}</option>)}
-                    </select>
-                  </div>
-                  <div className="space-y-1.5">
-                    <label className="text-[11px] font-black text-slate-500 uppercase ml-1">Paid Amount</label>
-                    <input
-                      type="number"
-                      value={formData.paidAmount}
-                      onChange={e => setFormData({ ...formData, paidAmount: e.target.value })}
-                      className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-black text-emerald-600 outline-none"
-                      placeholder="0.00"
-                    />
-                  </div>
-                </div>
-                <div className={`p-4 rounded-2xl border flex items-center justify-between ${remaining <= 0 ? 'bg-emerald-50 border-emerald-100' : 'bg-rose-50 border-rose-100'}`}>
-                  <div>
-                    <p className="text-[10px] font-black text-slate-400 uppercase">Balance Due</p>
-                    <p className={`text-xl font-black ${remaining <= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
-                      Rs. {Math.abs(remaining).toLocaleString()}
-                    </p>
-                  </div>
-                  {remaining <= 0 ? (
-                    <div className="bg-emerald-500 text-white p-2 rounded-full shadow-lg shadow-emerald-100">
-                      <CheckCircleIcon className="w-6 h-6" />
-                    </div>
-                  ) : (
-                    <div className="bg-rose-500 text-white p-2 rounded-full shadow-lg shadow-rose-100 animate-pulse">
-                      <ExclamationTriangleIcon className="w-6 h-6" />
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="bg-slate-50 text-slate-600">
+              <tr>
+                <th className="p-3 text-left">Order No</th>
+                <th className="p-3 text-left">Vendor</th>
+                <th className="p-3 text-left">Date</th>
+                <th className="p-3 text-left">Tax</th>
+                <th className="p-3 text-right">Grand Total</th>
+                <th className="p-3 text-right">Balance</th>
+                <th className="p-3 text-center">Status</th>
+                <th className="p-3 text-center">Actions</th>
+              </tr>
+            </thead>
 
-            <div className="bg-blue-600 rounded-3xl p-8 shadow-xl shadow-blue-100 text-white flex flex-col justify-between">
-              <div>
-                <h3 className="text-blue-100 text-xs font-black uppercase tracking-[0.2em] mb-1">Order Summary</h3>
-                <p className="text-4xl font-black mb-6">Rs. {grandTotal.toLocaleString()}</p>
+            <tbody>
+              {loading ? (
+                <tr>
+                  <td colSpan="8" className="p-10 text-center">
+                    <Loader2 className="animate-spin mx-auto text-blue-600" />
+                  </td>
+                </tr>
+              ) : filteredOrders.length === 0 ? (
+                <tr>
+                  <td colSpan="8" className="p-10 text-center text-slate-500">
+                    No purchase order found
+                  </td>
+                </tr>
+              ) : (
+                filteredOrders.map((order) => (
+                  <tr key={order._id} className="border-t hover:bg-slate-50">
+                    <td className="p-3 font-bold text-blue-700">
+                      {order.purchaseOrderNo}
+                    </td>
 
-                <div className="space-y-3">
-                  <div className="flex justify-between text-sm font-bold py-2 border-b border-blue-500/50">
-                    <span className="text-blue-200">Total Items</span>
-                    <span>{formData.items.length}</span>
-                  </div>
-                  <div className="flex justify-between text-sm font-bold py-2 border-b border-blue-500/50">
-                    <span className="text-blue-200">Amount Paid</span>
-                    <span>Rs. {paidAmt.toLocaleString()}</span>
-                  </div>
-                  <div className="flex justify-between text-sm font-bold py-2">
-                    <span className="text-blue-200">Payment Method</span>
-                    <span>{formData.paymentMethod}</span>
-                  </div>
-                </div>
-              </div>
+                    <td className="p-3">
+                      <div className="font-semibold">{getVendorName(order)}</div>
+                      <div className="text-xs text-slate-500">
+                        {getVendorPhone(order)}
+                      </div>
+                    </td>
 
-              <button
-                type="submit"
-                disabled={submitting}
-                className="mt-8 w-full bg-white text-blue-600 py-4 rounded-2xl font-black shadow-lg hover:bg-blue-50 transition-all active:scale-[0.98] flex items-center justify-center gap-3 disabled:opacity-70"
-              >
-                {submitting ? <ArrowPathIcon className="w-6 h-6 animate-spin" /> : <CheckBadgeIcon className="w-6 h-6" />}
-                {editId ? 'UPDATE PURCHASE' : 'CONFIRM PURCHASE'}
-              </button>
-            </div>
-          </div>
-        </form>
+                    <td className="p-3">{order.orderDate}</td>
+
+                    <td className="p-3">
+                      {order.taxType === "with-tax"
+                        ? "18% Sales Tax"
+                        : "Without Tax"}
+                    </td>
+
+                    <td className="p-3 text-right font-bold">
+                      {money(order.grandTotal)}
+                    </td>
+
+                    <td className="p-3 text-right font-bold text-red-600">
+                      {money(order.balance)}
+                    </td>
+
+                    <td className="p-3 text-center">
+                      <span className="px-3 py-1 rounded-full text-xs font-semibold bg-blue-50 text-blue-700">
+                        {order.status}
+                      </span>
+                    </td>
+
+                    <td className="p-3">
+                      <div className="flex justify-center gap-2">
+                        <button
+                          onClick={() => printOrder(order)}
+                          className="p-2 rounded-lg bg-slate-100 hover:bg-slate-200"
+                          title="Print"
+                        >
+                          <Printer size={16} />
+                        </button>
+
+                        <button
+                          onClick={() => handleEdit(order)}
+                          className="p-2 rounded-lg bg-blue-50 text-blue-700 hover:bg-blue-100"
+                          title="Edit"
+                        >
+                          <Edit2 size={16} />
+                        </button>
+
+                        <button
+                          onClick={() => handleDelete(order._id)}
+                          className="p-2 rounded-lg bg-red-50 text-red-700 hover:bg-red-100"
+                          title="Delete"
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   );
-
-  // ─── LIST VIEW ────────────────────────────────────────────────────────────────
-return (
-  <div className="min-h-screen bg-[#f8fafc] p-4 md:p-10">
-    <div className="max-w-6xl mx-auto">
-
-      {/* Modern Header */}
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-end mb-10 gap-6">
-        <div className="flex items-center gap-5">
-          <div className="bg-white p-4 rounded-[2rem] shadow-xl shadow-blue-50 border border-slate-100">
-            <ShoppingBagIcon className="w-10 h-10 text-blue-600" />
-          </div>
-          <div>
-            <h2 className="text-3xl font-black text-slate-900 tracking-tight">Purchases</h2>
-            <p className="text-slate-500 font-bold flex items-center gap-2 uppercase text-[10px] tracking-widest mt-1">
-              <span className="w-2 h-2 rounded-full bg-emerald-500 inline-block" />
-              {purchases.length} Records Found
-            </p>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-3 w-full md:w-auto">
-          <div className="relative group flex-1 md:w-80">
-            <MagnifyingGlassIcon className="w-5 h-5 absolute left-4 top-3.5 text-slate-400 group-focus-within:text-blue-500 transition-colors" />
-            <input
-              type="text"
-              placeholder="Search vendor, PO or status..."
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-              className="w-full pl-12 pr-4 py-3.5 bg-white border border-slate-200 rounded-[1.25rem] text-sm font-semibold outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-50 transition-all shadow-sm"
-            />
-          </div>
-          
-          {/* ─── بدلا ہوا بٹن: Purchase Order ─────────────────────────────────── */}
-          <button
-            onClick={() => {
-              setEditId(null);
-              setFormData({
-                vendor: '',
-                date: new Date().toISOString().split('T')[0],
-                status: 'Pending',
-                poNumber: `PO-${Date.now().toString().slice(-6)}`,
-                paymentMethod: 'Cash',
-                paidAmount: '',
-                items: [emptyItem()],
-              });
-              setShowForm(true);
-            }}
-            className="bg-blue-600 hover:bg-blue-700 text-white p-3.5 md:px-6 rounded-[1.25rem] shadow-xl shadow-blue-100 flex items-center gap-2 font-black text-sm transition-all active:scale-95 group"
-          >
-            <PlusIcon className="w-5 h-5 stroke-[3] group-hover:rotate-90 transition-transform" />
-            <span className="hidden md:inline uppercase tracking-wider">Purchase Order</span>
-          </button>
-        </div>
-      </div>
-
-      {/* Dynamic List */}
-      <div className="grid grid-cols-1 gap-4">
-        {loading ? (
-          <div className="bg-white rounded-3xl p-20 border border-slate-100 flex flex-col items-center justify-center shadow-sm">
-            <ArrowPathIcon className="w-12 h-12 text-blue-200 animate-spin mb-4" />
-            <p className="text-slate-400 font-bold text-sm uppercase tracking-widest">Loading Purchases...</p>
-          </div>
-        ) : purchases.length === 0 ? (
-          <div className="bg-white rounded-3xl p-20 border border-slate-100 flex flex-col items-center justify-center shadow-sm">
-            <ShoppingBagIcon className="w-16 h-16 text-slate-100 mb-4" />
-            <p className="text-slate-400 font-bold text-sm uppercase tracking-widest">No orders found</p>
-          </div>
-        ) : (
-          <div className="bg-white rounded-[2rem] border border-slate-200 shadow-sm overflow-hidden overflow-x-auto">
-            <table className="w-full text-left border-collapse">
-              <thead>
-                <tr className="bg-slate-50 border-b border-slate-100">
-                  <th className="px-6 py-5 text-[10px] font-black text-slate-400 uppercase tracking-[0.15em]">Ref #</th>
-                  <th className="px-6 py-5 text-[10px] font-black text-slate-400 uppercase tracking-[0.15em]">Vendor Details</th>
-                  <th className="px-6 py-5 text-[10px] font-black text-slate-400 uppercase tracking-[0.15em]">Date</th>
-                  <th className="px-6 py-5 text-[10px] font-black text-slate-400 uppercase tracking-[0.15em] text-center">Items</th>
-                  <th className="px-6 py-5 text-[10px] font-black text-slate-400 uppercase tracking-[0.15em]">Status</th>
-                  <th className="px-6 py-5 text-[10px] font-black text-slate-400 uppercase tracking-[0.15em] text-right">Grand Total</th>
-                  <th className="px-6 py-5 text-[10px] font-black text-slate-400 uppercase tracking-[0.15em] text-center">Manage</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-50">
-                {purchases
-                  .filter(p => (p.vendor || '').toLowerCase().includes(search.toLowerCase()) || (p.poNumber || '').toLowerCase().includes(search.toLowerCase()))
-                  .map((p) => (
-                    <tr key={p._id} className="group hover:bg-blue-50/30 transition-colors">
-                      <td className="px-6 py-5">
-                        <div className="flex flex-col">
-                          <span className="font-mono text-xs font-black text-blue-600 bg-blue-50 px-2 py-1 rounded-lg self-start">
-                            {p.poNumber}
-                          </span>
-                        </div>
-                      </td>
-                      <td className="px-6 py-5">
-                        <div className="flex items-center gap-3">
-                          <div className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center text-slate-500 font-black text-[10px]">
-                            {p.vendor?.[0] || 'V'}
-                          </div>
-                          <span className="font-black text-slate-800 text-sm">{p.vendor || 'Unknown'}</span>
-                        </div>
-                      </td>
-                      <td className="px-6 py-5">
-                        <div className="flex items-center gap-2 text-slate-500 text-xs font-bold">
-                          <CalendarIcon className="w-4 h-4 text-slate-300" />
-                          {p.date}
-                        </div>
-                      </td>
-                      <td className="px-6 py-5 text-center">
-                        <span className="bg-slate-100 text-slate-600 text-[10px] font-black px-2.5 py-1 rounded-full border border-slate-200">
-                          {p.itemCount || p.items?.length || 0} SKUs
-                        </span>
-                      </td>
-                      <td className="px-6 py-5">
-                        <StatusBadge status={p.status} />
-                      </td>
-                      <td className="px-6 py-5 text-right font-black text-slate-900 text-sm">
-                        Rs. {Number(p.total || 0).toLocaleString()}
-                      </td>
-                      <td className="px-6 py-5">
-                        <div className="flex justify-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                          
-                          {/* ایڈٹ بٹن */}
-                          <button
-                            onClick={() => {
-                              setEditId(p._id);
-                              const formattedDate = p.date ? new Date(p.date).toISOString().split('T')[0] : '';
-
-                              setFormData({
-                                vendor: p.vendor || '',
-                                vendorPhone: p.vendorPhone || '',   
-                                vendorAddress: p.vendorAddress || '', 
-                                date: formattedDate,
-                                status: p.status || 'Pending',
-                                poNumber: p.poNumber || '',
-                                paymentMethod: p.paymentMethod || 'Cash',
-                                paidAmount: p.paidAmount || '',
-                                items: p.items?.length
-                                  ? p.items.map(item => ({
-                                      itemId: item.itemId || '',
-                                      itemName: item.itemName || '',
-                                      unit: item.unit || '',
-                                      rate: item.rate || '',
-                                      quantity: item.quantity || '',
-                                      type: item.type || 'debit'
-                                    }))
-                                  : [emptyItem()],
-                              });
-
-                              setShowForm(true);
-                            }}
-                            className="p-2 text-blue-600 bg-white hover:bg-blue-600 hover:text-white rounded-xl shadow-sm border border-slate-100 transition-all"
-                          >
-                            <PencilSquareIcon className="w-4 h-4" />
-                          </button>
-
-                          {/* ڈیلیٹ بٹن */}
-                          <button
-                            onClick={async () => {
-                              if (window.confirm('کیا آپ واقعی یہ پرچیز آرڈر ڈیلیٹ کرنا چاہتے ہیں؟')) {
-                                try {
-                                  const res = await fetch(`${API_URL}/delete/${p._id}`, { method: 'DELETE' });
-                                  if(res.ok) {
-                                    fetchData();
-                                  } else {
-                                    alert("ڈیلیٹ کرنے میں مسئلہ آیا ہے!");
-                                  }
-                                } catch(err) {
-                                  console.error(err);
-                                }
-                              }
-                            }}
-                            className="p-2 text-rose-500 bg-white hover:bg-rose-500 hover:text-white rounded-xl shadow-sm border border-slate-100 transition-all"
-                          >
-                            <TrashIcon className="w-4 h-4" />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-
-    </div>
-  </div>
-);
 };
 
-export default PurchaseManager;
+export default PurchaseOrders;

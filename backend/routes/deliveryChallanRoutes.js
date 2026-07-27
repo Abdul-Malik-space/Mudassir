@@ -7,6 +7,8 @@ const Counter = require("../models/Counter");
 const DeliveryChallan = require("../models/DeliveryChallan");
 const Item = require("../models/Item");
 const SalesOrder = require("../models/SalesOrder");
+const ReadyProduct = require("../models/ReadyProducts");
+const ProductionItem = require("../models/ProductionItem");
 const StockLedger = require("../models/StockLedger");
 const Warehouse = require("../models/Warehouse");
 
@@ -35,6 +37,16 @@ const ELIGIBLE_SALES_ORDER_STATUSES = [
   "Ready",
   "Partially Delivered",
 ];
+
+const SOURCE_TYPES = [
+  "Sales Order",
+  "Production Output",
+];
+
+const normalizeSourceType = (value) =>
+  value === "Production Output"
+    ? "Production Output"
+    : "Sales Order";
 
 const todayDate = () =>
   new Date().toISOString().slice(0, 10);
@@ -95,6 +107,29 @@ const populateChallan = (query) =>
     .populate(
       "salesOrder",
       "salesOrderNo orderNo poNo customerName customerPhone customerEmail customerAddress deliveryAddress status items"
+    )
+    .populate(
+      {
+        path: "productionOutput",
+        select:
+          "readyNo productionJob jobNo sourceType salesOrder salesOrderNo internalReference customer customerName customerPO finishedGoodItem finishedGoodCode finishedGoodName passedQty unit status stockPosted rate packaging qcDate",
+        populate: [
+          {
+            path: "productionJob",
+            select:
+              "jobNo jobName sourceType salesOrder salesOrderNo internalReference customer customerName customerPO targetQty unit status finishedGoodItem finishedGoodCode finishedGoodName finishedSize sheetSize",
+          },
+          {
+            path: "finishedGoodItem",
+            select:
+              "code name itemType unit salePrice purchasePrice status stockManaged",
+          },
+        ],
+      }
+    )
+    .populate(
+      "productionJob",
+      "jobNo jobName sourceType salesOrder salesOrderNo internalReference customer customerName customerPO targetQty unit status finishedGoodItem finishedGoodCode finishedGoodName"
     )
     .populate(
       "customer",
@@ -332,6 +367,18 @@ const getDeliveredQuantityMap =
         $in:
           ACTIVE_DELIVERY_STATUSES,
       },
+
+      $or: [
+        {
+          sourceType:
+            "Sales Order",
+        },
+        {
+          sourceType: {
+            $exists: false,
+          },
+        },
+      ],
     };
 
     if (excludedChallanId) {
@@ -517,6 +564,525 @@ const buildCustomerDetails = (
       ),
   };
 };
+
+
+const loadProductionOutput =
+  async (
+    productionOutputId
+  ) => {
+    if (
+      !isValidId(
+        productionOutputId
+      )
+    ) {
+      throw new Error(
+        "A valid production output is required"
+      );
+    }
+
+    const output =
+      await ReadyProduct.findById(
+        productionOutputId
+      )
+        .populate(
+          "finishedGoodItem",
+          "code name itemType unit salePrice purchasePrice status stockManaged"
+        )
+        .populate(
+          {
+            path:
+              "productionJob",
+            select:
+              "jobNo jobName sourceType salesOrder salesOrderNo internalReference customer customerName customerPO targetQty unit status finishedGoodItem finishedGoodCode finishedGoodName finishedSize sheetSize",
+            populate: [
+              {
+                path:
+                  "customer",
+                select:
+                  "name customerName phoneNumber phone email address city status",
+              },
+              {
+                path:
+                  "salesOrder",
+                select:
+                  "salesOrderNo poNo customer customerName customerPhone customerEmail customerAddress deliveryAddress contactPerson attentionTo status",
+                populate: {
+                  path:
+                    "customer",
+                  select:
+                    "name customerName phoneNumber phone email address city status",
+                },
+              },
+            ],
+          }
+        )
+        .populate(
+          "customer",
+          "name customerName phoneNumber phone email address city status"
+        )
+        .populate(
+          {
+            path:
+              "salesOrder",
+            select:
+              "salesOrderNo poNo customer customerName customerPhone customerEmail customerAddress deliveryAddress contactPerson attentionTo status",
+            populate: {
+              path:
+                "customer",
+              select:
+                "name customerName phoneNumber phone email address city status",
+            },
+          }
+        );
+
+    if (!output) {
+      throw new Error(
+        "Production output not found"
+      );
+    }
+
+    if (
+      output.status !==
+        "Posted" ||
+      !output.stockPosted
+    ) {
+      throw new Error(
+        "Only a posted production output can be selected"
+      );
+    }
+
+    if (
+      cleanNumber(
+        output.passedQty
+      ) <= 0
+    ) {
+      throw new Error(
+        "The selected production output has no passed quantity"
+      );
+    }
+
+    const finishedGood =
+      output.finishedGoodItem;
+
+    if (
+      !finishedGood ||
+      finishedGood.itemType !==
+        "Finished Good" ||
+      finishedGood.stockManaged ===
+        false ||
+      finishedGood.status ===
+        "Inactive"
+    ) {
+      throw new Error(
+        "The selected production output does not contain an active stock-managed Finished Good"
+      );
+    }
+
+    if (
+      !output.productionJob
+    ) {
+      throw new Error(
+        "The selected production output has no production job reference"
+      );
+    }
+
+    return output;
+  };
+
+const getProductionDispatchedQty =
+  async (
+    productionOutputId,
+    excludedChallanId = null
+  ) => {
+    const query = {
+      sourceType:
+        "Production Output",
+
+      productionOutput:
+        productionOutputId,
+
+      status: {
+        $in:
+          ACTIVE_DELIVERY_STATUSES,
+      },
+    };
+
+    if (excludedChallanId) {
+      query._id = {
+        $ne:
+          excludedChallanId,
+      };
+    }
+
+    const result =
+      await DeliveryChallan.aggregate([
+        {
+          $match: {
+            ...query,
+
+            productionOutput:
+              new mongoose.Types.ObjectId(
+                productionOutputId
+              ),
+
+            ...(excludedChallanId
+              ? {
+                  _id: {
+                    $ne:
+                      new mongoose.Types.ObjectId(
+                        excludedChallanId
+                      ),
+                  },
+                }
+              : {}),
+          },
+        },
+        {
+          $unwind:
+            "$items",
+        },
+        {
+          $group: {
+            _id: null,
+
+            total: {
+              $sum:
+                "$items.quantity",
+            },
+          },
+        },
+      ]);
+
+    return cleanNumber(
+      result[0]?.total
+    );
+  };
+
+const getProductionContext =
+  (
+    output
+  ) => {
+    const job =
+      output.productionJob ||
+      {};
+
+    const salesOrder =
+      output.salesOrder ||
+      job.salesOrder ||
+      {};
+
+    const customer =
+      output.customer ||
+      job.customer ||
+      salesOrder.customer ||
+      {};
+
+    return {
+      job,
+      salesOrder,
+      customer,
+    };
+  };
+
+const buildProductionCustomerDetails =
+  (
+    body,
+    output
+  ) => {
+    const {
+      job,
+      salesOrder,
+      customer,
+    } =
+      getProductionContext(
+        output
+      );
+
+    const customerName =
+      cleanText(
+        body.customerName ||
+          output.customerName ||
+          job.customerName ||
+          salesOrder.customerName ||
+          customer.customerName ||
+          customer.name
+      );
+
+    if (!customerName) {
+      throw new Error(
+        "Customer name is required for a Production Output delivery challan"
+      );
+    }
+
+    const customerAddress =
+      cleanText(
+        body.customerAddress ||
+          body.deliveryAddress ||
+          salesOrder.customerAddress ||
+          salesOrder.deliveryAddress ||
+          customer.address
+      );
+
+    return {
+      customer:
+        customer._id ||
+        output.customer ||
+        job.customer ||
+        salesOrder.customer ||
+        null,
+
+      customerName,
+
+      customerPhone:
+        cleanText(
+          body.customerPhone ||
+            salesOrder.customerPhone ||
+            customer.phoneNumber ||
+            customer.phone
+        ),
+
+      customerEmail:
+        cleanText(
+          body.customerEmail ||
+            salesOrder.customerEmail ||
+            customer.email
+        ),
+
+      customerAddress,
+
+      deliveryAddress:
+        cleanText(
+          body.deliveryAddress,
+          customerAddress
+        ),
+
+      attentionTo:
+        cleanText(
+          body.attentionTo ||
+            salesOrder.contactPerson ||
+            salesOrder.attentionTo
+        ),
+    };
+  };
+
+const prepareProductionDeliveryItems =
+  async ({
+    rows,
+    output,
+    warehouse,
+    excludedChallanId = null,
+    requireCurrentStock = false,
+  }) => {
+    if (
+      !Array.isArray(rows)
+    ) {
+      throw new Error(
+        "Delivery items must be an array"
+      );
+    }
+
+    const finishedGood =
+      output.finishedGoodItem;
+
+    const outputQty =
+      cleanNumber(
+        output.passedQty
+      );
+
+    const alreadyDeliveredQty =
+      await getProductionDispatchedQty(
+        output._id,
+        excludedChallanId
+      );
+
+    const pendingQty =
+      Math.max(
+        outputQty -
+          alreadyDeliveredQty,
+        0
+      );
+
+    if (pendingQty <= 0) {
+      throw new Error(
+        `Production Output ${output.readyNo} has no remaining dispatch quantity`
+      );
+    }
+
+    const availableStock =
+      await getCurrentStock(
+        finishedGood._id,
+        warehouse
+      );
+
+    const row =
+      rows.find(
+        (candidate) =>
+          candidate &&
+          (
+            idOf(
+              candidate.productionOutput
+            ) ===
+              String(
+                output._id
+              ) ||
+            idOf(
+              candidate.item
+            ) ===
+              String(
+                finishedGood._id
+              )
+          )
+      ) ||
+      rows.find(
+        (candidate) =>
+          candidate &&
+          cleanNumber(
+            candidate.quantity
+          ) > 0
+      );
+
+    if (!row) {
+      throw new Error(
+        "Add a dispatch quantity for the selected production output"
+      );
+    }
+
+    const quantity =
+      cleanNumber(
+        row.quantity
+      );
+
+    if (quantity <= 0) {
+      throw new Error(
+        "Dispatch quantity must be greater than zero"
+      );
+    }
+
+    if (
+      quantity >
+      pendingQty
+    ) {
+      throw new Error(
+        `Dispatch quantity cannot exceed remaining production output quantity ${pendingQty} ${output.unit || finishedGood.unit || "Pcs"}`
+      );
+    }
+
+    if (
+      requireCurrentStock &&
+      quantity >
+        availableStock
+    ) {
+      throw new Error(
+        `${finishedGood.name}: insufficient stock. Available ${availableStock} ${finishedGood.unit || output.unit || "Pcs"}`
+      );
+    }
+
+    const job =
+      output.productionJob ||
+      {};
+
+    return [
+      {
+        salesOrderItemId:
+          null,
+
+        productionOutput:
+          output._id,
+
+        productionJob:
+          job._id ||
+          job,
+
+        item:
+          finishedGood._id,
+
+        itemCode:
+          finishedGood.code,
+
+        itemName:
+          finishedGood.name,
+
+        description:
+          cleanText(
+            row.description ||
+              output.finishedGoodName,
+            finishedGood.name
+          ),
+
+        size:
+          cleanText(
+            row.size ||
+              job.finishedSize ||
+              job.sheetSize
+          ),
+
+        orderedQty:
+          outputQty,
+
+        alreadyDeliveredQty,
+
+        pendingQty,
+
+        availableStock,
+
+        cartons:
+          cleanNumber(
+            row.cartons
+          ),
+
+        rolls:
+          cleanNumber(
+            row.rolls
+          ),
+
+        quantity,
+
+        unit:
+          cleanText(
+            row.unit,
+            output.unit ||
+              finishedGood.unit ||
+              "Pcs"
+          ),
+
+        grossWeight:
+          cleanNumber(
+            row.grossWeight
+          ),
+
+        netWeight:
+          cleanNumber(
+            row.netWeight
+          ),
+
+        unitPrice:
+          cleanNumber(
+            row.unitPrice ??
+              output.rate ??
+              finishedGood.salePrice
+          ),
+
+        amount:
+          quantity *
+          cleanNumber(
+            row.unitPrice ??
+              output.rate ??
+              finishedGood.salePrice
+          ),
+
+        remarks:
+          cleanText(
+            row.remarks
+          ),
+
+        warehouseId:
+          warehouse._id,
+
+        warehouse:
+          warehouse.name,
+      },
+    ];
+  };
 
 const prepareDeliveryItems =
   async ({
@@ -1076,6 +1642,14 @@ const getEligibleSalesOrders =
         _id:
           order._id,
 
+        sourceType:
+          "Sales Order",
+
+        sourceNo:
+          getSalesOrderNumber(
+            order
+          ),
+
         salesOrderNo:
           getSalesOrderNumber(
             order
@@ -1131,6 +1705,317 @@ const getEligibleSalesOrders =
     }
 
     return output;
+  };
+
+
+const getEligibleProductionOutputs =
+  async () => {
+    const warehouse =
+      await getFinishedGoodsWarehouse();
+
+    const outputs =
+      await ReadyProduct.find({
+        status:
+          "Posted",
+
+        stockPosted:
+          true,
+
+        passedQty: {
+          $gt: 0,
+        },
+      })
+        .populate(
+          "finishedGoodItem",
+          "code name itemType unit salePrice purchasePrice status stockManaged"
+        )
+        .populate(
+          {
+            path:
+              "productionJob",
+            select:
+              "jobNo jobName sourceType salesOrder salesOrderNo internalReference customer customerName customerPO targetQty unit status finishedGoodItem finishedGoodCode finishedGoodName finishedSize sheetSize",
+            populate: [
+              {
+                path:
+                  "customer",
+                select:
+                  "name customerName phoneNumber phone email address city status",
+              },
+              {
+                path:
+                  "salesOrder",
+                select:
+                  "salesOrderNo poNo customer customerName customerPhone customerEmail customerAddress deliveryAddress contactPerson attentionTo status",
+                populate: {
+                  path:
+                    "customer",
+                  select:
+                    "name customerName phoneNumber phone email address city status",
+                },
+              },
+            ],
+          }
+        )
+        .populate(
+          "customer",
+          "name customerName phoneNumber phone email address city status"
+        )
+        .populate(
+          {
+            path:
+              "salesOrder",
+            select:
+              "salesOrderNo poNo customer customerName customerPhone customerEmail customerAddress deliveryAddress contactPerson attentionTo status",
+            populate: {
+              path:
+                "customer",
+              select:
+                "name customerName phoneNumber phone email address city status",
+            },
+          }
+        )
+        .sort({
+          qcDate: -1,
+          createdAt: -1,
+        });
+
+    const eligible = [];
+
+    for (
+      const output of
+      outputs
+    ) {
+      const finishedGood =
+        output.finishedGoodItem;
+
+      if (
+        !finishedGood ||
+        finishedGood.itemType !==
+          "Finished Good" ||
+        finishedGood.stockManaged ===
+          false ||
+        finishedGood.status ===
+          "Inactive" ||
+        !output.productionJob
+      ) {
+        continue;
+      }
+
+      const alreadyDeliveredQty =
+        await getProductionDispatchedQty(
+          output._id
+        );
+
+      const outputQty =
+        cleanNumber(
+          output.passedQty
+        );
+
+      const pendingQty =
+        Math.max(
+          outputQty -
+            alreadyDeliveredQty,
+          0
+        );
+
+      if (pendingQty <= 0) {
+        continue;
+      }
+
+      const availableStock =
+        await getCurrentStock(
+          finishedGood._id,
+          warehouse
+        );
+
+      const {
+        job,
+        salesOrder,
+        customer,
+      } =
+        getProductionContext(
+          output
+        );
+
+      const customerName =
+        cleanText(
+          output.customerName ||
+            job.customerName ||
+            salesOrder.customerName ||
+            customer.customerName ||
+            customer.name
+        );
+
+      eligible.push({
+        _id:
+          output._id,
+
+        sourceType:
+          "Production Output",
+
+        sourceNo:
+          output.readyNo,
+
+        readyNo:
+          output.readyNo,
+
+        productionOutput:
+          output._id,
+
+        productionJob:
+          job._id ||
+          job,
+
+        jobNo:
+          output.jobNo ||
+          job.jobNo ||
+          "",
+
+        salesOrder:
+          salesOrder._id ||
+          output.salesOrder ||
+          job.salesOrder ||
+          null,
+
+        salesOrderNo:
+          cleanText(
+            output.salesOrderNo ||
+              job.salesOrderNo ||
+              salesOrder.salesOrderNo
+          ).toUpperCase(),
+
+        poNo:
+          cleanText(
+            output.customerPO ||
+              job.customerPO ||
+              salesOrder.poNo
+          ),
+
+        status:
+          output.status,
+
+        qcDate:
+          output.qcDate,
+
+        customer:
+          customer._id ||
+          output.customer ||
+          job.customer ||
+          salesOrder.customer ||
+          null,
+
+        customerName,
+
+        customerPhone:
+          cleanText(
+            salesOrder.customerPhone ||
+              customer.phoneNumber ||
+              customer.phone
+          ),
+
+        customerEmail:
+          cleanText(
+            salesOrder.customerEmail ||
+              customer.email
+          ),
+
+        customerAddress:
+          cleanText(
+            salesOrder.customerAddress ||
+              salesOrder.deliveryAddress ||
+              customer.address
+          ),
+
+        attentionTo:
+          cleanText(
+            salesOrder.contactPerson ||
+              salesOrder.attentionTo
+          ),
+
+        items: [
+          {
+            salesOrderItemId:
+              null,
+
+            productionOutput:
+              output._id,
+
+            productionJob:
+              job._id ||
+              job,
+
+            item:
+              finishedGood._id,
+
+            itemCode:
+              finishedGood.code,
+
+            itemName:
+              finishedGood.name,
+
+            description:
+              cleanText(
+                output.finishedGoodName,
+                finishedGood.name
+              ),
+
+            size:
+              cleanText(
+                job.finishedSize ||
+                  job.sheetSize
+              ),
+
+            orderedQty:
+              outputQty,
+
+            alreadyDeliveredQty,
+
+            pendingQty,
+
+            availableStock,
+
+            quantity:
+              Math.min(
+                pendingQty,
+                availableStock
+              ),
+
+            unit:
+              cleanText(
+                output.unit,
+                finishedGood.unit ||
+                  job.unit ||
+                  "Pcs"
+              ),
+
+            cartons: 0,
+            rolls: 0,
+            grossWeight: 0,
+            netWeight: 0,
+
+            unitPrice:
+              cleanNumber(
+                output.rate ??
+                  finishedGood.salePrice
+              ),
+
+            remarks:
+              cleanText(
+                output.remarks
+              ),
+
+            warehouseId:
+              warehouse._id,
+
+            warehouse:
+              warehouse.name,
+          },
+        ],
+      });
+    }
+
+    return eligible;
   };
 
 const syncSalesOrder =
@@ -1224,6 +2109,23 @@ const syncSalesOrder =
     await salesOrder.save();
   };
 
+const syncChallanSource =
+  async (
+    challan
+  ) => {
+    if (
+      normalizeSourceType(
+        challan.sourceType
+      ) ===
+        "Sales Order" &&
+      challan.salesOrder
+    ) {
+      await syncSalesOrder(
+        challan.salesOrder
+      );
+    }
+  };
+
 const removeFailedDispatchEntries =
   async (
     challanId
@@ -1271,26 +2173,59 @@ const dispatchChallan =
     const warehouse =
       await getFinishedGoodsWarehouse();
 
-    const salesOrder =
-      await loadSalesOrder(
-        challan.salesOrder
+    const sourceType =
+      normalizeSourceType(
+        challan.sourceType
       );
 
-    const preparedItems =
-      await prepareDeliveryItems({
-        rows:
-          challan.items,
+    let preparedItems = [];
 
-        salesOrder,
+    if (
+      sourceType ===
+      "Production Output"
+    ) {
+      const output =
+        await loadProductionOutput(
+          challan.productionOutput
+        );
 
-        warehouse,
+      preparedItems =
+        await prepareProductionDeliveryItems({
+          rows:
+            challan.items,
 
-        excludedChallanId:
-          challan._id,
+          output,
 
-        requireCurrentStock:
-          true,
-      });
+          warehouse,
+
+          excludedChallanId:
+            challan._id,
+
+          requireCurrentStock:
+            true,
+        });
+    } else {
+      const salesOrder =
+        await loadSalesOrder(
+          challan.salesOrder
+        );
+
+      preparedItems =
+        await prepareDeliveryItems({
+          rows:
+            challan.items,
+
+          salesOrder,
+
+          warehouse,
+
+          excludedChallanId:
+            challan._id,
+
+          requireCurrentStock:
+            true,
+        });
+    }
 
     const requestedByItem =
       new Map();
@@ -1357,6 +2292,27 @@ const dispatchChallan =
         const row of
         preparedItems
       ) {
+        const sourceLineId =
+          idOf(
+            row.salesOrderItemId ||
+              row.productionOutput ||
+              challan.productionOutput ||
+              row._id
+          );
+
+        const sourceLabel =
+          sourceType ===
+          "Production Output"
+            ? `Production Output ${
+                challan.sourceNo ||
+                challan.productionOutput ||
+                ""
+              }`
+            : `Sales Order ${
+                challan.salesOrderNo ||
+                ""
+              }`;
+
         await postStockMovement({
           item:
             row.item,
@@ -1382,15 +2338,13 @@ const dispatchChallan =
             challan._id,
 
           referenceLineId:
-            String(
-              row.salesOrderItemId
-            ),
+            sourceLineId,
 
           referenceNo:
             challan.challanNo,
 
           postingKey:
-            `DC:${challan._id}:${row.salesOrderItemId}:OUT`,
+            `DC:${challan._id}:${sourceLineId}:OUT`,
 
           qtyIn: 0,
 
@@ -1405,7 +2359,7 @@ const dispatchChallan =
             ),
 
           remarks:
-            `Delivery Challan ${challan.challanNo} against Sales Order ${challan.salesOrderNo}`,
+            `Delivery Challan ${challan.challanNo} against ${sourceLabel}`,
 
           allowDuplicate:
             false,
@@ -1416,6 +2370,9 @@ const dispatchChallan =
 
         createdEntry = true;
       }
+
+      challan.sourceType =
+        sourceType;
 
       challan.items =
         preparedItems;
@@ -1451,9 +2408,15 @@ const dispatchChallan =
 
       await challan.save();
 
-      await syncSalesOrder(
+      if (
+        sourceType ===
+          "Sales Order" &&
         challan.salesOrder
-      );
+      ) {
+        await syncChallanSource(
+          challan
+        );
+      }
     } catch (error) {
       if (createdEntry) {
         await removeFailedDispatchEntries(
@@ -1526,8 +2489,8 @@ const cancelChallan =
 
       await challan.save();
 
-      await syncSalesOrder(
-        challan.salesOrder
+      await syncChallanSource(
+        challan
       );
 
       return;
@@ -1673,8 +2636,8 @@ const cancelChallan =
 
     await challan.save();
 
-    await syncSalesOrder(
-      challan.salesOrder
+    await syncChallanSource(
+      challan
     );
   };
 
@@ -1730,6 +2693,29 @@ router.get(
 );
 
 router.get(
+  "/eligible-production-outputs",
+  async (req, res) => {
+    try {
+      const outputs =
+        await getEligibleProductionOutputs();
+
+      return res.json(
+        outputs
+      );
+    } catch (error) {
+      return res
+        .status(500)
+        .json({
+          success: false,
+
+          message:
+            error.message,
+        });
+    }
+  }
+);
+
+router.get(
   "/all",
   async (req, res) => {
     try {
@@ -1737,7 +2723,9 @@ router.get(
         search = "",
         status = "",
         invoiceStatus = "",
+        sourceType = "",
         salesOrder = "",
+        productionOutput = "",
       } = req.query;
 
       const query = {};
@@ -1757,6 +2745,36 @@ router.get(
       ) {
         query.invoiceStatus =
           invoiceStatus;
+      }
+
+      if (
+        sourceType &&
+        sourceType !== "All"
+      ) {
+        query.sourceType =
+          normalizeSourceType(
+            sourceType
+          );
+      }
+
+      if (productionOutput) {
+        if (
+          !isValidId(
+            productionOutput
+          )
+        ) {
+          return res
+            .status(400)
+            .json({
+              success: false,
+
+              message:
+                "Invalid production output ID",
+            });
+        }
+
+        query.productionOutput =
+          productionOutput;
       }
 
       if (salesOrder) {
@@ -1792,6 +2810,15 @@ router.get(
           },
           {
             salesOrderNo: {
+              $regex:
+                search,
+
+              $options:
+                "i",
+            },
+          },
+          {
+            sourceNo: {
               $regex:
                 search,
 
@@ -1944,39 +2971,122 @@ router.post(
       const body =
         req.body || {};
 
-      const salesOrder =
-        await loadSalesOrder(
-          body.salesOrder
+      const sourceType =
+        normalizeSourceType(
+          body.sourceType
         );
 
       const warehouse =
         await getFinishedGoodsWarehouse();
 
-      const items =
-        await prepareDeliveryItems({
-          rows:
-            body.items,
+      let items = [];
+      let customerDetails = {};
+      let sourceFields = {};
+      let poNo = "";
 
+      if (
+        sourceType ===
+        "Production Output"
+      ) {
+        const output =
+          await loadProductionOutput(
+            body.productionOutput
+          );
+
+        items =
+          await prepareProductionDeliveryItems({
+            rows:
+              body.items,
+
+            output,
+
+            warehouse,
+
+            requireCurrentStock:
+              false,
+          });
+
+        customerDetails =
+          buildProductionCustomerDetails(
+            body,
+            output
+          );
+
+        const {
+          job,
           salesOrder,
+        } =
+          getProductionContext(
+            output
+          );
 
-          warehouse,
+        sourceFields = {
+          sourceType,
 
-          requireCurrentStock:
-            false,
-        });
+          sourceNo:
+            output.readyNo,
 
-      const challanNo =
-        await getNextChallanNo();
+          productionOutput:
+            output._id,
 
-      const customerDetails =
-        buildCustomerDetails(
-          body,
-          salesOrder
-        );
+          productionJob:
+            job._id ||
+            job,
 
-      const challan =
-        await DeliveryChallan.create({
-          challanNo,
+          salesOrder:
+            salesOrder._id ||
+            output.salesOrder ||
+            job.salesOrder ||
+            null,
+
+          salesOrderNo:
+            cleanText(
+              output.salesOrderNo ||
+                job.salesOrderNo ||
+                salesOrder.salesOrderNo
+            ).toUpperCase(),
+        };
+
+        poNo =
+          cleanText(
+            body.poNo ||
+              output.customerPO ||
+              job.customerPO ||
+              salesOrder.poNo
+          );
+      } else {
+        const salesOrder =
+          await loadSalesOrder(
+            body.salesOrder
+          );
+
+        items =
+          await prepareDeliveryItems({
+            rows:
+              body.items,
+
+            salesOrder,
+
+            warehouse,
+
+            requireCurrentStock:
+              false,
+          });
+
+        customerDetails =
+          buildCustomerDetails(
+            body,
+            salesOrder
+          );
+
+        sourceFields = {
+          sourceType:
+            "Sales Order",
+
+          sourceNo:
+            getSalesOrderNumber(
+              salesOrder
+            ),
 
           salesOrder:
             salesOrder._id,
@@ -1986,13 +3096,32 @@ router.post(
               salesOrder
             ),
 
+          productionOutput:
+            null,
+
+          productionJob:
+            null,
+        };
+
+        poNo =
+          cleanText(
+            body.poNo ||
+              salesOrder.poNo
+          );
+      }
+
+      const challanNo =
+        await getNextChallanNo();
+
+      const challan =
+        await DeliveryChallan.create({
+          challanNo,
+
+          ...sourceFields,
+
           ...customerDetails,
 
-          poNo:
-            cleanText(
-              body.poNo ||
-                salesOrder.poNo
-            ),
+          poNo,
 
           referenceNo:
             cleanText(
@@ -2117,7 +3246,10 @@ router.post(
           success: true,
 
           message:
-            "Delivery challan draft created successfully",
+            sourceType ===
+            "Production Output"
+              ? "Production Output delivery challan draft created successfully"
+              : "Sales Order delivery challan draft created successfully",
 
           data,
         });
@@ -2204,56 +3336,164 @@ router.put(
       const body =
         req.body || {};
 
-      const salesOrder =
-        await loadSalesOrder(
-          body.salesOrder ||
-            challan.salesOrder
+      const sourceType =
+        normalizeSourceType(
+          body.sourceType ||
+            challan.sourceType
         );
 
       const warehouse =
         await getFinishedGoodsWarehouse();
 
-      const items =
-        await prepareDeliveryItems({
-          rows:
-            body.items ||
-            challan.items,
+      let items = [];
+      let customerDetails = {};
+      let sourceFields = {};
+      let poNo = "";
 
+      if (
+        sourceType ===
+        "Production Output"
+      ) {
+        const output =
+          await loadProductionOutput(
+            body.productionOutput ||
+              challan.productionOutput
+          );
+
+        items =
+          await prepareProductionDeliveryItems({
+            rows:
+              body.items ||
+              challan.items,
+
+            output,
+
+            warehouse,
+
+            excludedChallanId:
+              challan._id,
+
+            requireCurrentStock:
+              false,
+          });
+
+        customerDetails =
+          buildProductionCustomerDetails(
+            body,
+            output
+          );
+
+        const {
+          job,
           salesOrder,
+        } =
+          getProductionContext(
+            output
+          );
 
-          warehouse,
+        sourceFields = {
+          sourceType,
 
-          excludedChallanId:
-            challan._id,
+          sourceNo:
+            output.readyNo,
 
-          requireCurrentStock:
-            false,
-        });
+          productionOutput:
+            output._id,
 
-      const customerDetails =
-        buildCustomerDetails(
-          body,
-          salesOrder
-        );
+          productionJob:
+            job._id ||
+            job,
 
-      challan.salesOrder =
-        salesOrder._id;
+          salesOrder:
+            salesOrder._id ||
+            output.salesOrder ||
+            job.salesOrder ||
+            null,
 
-      challan.salesOrderNo =
-        getSalesOrderNumber(
-          salesOrder
-        );
+          salesOrderNo:
+            cleanText(
+              output.salesOrderNo ||
+                job.salesOrderNo ||
+                salesOrder.salesOrderNo
+            ).toUpperCase(),
+        };
+
+        poNo =
+          cleanText(
+            body.poNo ||
+              output.customerPO ||
+              job.customerPO ||
+              salesOrder.poNo
+          );
+      } else {
+        const salesOrder =
+          await loadSalesOrder(
+            body.salesOrder ||
+              challan.salesOrder
+          );
+
+        items =
+          await prepareDeliveryItems({
+            rows:
+              body.items ||
+              challan.items,
+
+            salesOrder,
+
+            warehouse,
+
+            excludedChallanId:
+              challan._id,
+
+            requireCurrentStock:
+              false,
+          });
+
+        customerDetails =
+          buildCustomerDetails(
+            body,
+            salesOrder
+          );
+
+        sourceFields = {
+          sourceType:
+            "Sales Order",
+
+          sourceNo:
+            getSalesOrderNumber(
+              salesOrder
+            ),
+
+          salesOrder:
+            salesOrder._id,
+
+          salesOrderNo:
+            getSalesOrderNumber(
+              salesOrder
+            ),
+
+          productionOutput:
+            null,
+
+          productionJob:
+            null,
+        };
+
+        poNo =
+          cleanText(
+            body.poNo ||
+              salesOrder.poNo
+          );
+      }
 
       Object.assign(
         challan,
+        sourceFields,
         customerDetails
       );
 
       challan.poNo =
-        cleanText(
-          body.poNo ||
-            salesOrder.poNo
-        );
+        poNo;
 
       challan.referenceNo =
         cleanText(
@@ -2575,8 +3815,8 @@ router.post(
 
       await challan.save();
 
-      await syncSalesOrder(
-        challan.salesOrder
+      await syncChallanSource(
+        challan
       );
 
       const data =
@@ -2777,8 +4017,8 @@ router.patch(
 
         await challan.save();
 
-        await syncSalesOrder(
-          challan.salesOrder
+        await syncChallanSource(
+          challan
         );
       } else if (
         status ===

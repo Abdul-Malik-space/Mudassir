@@ -84,8 +84,31 @@ const duplicateMessage = (
 const populateEntry = (query) =>
   query
     .populate(
-      "productionJob",
-      "jobNo jobName customerName targetQty unit status goodQty productionOutputQty productionOutputPosted finishedGoodCode finishedGoodName"
+      {
+        path: "productionJob",
+        select:
+          "jobNo jobName sourceType salesOrder salesOrderNo internalReference customer customerName customerPO targetQty unit status goodQty productionOutputQty productionOutputPosted finishedGoodCode finishedGoodName",
+        populate: [
+          {
+            path: "customer",
+            select:
+              "name customerName phoneNumber phone email address city status",
+          },
+          {
+            path: "salesOrder",
+            select:
+              "salesOrderNo poNo customer customerName customerPhone customerEmail customerAddress deliveryAddress status",
+          },
+        ],
+      }
+    )
+    .populate(
+      "salesOrder",
+      "salesOrderNo poNo customer customerName customerPhone customerEmail customerAddress deliveryAddress status"
+    )
+    .populate(
+      "customer",
+      "name customerName phoneNumber phone email address city status"
     )
     .populate(
       "printing",
@@ -543,9 +566,38 @@ const preparePayload =
         printingNo:
           printing.printingNo,
 
+        sourceType:
+          job.sourceType ===
+          "Sales Order"
+            ? "Sales Order"
+            : "Internal Requirement",
+
+        salesOrder:
+          job.salesOrder ||
+          null,
+
+        salesOrderNo:
+          textValue(
+            job.salesOrderNo
+          ).toUpperCase(),
+
+        internalReference:
+          textValue(
+            job.internalReference
+          ).toUpperCase(),
+
+        customer:
+          job.customer ||
+          null,
+
         customerName:
           job.customerName ||
           "",
+
+        customerPO:
+          textValue(
+            job.customerPO
+          ),
 
         finishedGoodItem:
           finishedGood._id,
@@ -1062,7 +1114,7 @@ router.get(
         })
           .populate(
             "productionJob",
-            "jobNo jobName customerName targetQty unit status productionOutputQty productionOutputPosted finishedGoodCode finishedGoodName"
+            "jobNo jobName sourceType salesOrder salesOrderNo internalReference customer customerName customerPO targetQty unit status productionOutputQty productionOutputPosted finishedGoodCode finishedGoodName"
           )
           .populate(
             "finishedGoodItem",

@@ -1,57 +1,88 @@
-const express = require("express");
-const mongoose = require("mongoose");
+const express =
+  require("express");
 
-const router = express.Router();
+const mongoose =
+  require("mongoose");
 
-const Counter = require(
-  "../models/Counter"
-);
+const router =
+  express.Router();
 
-const Item = require(
-  "../models/Item"
-);
+const Counter =
+  require(
+    "../models/Counter"
+  );
 
-const MaterialIssue = require(
-  "../models/MaterialIssue"
-);
+const Item =
+  require(
+    "../models/Item"
+  );
 
-const ProductionItem = require(
-  "../models/ProductionItem"
-);
+const MaterialIssue =
+  require(
+    "../models/MaterialIssue"
+  );
 
-const StockLedger = require(
-  "../models/StockLedger"
-);
+const ProductionItem =
+  require(
+    "../models/ProductionItem"
+  );
 
-const Warehouse = require(
-  "../models/Warehouse"
-);
+const StockLedger =
+  require(
+    "../models/StockLedger"
+  );
+
+const Warehouse =
+  require(
+    "../models/Warehouse"
+  );
 
 const {
   RAW_MATERIAL_GODOWN,
   ensureDefaultWarehouses,
   getItemStock,
   postStockMovement,
-} = require("../utils/stockService");
+} = require(
+  "../utils/stockService"
+);
 
-const ALLOWED_JOB_STATUSES = [
-  "Approved",
-  "Material Issued",
-];
+const ALLOWED_JOB_STATUSES =
+  [
+    "Approved",
+    "Material Issued",
+  ];
 
-const ALLOWED_ITEM_TYPES = [
-  "Raw Material",
-  "Packing Material",
-  "Consumable",
-];
+const ALLOWED_ITEM_TYPES =
+  [
+    "Raw Material",
+    "Packing Material",
+    "Consumable",
+  ];
+
+const MATERIAL_ISSUE_COUNTER =
+  "materialIssueNo";
+
+const RAW_MATERIAL_WAREHOUSE =
+  RAW_MATERIAL_GODOWN ||
+  "Raw Material Godown";
+
+const STANDARD_ISSUE_NO_PATTERN =
+  /^MI-(\d+)$/i;
+
+const MATERIAL_ISSUE_NO_PATTERN =
+  /^MI-[A-Z0-9]+(?:-[A-Z0-9]+)*$/;
 
 const todayDate = () =>
   new Date()
     .toISOString()
     .slice(0, 10);
 
-const num = (value) =>
-  Number.isFinite(Number(value))
+const num = (
+  value
+) =>
+  Number.isFinite(
+    Number(value)
+  )
     ? Number(value)
     : 0;
 
@@ -59,16 +90,28 @@ const text = (
   value,
   fallback = ""
 ) =>
-  String(value || "").trim() ||
+  String(
+    value ?? ""
+  ).trim() ||
   fallback;
 
-const idOf = (value) => {
+const normalizeIssueNo = (
+  value
+) =>
+  text(value)
+    .toUpperCase()
+    .replace(/\s+/g, "");
+
+const idOf = (
+  value
+) => {
   if (!value) {
     return "";
   }
 
   if (
-    typeof value === "object"
+    typeof value ===
+    "object"
   ) {
     return String(
       value._id ||
@@ -80,10 +123,83 @@ const idOf = (value) => {
   return String(value);
 };
 
-const validId = (value) =>
+const validId = (
+  value
+) =>
   mongoose.isValidObjectId(
     value
   );
+
+const validateIssueNo = (
+  issueNo
+) => {
+  if (!issueNo) {
+    throw new Error(
+      "Material Issue Number is required"
+    );
+  }
+
+  if (
+    issueNo.length >
+    50
+  ) {
+    throw new Error(
+      "Material Issue Number cannot exceed 50 characters"
+    );
+  }
+
+  if (
+    !MATERIAL_ISSUE_NO_PATTERN
+      .test(issueNo)
+  ) {
+    throw new Error(
+      "Material Issue Number must start with MI- and contain only letters, numbers or hyphens"
+    );
+  }
+};
+
+const issueSequence = (
+  issueNo
+) => {
+  const match =
+    normalizeIssueNo(
+      issueNo
+    ).match(
+      STANDARD_ISSUE_NO_PATTERN
+    );
+
+  return match
+    ? num(match[1])
+    : 0;
+};
+
+const duplicateMessage = (
+  error,
+  requestedIssueNo = ""
+) => {
+  if (
+    error?.code !==
+    11000
+  ) {
+    return (
+      error?.message ||
+      "Unable to save material issue"
+    );
+  }
+
+  const issueNo =
+    normalizeIssueNo(
+      requestedIssueNo
+    ) ||
+    normalizeIssueNo(
+      error?.keyValue
+        ?.issueNo
+    );
+
+  return issueNo
+    ? `Material Issue Number "${issueNo}" already exists`
+    : "This Material Issue Number already exists";
+};
 
 const populateIssue = (
   query
@@ -112,8 +228,22 @@ const getRawMaterialWarehouse =
 
     const warehouse =
       await Warehouse.findOne({
-        name:
-          RAW_MATERIAL_GODOWN,
+        $or: [
+          {
+            code:
+              "WH-RM",
+          },
+
+          {
+            name:
+              RAW_MATERIAL_WAREHOUSE,
+          },
+
+          {
+            name:
+              "Raw Material Warehouse",
+          },
+        ],
       });
 
     if (!warehouse) {
@@ -134,42 +264,129 @@ const getRawMaterialWarehouse =
     return warehouse;
   };
 
-const getNextIssueNo =
+const getHighestExistingIssueSequence =
   async () => {
-    for (
-      let attempt = 0;
-      attempt < 10;
-      attempt += 1
-    ) {
-      const counter =
-        await Counter.findOneAndUpdate(
+    const rows =
+      await MaterialIssue
+        .find({
+          issueNo:
+            /^MI-\d+$/i,
+        })
+        .select(
+          "issueNo"
+        )
+        .lean();
+
+    return rows.reduce(
+      (
+        highest,
+        row
+      ) =>
+        Math.max(
+          highest,
+
+          issueSequence(
+            row.issueNo
+          )
+        ),
+
+      0
+    );
+  };
+
+const syncIssueCounter =
+  async (
+    minimumSequence = 0
+  ) => {
+    const highestExisting =
+      await getHighestExistingIssueSequence();
+
+    const target =
+      Math.max(
+        highestExisting,
+        num(
+          minimumSequence
+        )
+      );
+
+    const counter =
+      await Counter
+        .findOneAndUpdate(
           {
             name:
-              "materialIssueNo",
+              MATERIAL_ISSUE_COUNTER,
           },
+
           {
-            $inc: {
-              seq: 1,
+            $max: {
+              seq:
+                target,
             },
           },
+
           {
             new: true,
             upsert: true,
+
             setDefaultsOnInsert:
               true,
           }
         );
 
-      const issueNo = `MI-${String(
-        counter.seq
-      ).padStart(4, "0")}`;
+    return Math.max(
+      num(
+        counter?.seq
+      ),
+
+      target
+    );
+  };
+
+const getNextIssueNo =
+  async () => {
+    await syncIssueCounter();
+
+    for (
+      let attempt = 0;
+      attempt < 100;
+      attempt += 1
+    ) {
+      const counter =
+        await Counter
+          .findOneAndUpdate(
+            {
+              name:
+                MATERIAL_ISSUE_COUNTER,
+            },
+
+            {
+              $inc: {
+                seq: 1,
+              },
+            },
+
+            {
+              new: true,
+              upsert: true,
+
+              setDefaultsOnInsert:
+                true,
+            }
+          );
+
+      const issueNo =
+        `MI-${String(
+          counter.seq
+        ).padStart(
+          4,
+          "0"
+        )}`;
 
       const exists =
-        await MaterialIssue.exists(
-          {
+        await MaterialIssue
+          .exists({
             issueNo,
-          }
-        );
+          });
 
       if (!exists) {
         return issueNo;
@@ -183,37 +400,130 @@ const getNextIssueNo =
 
 const peekNextIssueNo =
   async () => {
-    const counter =
-      await Counter.findOne({
-        name:
-          "materialIssueNo",
-      });
+    const currentSequence =
+      await syncIssueCounter();
 
-    const next = counter
-      ? num(counter.seq) + 1
-      : 1;
+    let nextSequence =
+      currentSequence +
+      1;
 
-    return `MI-${String(
-      next
-    ).padStart(4, "0")}`;
+    for (
+      let attempt = 0;
+      attempt < 100;
+      attempt += 1
+    ) {
+      const issueNo =
+        `MI-${String(
+          nextSequence
+        ).padStart(
+          4,
+          "0"
+        )}`;
+
+      const exists =
+        await MaterialIssue
+          .exists({
+            issueNo,
+          });
+
+      if (!exists) {
+        return issueNo;
+      }
+
+      nextSequence += 1;
+    }
+
+    throw new Error(
+      "Unable to preview the next material issue number"
+    );
+  };
+
+const resolveIssueNo =
+  async (
+    value,
+    excludeIssueId = null
+  ) => {
+    const requestedIssueNo =
+      normalizeIssueNo(
+        value
+      );
+
+    if (
+      !requestedIssueNo
+    ) {
+      return getNextIssueNo();
+    }
+
+    validateIssueNo(
+      requestedIssueNo
+    );
+
+    const query = {
+      issueNo:
+        requestedIssueNo,
+    };
+
+    if (
+      excludeIssueId
+    ) {
+      query._id = {
+        $ne:
+          excludeIssueId,
+      };
+    }
+
+    const duplicate =
+      await MaterialIssue
+        .exists(
+          query
+        );
+
+    if (duplicate) {
+      throw new Error(
+        `Material Issue Number "${requestedIssueNo}" already exists`
+      );
+    }
+
+    const sequence =
+      issueSequence(
+        requestedIssueNo
+      );
+
+    if (
+      sequence > 0
+    ) {
+      await syncIssueCounter(
+        sequence
+      );
+    }
+
+    return requestedIssueNo;
   };
 
 const prepareIssuePayload =
-  async (body) => {
-    const jobId = idOf(
-      body.productionJob
-    );
+  async (
+    body = {}
+  ) => {
+    const jobId =
+      idOf(
+        body.productionJob
+      );
 
-    if (!validId(jobId)) {
+    if (
+      !validId(
+        jobId
+      )
+    ) {
       throw new Error(
         "A valid production job is required"
       );
     }
 
     const job =
-      await ProductionItem.findById(
-        jobId
-      );
+      await ProductionItem
+        .findById(
+          jobId
+        );
 
     if (!job) {
       throw new Error(
@@ -222,9 +532,10 @@ const prepareIssuePayload =
     }
 
     if (
-      !ALLOWED_JOB_STATUSES.includes(
-        job.status
-      )
+      !ALLOWED_JOB_STATUSES
+        .includes(
+          job.status
+        )
     ) {
       throw new Error(
         `Material can only be issued against an Approved or Material Issued job. Current status is ${job.status}.`
@@ -232,16 +543,20 @@ const prepareIssuePayload =
     }
 
     const incomingRows =
-      Array.isArray(body.items)
+      Array.isArray(
+        body.items
+      )
         ? body.items.filter(
             (row) =>
-              num(row.issueQty) >
-              0
+              num(
+                row.issueQty
+              ) > 0
           )
         : [];
 
     if (
-      !incomingRows.length
+      incomingRows.length ===
+      0
     ) {
       throw new Error(
         "Enter an issue quantity for at least one material"
@@ -253,40 +568,60 @@ const prepareIssuePayload =
         (
           job.materialRequirements ||
           []
-        ).map((row) => [
-          String(row._id),
-          row,
-        ])
+        ).map(
+          (row) => [
+            String(
+              row._id
+            ),
+
+            row,
+          ]
+        )
       );
 
-    const lineIds = new Set();
-    const itemIds = new Set();
+    const lineIds =
+      new Set();
+
+    const itemIds =
+      new Set();
+
     const cleanItems = [];
 
     for (
       const incoming of
       incomingRows
     ) {
-      const lineId = idOf(
-        incoming.materialRequirementId ||
-          incoming.requirementId
-      );
+      const lineId =
+        idOf(
+          incoming
+            .materialRequirementId ||
+            incoming
+              .requirementId
+        );
 
-      if (!validId(lineId)) {
+      if (
+        !validId(
+          lineId
+        )
+      ) {
         throw new Error(
           "A valid production material line is required"
         );
       }
 
       if (
-        lineIds.has(lineId)
+        lineIds.has(
+          lineId
+        )
       ) {
         throw new Error(
-          "The same material line cannot be issued twice"
+          "The same production material line cannot be issued twice"
         );
       }
 
-      lineIds.add(lineId);
+      lineIds.add(
+        lineId
+      );
 
       const requirement =
         requirementMap.get(
@@ -299,30 +634,40 @@ const prepareIssuePayload =
         );
       }
 
-      const itemId = idOf(
-        requirement.item
-      );
+      const itemId =
+        idOf(
+          requirement.item
+        );
 
-      if (!validId(itemId)) {
+      if (
+        !validId(
+          itemId
+        )
+      ) {
         throw new Error(
           `Material item link is missing for ${requirement.itemName}`
         );
       }
 
       if (
-        itemIds.has(itemId)
+        itemIds.has(
+          itemId
+        )
       ) {
         throw new Error(
           "The same material item cannot be issued more than once in one document"
         );
       }
 
-      itemIds.add(itemId);
+      itemIds.add(
+        itemId
+      );
 
       const item =
-        await Item.findById(
-          itemId
-        );
+        await Item
+          .findById(
+            itemId
+          );
 
       if (!item) {
         throw new Error(
@@ -342,9 +687,10 @@ const prepareIssuePayload =
       if (
         item.stockManaged ===
           false ||
-        !ALLOWED_ITEM_TYPES.includes(
-          item.itemType
-        )
+        !ALLOWED_ITEM_TYPES
+          .includes(
+            item.itemType
+          )
       ) {
         throw new Error(
           `Item ${item.name} cannot be issued to production`
@@ -353,24 +699,36 @@ const prepareIssuePayload =
 
       const requiredQty =
         num(
-          requirement.requiredQty
+          requirement
+            .requiredQty
         );
 
       const previousIssuedQty =
         num(
-          requirement.issuedQty
+          requirement
+            .issuedQty
         );
 
       const pendingQty =
         Math.max(
           requiredQty -
             previousIssuedQty,
+
           0
         );
 
-      const issueQty = num(
-        incoming.issueQty
-      );
+      const issueQty =
+        num(
+          incoming.issueQty
+        );
+
+      if (
+        issueQty <= 0
+      ) {
+        throw new Error(
+          `Issue quantity for ${item.name} must be greater than zero`
+        );
+      }
 
       if (
         pendingQty <= 0
@@ -385,15 +743,26 @@ const prepareIssuePayload =
         pendingQty
       ) {
         throw new Error(
-          `Issue quantity for ${item.name} cannot exceed pending quantity ${pendingQty} ${requirement.unit}`
+          `Issue quantity for ${item.name} cannot exceed pending quantity ${pendingQty} ${
+            requirement.unit ||
+            item.unit ||
+            "Pcs"
+          }`
         );
       }
+
+      const rate =
+        num(
+          requirement.rate ??
+            item.purchasePrice
+        );
 
       cleanItems.push({
         materialRequirementId:
           requirement._id,
 
-        item: item._id,
+        item:
+          item._id,
 
         itemCode:
           item.code,
@@ -411,6 +780,7 @@ const prepareIssuePayload =
           Math.max(
             pendingQty -
               issueQty,
+
             0
           ),
 
@@ -419,14 +789,16 @@ const prepareIssuePayload =
           item.unit ||
           "Pcs",
 
-        rate: num(
-          requirement.rate ||
-            item.purchasePrice
-        ),
+        rate,
 
-        remarks: text(
-          incoming.remarks
-        ),
+        amount:
+          issueQty *
+          rate,
+
+        remarks:
+          text(
+            incoming.remarks
+          ),
       });
     }
 
@@ -437,29 +809,87 @@ const prepareIssuePayload =
       job,
       warehouse,
 
-      issueDate: text(
-        body.issueDate,
-        todayDate()
-      ),
+      issueDate:
+        text(
+          body.issueDate,
+          todayDate()
+        ),
 
-      issuedBy: text(
-        body.issuedBy
-      ),
+      issuedBy:
+        text(
+          body.issuedBy
+        ),
 
-      receivedBy: text(
-        body.receivedBy
-      ),
+      receivedBy:
+        text(
+          body.receivedBy
+        ),
 
-      remarks: text(
-        body.remarks
-      ),
+      remarks:
+        text(
+          body.remarks
+        ),
 
-      items: cleanItems,
+      items:
+        cleanItems,
     };
   };
 
+const buildIssueData = (
+  prepared,
+  issueNo
+) => ({
+  issueNo,
+
+  productionJob:
+    prepared.job._id,
+
+  jobNo:
+    prepared.job.jobNo,
+
+  jobName:
+    prepared.job.jobName,
+
+  finishedGoodItem:
+    prepared.job
+      .finishedGoodItem,
+
+  finishedGoodCode:
+    prepared.job
+      .finishedGoodCode,
+
+  finishedGoodName:
+    prepared.job
+      .finishedGoodName,
+
+  issueDate:
+    prepared.issueDate,
+
+  warehouseId:
+    prepared.warehouse
+      ._id,
+
+  warehouse:
+    prepared.warehouse
+      .name,
+
+  items:
+    prepared.items,
+
+  issuedBy:
+    prepared.issuedBy,
+
+  receivedBy:
+    prepared.receivedBy,
+
+  remarks:
+    prepared.remarks,
+});
+
 const validateAvailableStock =
-  async (issue) => {
+  async (
+    issue
+  ) => {
     for (
       const row of
       issue.items || []
@@ -467,13 +897,16 @@ const validateAvailableStock =
       const available =
         await getItemStock(
           row.item,
+
           issue.warehouseId ||
             issue.warehouse
         );
 
       if (
         available <
-        num(row.issueQty)
+        num(
+          row.issueQty
+        )
       ) {
         throw new Error(
           `Insufficient stock for ${row.itemName}. Available ${available} ${row.unit}, requested ${row.issueQty} ${row.unit}.`
@@ -483,9 +916,11 @@ const validateAvailableStock =
   };
 
 const deleteOriginalIssueEntries =
-  async (issueId) => {
-    await StockLedger.deleteMany(
-      {
+  async (
+    issueId
+  ) => {
+    await StockLedger
+      .deleteMany({
         sourceModule:
           "Material Issue",
 
@@ -501,8 +936,7 @@ const deleteOriginalIssueEntries =
         isReversal: {
           $ne: true,
         },
-      }
-    );
+      });
   };
 
 const applyIssueToJob =
@@ -511,9 +945,10 @@ const applyIssueToJob =
     direction = 1
   ) => {
     const job =
-      await ProductionItem.findById(
-        issue.productionJob
-      );
+      await ProductionItem
+        .findById(
+          issue.productionJob
+        );
 
     if (!job) {
       throw new Error(
@@ -525,35 +960,48 @@ const applyIssueToJob =
       new Map(
         (
           issue.items || []
-        ).map((row) => [
-          String(
-            row.materialRequirementId
-          ),
+        ).map(
+          (row) => [
+            String(
+              row
+                .materialRequirementId
+            ),
 
-          num(row.issueQty),
-        ])
+            num(
+              row.issueQty
+            ),
+          ]
+        )
       );
 
-    job.materialRequirements.forEach(
-      (row) => {
-        const quantity =
-          issueMap.get(
-            String(row._id)
-          );
-
-        if (quantity) {
-          row.issuedQty =
-            Math.max(
-              num(row.issuedQty) +
-                direction *
-                  quantity,
-              0
+    job.materialRequirements
+      .forEach(
+        (row) => {
+          const quantity =
+            issueMap.get(
+              String(
+                row._id
+              )
             );
-        }
-      }
-    );
 
-    if (direction > 0) {
+          if (quantity) {
+            row.issuedQty =
+              Math.max(
+                num(
+                  row.issuedQty
+                ) +
+                  direction *
+                    quantity,
+
+                0
+              );
+          }
+        }
+      );
+
+    if (
+      direction > 0
+    ) {
       job.materialIssuePosted =
         true;
 
@@ -561,28 +1009,31 @@ const applyIssueToJob =
         "Material Issued";
     } else {
       const otherPostedIssue =
-        await MaterialIssue.exists(
-          {
+        await MaterialIssue
+          .exists({
             productionJob:
               job._id,
 
             _id: {
-              $ne: issue._id,
+              $ne:
+                issue._id,
             },
 
-            status: "Posted",
+            status:
+              "Posted",
 
-            stockPosted: true,
-          }
-        );
+            stockPosted:
+              true,
+          });
 
       const stillIssued =
-        job.materialRequirements.some(
-          (row) =>
-            num(
-              row.issuedQty
-            ) > 0
-        );
+        job.materialRequirements
+          .some(
+            (row) =>
+              num(
+                row.issuedQty
+              ) > 0
+          );
 
       job.materialIssuePosted =
         Boolean(
@@ -600,7 +1051,9 @@ const applyIssueToJob =
   };
 
 const postIssueStock =
-  async (issue) => {
+  async (
+    issue
+  ) => {
     if (
       issue.status ===
       "Cancelled"
@@ -624,7 +1077,8 @@ const postIssueStock =
       issue
     );
 
-    let jobUpdated = false;
+    let jobUpdated =
+      false;
 
     try {
       for (
@@ -634,10 +1088,13 @@ const postIssueStock =
         index += 1
       ) {
         const row =
-          issue.items[index];
+          issue.items[
+            index
+          ];
 
         await postStockMovement({
-          item: row.item,
+          item:
+            row.item,
 
           warehouse:
             issue.warehouseId ||
@@ -661,20 +1118,32 @@ const postIssueStock =
           referenceLineId:
             String(
               row._id ||
-                row.materialRequirementId ||
+                row
+                  .materialRequirementId ||
                 index
             ),
 
           referenceNo:
             issue.issueNo,
 
+          postingKey:
+            `MI:${issue._id}:${
+              row._id ||
+              row
+                .materialRequirementId
+            }:OUT`,
+
           qtyIn: 0,
 
-          qtyOut: num(
-            row.issueQty
-          ),
+          qtyOut:
+            num(
+              row.issueQty
+            ),
 
-          rate: num(row.rate),
+          rate:
+            num(
+              row.rate
+            ),
 
           remarks:
             `Material issue ${issue.issueNo} for production job ${issue.jobNo}`,
@@ -692,10 +1161,14 @@ const postIssueStock =
         1
       );
 
-      jobUpdated = true;
+      jobUpdated =
+        true;
 
-      issue.status = "Posted";
-      issue.stockPosted = true;
+      issue.status =
+        "Posted";
+
+      issue.stockPosted =
+        true;
 
       issue.stockPostedAt =
         new Date();
@@ -706,22 +1179,33 @@ const postIssueStock =
     } catch (error) {
       await deleteOriginalIssueEntries(
         issue._id
-      );
-
-      if (jobUpdated) {
-        try {
-          await applyIssueToJob(
-            issue,
-            -1
-          );
-        } catch (
+      ).catch(
+        (
           rollbackError
-        ) {
+        ) => {
           console.error(
-            "Material issue job rollback failed:",
+            "Material issue stock rollback failed:",
             rollbackError.message
           );
         }
+      );
+
+      if (
+        jobUpdated
+      ) {
+        await applyIssueToJob(
+          issue,
+          -1
+        ).catch(
+          (
+            rollbackError
+          ) => {
+            console.error(
+              "Material issue job rollback failed:",
+              rollbackError.message
+            );
+          }
+        );
       }
 
       throw error;
@@ -735,7 +1219,8 @@ const reverseIssueStock =
   ) => {
     if (
       !issue.stockPosted ||
-      issue.status !== "Posted"
+      issue.status !==
+        "Posted"
     ) {
       throw new Error(
         "Only a posted material issue can be cancelled"
@@ -743,9 +1228,10 @@ const reverseIssueStock =
     }
 
     const job =
-      await ProductionItem.findById(
-        issue.productionJob
-      );
+      await ProductionItem
+        .findById(
+          issue.productionJob
+        );
 
     if (!job) {
       throw new Error(
@@ -757,7 +1243,9 @@ const reverseIssueStock =
       ![
         "Approved",
         "Material Issued",
-      ].includes(job.status)
+      ].includes(
+        job.status
+      )
     ) {
       throw new Error(
         `Material issue cannot be cancelled after printing has started. Current job status is ${job.status}.`
@@ -765,28 +1253,31 @@ const reverseIssueStock =
     }
 
     const originalEntries =
-      await StockLedger.find({
-        sourceModule:
-          "Material Issue",
+      await StockLedger
+        .find({
+          sourceModule:
+            "Material Issue",
 
-        referenceModel:
-          "MaterialIssue",
+          referenceModel:
+            "MaterialIssue",
 
-        referenceId:
-          issue._id,
+          referenceId:
+            issue._id,
 
-        movementType:
-          "Production Issue",
+          movementType:
+            "Production Issue",
 
-        isReversal: {
-          $ne: true,
-        },
-      }).sort({
-        createdAt: 1,
-      });
+          isReversal: {
+            $ne: true,
+          },
+        })
+        .sort({
+          createdAt: 1,
+        });
 
     if (
-      !originalEntries.length
+      originalEntries.length ===
+      0
     ) {
       throw new Error(
         "Original material issue stock entries were not found"
@@ -798,27 +1289,31 @@ const reverseIssueStock =
       originalEntries
     ) {
       const alreadyReversed =
-        await StockLedger.exists(
-          {
+        await StockLedger
+          .exists({
             reversalOf:
               original._id,
 
-            isReversal: true,
-          }
-        );
+            isReversal:
+              true,
+          });
 
-      if (alreadyReversed) {
+      if (
+        alreadyReversed
+      ) {
         continue;
       }
 
       await postStockMovement({
-        item: original.item,
+        item:
+          original.item,
 
         warehouse:
           original.warehouseId ||
           original.warehouse,
 
-        date: todayDate(),
+        date:
+          todayDate(),
 
         movementType:
           "Reversal In",
@@ -838,15 +1333,20 @@ const reverseIssueStock =
         referenceNo:
           issue.issueNo,
 
-        qtyIn: num(
-          original.qtyOut
-        ),
+        postingKey:
+          `MI:${issue._id}:${original._id}:REV`,
+
+        qtyIn:
+          num(
+            original.qtyOut
+          ),
 
         qtyOut: 0,
 
-        rate: num(
-          original.rate
-        ),
+        rate:
+          num(
+            original.rate
+          ),
 
         remarks:
           `Cancellation reversal of material issue ${issue.issueNo}`,
@@ -860,7 +1360,8 @@ const reverseIssueStock =
         allowDuplicate:
           false,
 
-        isReversal: true,
+        isReversal:
+          true,
 
         reversalOf:
           original._id,
@@ -885,14 +1386,20 @@ const reverseIssueStock =
       new Date();
 
     issue.cancelReason =
-      text(cancelReason);
+      text(
+        cancelReason,
+        "Material issue cancelled and stock reversed"
+      );
 
     await issue.save();
   };
 
 router.get(
   "/next-no",
-  async (req, res) => {
+  async (
+    req,
+    res
+  ) => {
     try {
       return res.json({
         success: true,
@@ -905,8 +1412,10 @@ router.get(
         .status(500)
         .json({
           success: false,
+
           message:
-            error.message,
+            error.message ||
+            "Unable to generate the next material issue number",
         });
     }
   }
@@ -914,7 +1423,10 @@ router.get(
 
 router.get(
   "/all",
-  async (req, res) => {
+  async (
+    req,
+    res
+  ) => {
     try {
       const {
         search = "",
@@ -934,7 +1446,9 @@ router.get(
           status;
       }
 
-      if (productionJob) {
+      if (
+        productionJob
+      ) {
         if (
           !validId(
             productionJob
@@ -975,36 +1489,51 @@ router.get(
         query.$or = [
           {
             issueNo: {
-              $regex: search,
-              $options: "i",
+              $regex:
+                search,
+
+              $options:
+                "i",
             },
           },
 
           {
             jobNo: {
-              $regex: search,
-              $options: "i",
+              $regex:
+                search,
+
+              $options:
+                "i",
             },
           },
 
           {
             jobName: {
-              $regex: search,
-              $options: "i",
+              $regex:
+                search,
+
+              $options:
+                "i",
             },
           },
 
           {
             finishedGoodCode: {
-              $regex: search,
-              $options: "i",
+              $regex:
+                search,
+
+              $options:
+                "i",
             },
           },
 
           {
             finishedGoodName: {
-              $regex: search,
-              $options: "i",
+              $regex:
+                search,
+
+              $options:
+                "i",
             },
           },
         ];
@@ -1012,12 +1541,14 @@ router.get(
 
       const issues =
         await populateIssue(
-          MaterialIssue.find(
-            query
-          ).sort({
-            issueDate: -1,
-            createdAt: -1,
-          })
+          MaterialIssue
+            .find(
+              query
+            )
+            .sort({
+              issueDate: -1,
+              createdAt: -1,
+            })
         );
 
       return res.json(
@@ -1030,7 +1561,8 @@ router.get(
           success: false,
 
           message:
-            error.message,
+            error.message ||
+            "Unable to load material issues",
         });
     }
   }
@@ -1038,7 +1570,10 @@ router.get(
 
 router.get(
   "/job/:jobId",
-  async (req, res) => {
+  async (
+    req,
+    res
+  ) => {
     try {
       if (
         !validId(
@@ -1057,13 +1592,16 @@ router.get(
 
       const issues =
         await populateIssue(
-          MaterialIssue.find({
-            productionJob:
-              req.params.jobId,
-          }).sort({
-            issueDate: -1,
-            createdAt: -1,
-          })
+          MaterialIssue
+            .find({
+              productionJob:
+                req.params
+                  .jobId,
+            })
+            .sort({
+              issueDate: -1,
+              createdAt: -1,
+            })
         );
 
       return res.json(
@@ -1076,7 +1614,8 @@ router.get(
           success: false,
 
           message:
-            error.message,
+            error.message ||
+            "Unable to load production job material issues",
         });
     }
   }
@@ -1084,7 +1623,10 @@ router.get(
 
 router.get(
   "/:id",
-  async (req, res) => {
+  async (
+    req,
+    res
+  ) => {
     try {
       if (
         !validId(
@@ -1103,9 +1645,10 @@ router.get(
 
       const issue =
         await populateIssue(
-          MaterialIssue.findById(
-            req.params.id
-          )
+          MaterialIssue
+            .findById(
+              req.params.id
+            )
         );
 
       if (!issue) {
@@ -1130,7 +1673,8 @@ router.get(
           success: false,
 
           message:
-            error.message,
+            error.message ||
+            "Unable to load the material issue",
         });
     }
   }
@@ -1138,7 +1682,10 @@ router.get(
 
 router.post(
   "/add",
-  async (req, res) => {
+  async (
+    req,
+    res
+  ) => {
     try {
       const prepared =
         await prepareIssuePayload(
@@ -1146,66 +1693,31 @@ router.post(
         );
 
       const issueNo =
-        req.body.issueNo
-          ? text(
-              req.body.issueNo
-            ).toUpperCase()
-          : await getNextIssueNo();
+        await resolveIssueNo(
+          req.body.issueNo
+        );
 
       const issue =
-        await MaterialIssue.create({
-          issueNo,
+        await MaterialIssue
+          .create({
+            ...buildIssueData(
+              prepared,
+              issueNo
+            ),
 
-          productionJob:
-            prepared.job._id,
+            status:
+              "Draft",
 
-          jobNo:
-            prepared.job.jobNo,
-
-          jobName:
-            prepared.job.jobName,
-
-          finishedGoodItem:
-            prepared.job
-              .finishedGoodItem,
-
-          finishedGoodCode:
-            prepared.job
-              .finishedGoodCode,
-
-          finishedGoodName:
-            prepared.job
-              .finishedGoodName,
-
-          issueDate:
-            prepared.issueDate,
-
-          warehouseId:
-            prepared.warehouse._id,
-
-          warehouse:
-            prepared.warehouse.name,
-
-          items:
-            prepared.items,
-
-          issuedBy:
-            prepared.issuedBy,
-
-          receivedBy:
-            prepared.receivedBy,
-
-          remarks:
-            prepared.remarks,
-
-          status: "Draft",
-        });
+            stockPosted:
+              false,
+          });
 
       const data =
         await populateIssue(
-          MaterialIssue.findById(
-            issue._id
-          )
+          MaterialIssue
+            .findById(
+              issue._id
+            )
         );
 
       return res
@@ -1214,21 +1726,142 @@ router.post(
           success: true,
 
           message:
-            "Material issue draft created",
+            "Material issue draft created successfully",
 
           data,
         });
     } catch (error) {
-      const message =
-        error.code === 11000
-          ? "This material issue number already exists"
-          : error.message;
-
       return res
         .status(400)
         .json({
           success: false,
-          message,
+
+          message:
+            duplicateMessage(
+              error,
+              req.body.issueNo
+            ),
+        });
+    }
+  }
+);
+
+router.put(
+  "/update/:id",
+  async (
+    req,
+    res
+  ) => {
+    try {
+      if (
+        !validId(
+          req.params.id
+        )
+      ) {
+        return res
+          .status(400)
+          .json({
+            success: false,
+
+            message:
+              "Invalid material issue ID",
+          });
+      }
+
+      const issue =
+        await MaterialIssue
+          .findById(
+            req.params.id
+          );
+
+      if (!issue) {
+        return res
+          .status(404)
+          .json({
+            success: false,
+
+            message:
+              "Material issue not found",
+          });
+      }
+
+      if (
+        issue.status !==
+          "Draft" ||
+        issue.stockPosted
+      ) {
+        return res
+          .status(400)
+          .json({
+            success: false,
+
+            message:
+              "Only an unposted Draft material issue can be edited",
+          });
+      }
+
+      const prepared =
+        await prepareIssuePayload(
+          req.body
+        );
+
+      const issueNo =
+        await resolveIssueNo(
+          req.body.issueNo ||
+            issue.issueNo,
+
+          issue._id
+        );
+
+      Object.assign(
+        issue,
+
+        buildIssueData(
+          prepared,
+          issueNo
+        ),
+
+        {
+          status:
+            "Draft",
+
+          stockPosted:
+            false,
+
+          stockPostedAt:
+            null,
+        }
+      );
+
+      await issue.save();
+
+      const data =
+        await populateIssue(
+          MaterialIssue
+            .findById(
+              issue._id
+            )
+        );
+
+      return res.json({
+        success: true,
+
+        message:
+          "Material issue draft updated successfully",
+
+        data,
+      });
+    } catch (error) {
+      return res
+        .status(400)
+        .json({
+          success: false,
+
+          message:
+            duplicateMessage(
+              error,
+              req.body.issueNo
+            ),
         });
     }
   }
@@ -1236,7 +1869,10 @@ router.post(
 
 router.post(
   "/create-and-post",
-  async (req, res) => {
+  async (
+    req,
+    res
+  ) => {
     let issue = null;
 
     try {
@@ -1246,60 +1882,24 @@ router.post(
         );
 
       const issueNo =
-        req.body.issueNo
-          ? text(
-              req.body.issueNo
-            ).toUpperCase()
-          : await getNextIssueNo();
+        await resolveIssueNo(
+          req.body.issueNo
+        );
 
       issue =
-        await MaterialIssue.create({
-          issueNo,
+        await MaterialIssue
+          .create({
+            ...buildIssueData(
+              prepared,
+              issueNo
+            ),
 
-          productionJob:
-            prepared.job._id,
+            status:
+              "Draft",
 
-          jobNo:
-            prepared.job.jobNo,
-
-          jobName:
-            prepared.job.jobName,
-
-          finishedGoodItem:
-            prepared.job
-              .finishedGoodItem,
-
-          finishedGoodCode:
-            prepared.job
-              .finishedGoodCode,
-
-          finishedGoodName:
-            prepared.job
-              .finishedGoodName,
-
-          issueDate:
-            prepared.issueDate,
-
-          warehouseId:
-            prepared.warehouse._id,
-
-          warehouse:
-            prepared.warehouse.name,
-
-          items:
-            prepared.items,
-
-          issuedBy:
-            prepared.issuedBy,
-
-          receivedBy:
-            prepared.receivedBy,
-
-          remarks:
-            prepared.remarks,
-
-          status: "Draft",
-        });
+            stockPosted:
+              false,
+          });
 
       await postIssueStock(
         issue
@@ -1307,9 +1907,10 @@ router.post(
 
       const data =
         await populateIssue(
-          MaterialIssue.findById(
-            issue._id
-          )
+          MaterialIssue
+            .findById(
+              issue._id
+            )
         );
 
       return res
@@ -1329,23 +1930,31 @@ router.post(
       ) {
         await deleteOriginalIssueEntries(
           issue._id
+        ).catch(
+          () => {}
         );
-      }
 
-      const message =
-        error.code === 11000
-          ? "This material issue number already exists"
-          : error.message;
+        await MaterialIssue
+          .findByIdAndDelete(
+            issue._id
+          )
+          .catch(
+            () => {}
+          );
+      }
 
       return res
         .status(400)
         .json({
           success: false,
 
-          message,
+          message:
+            duplicateMessage(
+              error,
+              req.body.issueNo
+            ),
 
           draftIssueId:
-            issue?._id ||
             null,
         });
     }
@@ -1354,7 +1963,10 @@ router.post(
 
 router.post(
   "/post/:id",
-  async (req, res) => {
+  async (
+    req,
+    res
+  ) => {
     try {
       if (
         !validId(
@@ -1372,9 +1984,10 @@ router.post(
       }
 
       const issue =
-        await MaterialIssue.findById(
-          req.params.id
-        );
+        await MaterialIssue
+          .findById(
+            req.params.id
+          );
 
       if (!issue) {
         return res
@@ -1393,16 +2006,17 @@ router.post(
 
       const data =
         await populateIssue(
-          MaterialIssue.findById(
-            issue._id
-          )
+          MaterialIssue
+            .findById(
+              issue._id
+            )
         );
 
       return res.json({
         success: true,
 
         message:
-          "Material issue stock posted",
+          "Material issue stock posted successfully",
 
         data,
       });
@@ -1413,7 +2027,8 @@ router.post(
           success: false,
 
           message:
-            error.message,
+            error.message ||
+            "Unable to post material issue",
         });
     }
   }
@@ -1421,7 +2036,10 @@ router.post(
 
 router.post(
   "/cancel/:id",
-  async (req, res) => {
+  async (
+    req,
+    res
+  ) => {
     try {
       if (
         !validId(
@@ -1439,9 +2057,10 @@ router.post(
       }
 
       const issue =
-        await MaterialIssue.findById(
-          req.params.id
-        );
+        await MaterialIssue
+          .findById(
+            req.params.id
+          );
 
       if (!issue) {
         return res
@@ -1461,16 +2080,17 @@ router.post(
 
       const data =
         await populateIssue(
-          MaterialIssue.findById(
-            issue._id
-          )
+          MaterialIssue
+            .findById(
+              issue._id
+            )
         );
 
       return res.json({
         success: true,
 
         message:
-          "Material issue cancelled and stock reversed",
+          "Material issue cancelled and stock reversed successfully",
 
         data,
       });
@@ -1481,7 +2101,8 @@ router.post(
           success: false,
 
           message:
-            error.message,
+            error.message ||
+            "Unable to cancel material issue",
         });
     }
   }
@@ -1489,7 +2110,10 @@ router.post(
 
 router.delete(
   "/delete/:id",
-  async (req, res) => {
+  async (
+    req,
+    res
+  ) => {
     try {
       if (
         !validId(
@@ -1507,9 +2131,10 @@ router.delete(
       }
 
       const issue =
-        await MaterialIssue.findById(
-          req.params.id
-        );
+        await MaterialIssue
+          .findById(
+            req.params.id
+          );
 
       if (!issue) {
         return res
@@ -1537,15 +2162,16 @@ router.delete(
           });
       }
 
-      await MaterialIssue.findByIdAndDelete(
-        issue._id
-      );
+      await MaterialIssue
+        .findByIdAndDelete(
+          issue._id
+        );
 
       return res.json({
         success: true,
 
         message:
-          "Material issue draft deleted",
+          "Material issue draft deleted successfully",
       });
     } catch (error) {
       return res
@@ -1554,10 +2180,12 @@ router.delete(
           success: false,
 
           message:
-            error.message,
+            error.message ||
+            "Unable to delete material issue",
         });
     }
   }
 );
 
-module.exports = router;
+module.exports =
+  router;
