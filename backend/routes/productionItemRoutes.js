@@ -7,6 +7,10 @@ const ProductionItem = require(
   "../models/ProductionItem"
 );
 
+const SalesOrder = require(
+  "../models/SalesOrder"
+);
+
 const Item = require(
   "../models/Item"
 );
@@ -23,6 +27,28 @@ const ALLOWED_MATERIAL_TYPES = [
   "Raw Material",
   "Packing Material",
   "Consumable",
+];
+
+const NEW_JOB_SALES_ORDER_STATUSES = [
+  "Confirmed",
+  "In Production",
+];
+
+const EXISTING_JOB_SALES_ORDER_STATUSES = [
+  "Confirmed",
+  "In Production",
+  "Ready",
+  "Partially Delivered",
+];
+
+const ACTIVE_PLANNING_STATUSES = [
+  "Draft",
+  "Approved",
+  "Material Issued",
+  "In Printing",
+  "Quality Check",
+  "Completed",
+  "Closed",
 ];
 
 const STATUS_TRANSITIONS = {
@@ -437,10 +463,677 @@ const prepareMaterialRequirements =
     );
   };
 
+const getExistingPlannedQty =
+  async ({
+    salesOrderId,
+    salesOrderItemId,
+    excludeJobId = null,
+  }) => {
+    const query = {
+      salesOrder:
+        salesOrderId,
+
+      salesOrderItemId:
+        salesOrderItemId,
+
+      status: {
+        $in:
+          ACTIVE_PLANNING_STATUSES,
+      },
+    };
+
+    if (excludeJobId) {
+      query._id = {
+        $ne:
+          excludeJobId,
+      };
+    }
+
+    const result =
+      await ProductionItem.aggregate([
+        {
+          $match: {
+            ...query,
+
+            salesOrder:
+              new mongoose.Types.ObjectId(
+                String(
+                  salesOrderId
+                )
+              ),
+
+            salesOrderItemId:
+              new mongoose.Types.ObjectId(
+                String(
+                  salesOrderItemId
+                )
+              ),
+
+            ...(excludeJobId
+              ? {
+                  _id: {
+                    $ne:
+                      new mongoose.Types.ObjectId(
+                        String(
+                          excludeJobId
+                        )
+                      ),
+                  },
+                }
+              : {}),
+          },
+        },
+
+        {
+          $group: {
+            _id: null,
+
+            total: {
+              $sum: {
+                $ifNull: [
+                  "$targetQty",
+                  0,
+                ],
+              },
+            },
+          },
+        },
+      ]);
+
+    return normalizeNumber(
+      result[0]?.total
+    );
+  };
+
+const loadSalesOrderLine =
+  async ({
+    salesOrderId,
+    salesOrderItemId,
+    existingJob = null,
+  }) => {
+    if (
+      !isValidObjectId(
+        salesOrderId
+      )
+    ) {
+      throw new Error(
+        "A valid Sales Order is required"
+      );
+    }
+
+    const salesOrder =
+      await SalesOrder.findById(
+        salesOrderId
+      )
+        .populate(
+          "customer",
+          "customerName name phoneNumber phone email address city ntn customerNTN status"
+        )
+        .populate(
+          "items.item",
+          "code name itemType unit category brand status stockManaged"
+        );
+
+    if (!salesOrder) {
+      throw new Error(
+        "Sales Order not found"
+      );
+    }
+
+    const allowedStatuses =
+      existingJob
+        ? EXISTING_JOB_SALES_ORDER_STATUSES
+        : NEW_JOB_SALES_ORDER_STATUSES;
+
+    if (
+      !allowedStatuses.includes(
+        salesOrder.status
+      )
+    ) {
+      throw new Error(
+        `Sales Order with status ${salesOrder.status} cannot be used for this production job`
+      );
+    }
+
+    let resolvedLineId =
+      getId(
+        salesOrderItemId
+      );
+
+    if (
+      !isValidObjectId(
+        resolvedLineId
+      ) &&
+      existingJob
+    ) {
+      const existingFinishedGoodId =
+        getId(
+          existingJob.finishedGoodItem
+        );
+
+      const matchingRows =
+        (
+          salesOrder.items || []
+        ).filter(
+          (row) =>
+            getId(
+              row.item
+            ) ===
+            existingFinishedGoodId
+        );
+
+      if (
+        matchingRows.length ===
+        1
+      ) {
+        resolvedLineId =
+          String(
+            matchingRows[0]._id
+          );
+      }
+    }
+
+    if (
+      !isValidObjectId(
+        resolvedLineId
+      )
+    ) {
+      throw new Error(
+        "Select a Sales Order item for production"
+      );
+    }
+
+    const salesOrderItem =
+      (
+        salesOrder.items || []
+      ).find(
+        (row) =>
+          String(
+            row._id
+          ) ===
+          String(
+            resolvedLineId
+          )
+      );
+
+    if (!salesOrderItem) {
+      throw new Error(
+        "The selected Sales Order item was not found"
+      );
+    }
+
+    const finishedGood =
+      salesOrderItem.item;
+
+    if (!finishedGood) {
+      throw new Error(
+        "The selected Sales Order item is not linked with Item Master"
+      );
+    }
+
+    if (
+      finishedGood.itemType !==
+        "Finished Good" ||
+      finishedGood.stockManaged ===
+        false
+    ) {
+      throw new Error(
+        "The selected Sales Order item must be a stock-managed Finished Good"
+      );
+    }
+
+    if (
+      finishedGood.status ===
+      "Inactive"
+    ) {
+      throw new Error(
+        `Finished Good "${finishedGood.name}" is inactive`
+      );
+    }
+
+    const orderedQty =
+      normalizeNumber(
+        salesOrderItem.quantity
+      );
+
+    const plannedQty =
+      await getExistingPlannedQty({
+        salesOrderId:
+          salesOrder._id,
+
+        salesOrderItemId:
+          salesOrderItem._id,
+
+        excludeJobId:
+          existingJob?._id ||
+          null,
+      });
+
+    return {
+      salesOrder,
+      salesOrderItem,
+      finishedGood,
+      orderedQty,
+      plannedQty,
+
+      remainingProductionQty:
+        Math.max(
+          orderedQty -
+            plannedQty,
+          0
+        ),
+    };
+  };
+
+const syncSalesOrderProductionStatus =
+  async (
+    salesOrderId
+  ) => {
+    if (
+      !salesOrderId ||
+      !isValidObjectId(
+        salesOrderId
+      )
+    ) {
+      return;
+    }
+
+    const salesOrder =
+      await SalesOrder.findById(
+        salesOrderId
+      );
+
+    if (
+      !salesOrder ||
+      [
+        "Delivered",
+        "Invoiced",
+        "Cancelled",
+      ].includes(
+        salesOrder.status
+      )
+    ) {
+      return;
+    }
+
+    const hasStartedJob =
+      await ProductionItem.exists({
+        salesOrder:
+          salesOrder._id,
+
+        status: {
+          $in: [
+            "Approved",
+            "Material Issued",
+            "In Printing",
+            "Quality Check",
+            "Completed",
+            "Closed",
+          ],
+        },
+      });
+
+    if (
+      hasStartedJob &&
+      salesOrder.status ===
+        "Confirmed"
+    ) {
+      salesOrder.status =
+        "In Production";
+
+      await salesOrder.save();
+
+      return;
+    }
+
+    if (
+      !hasStartedJob &&
+      salesOrder.status ===
+        "In Production"
+    ) {
+      salesOrder.status =
+        "Confirmed";
+
+      await salesOrder.save();
+    }
+  };
+
 const buildJobPayload = async (
   body,
   existingJob = null
 ) => {
+  const sourceType =
+    normalizeText(
+      body.sourceType,
+      existingJob?.sourceType ||
+        (
+          body.salesOrder
+            ? "Sales Order"
+            : "Internal Requirement"
+        )
+    );
+
+  if (
+    ![
+      "Sales Order",
+      "Internal Requirement",
+    ].includes(
+      sourceType
+    )
+  ) {
+    throw new Error(
+      "Invalid production source type"
+    );
+  }
+
+  const materialRows =
+    body.materialRequirements ??
+    body.materials ??
+    existingJob
+      ?.materialRequirements ??
+    [];
+
+  const materialRequirements =
+    await prepareMaterialRequirements(
+      materialRows
+    );
+
+  if (
+    sourceType ===
+    "Sales Order"
+  ) {
+    const salesOrderId =
+      getId(
+        body.salesOrder ??
+          existingJob?.salesOrder
+      );
+
+    const salesOrderItemId =
+      getId(
+        body.salesOrderItemId ??
+          existingJob
+            ?.salesOrderItemId
+      );
+
+    const context =
+      await loadSalesOrderLine({
+        salesOrderId,
+        salesOrderItemId,
+        existingJob,
+      });
+
+    const {
+      salesOrder,
+      salesOrderItem,
+      finishedGood,
+      orderedQty,
+      remainingProductionQty,
+    } = context;
+
+    const requestedTargetQty =
+      normalizeNumber(
+        body.targetQty ??
+          body.quantity ??
+          existingJob?.targetQty ??
+          remainingProductionQty
+      );
+
+    if (
+      requestedTargetQty <= 0
+    ) {
+      throw new Error(
+        "Target quantity must be greater than zero"
+      );
+    }
+
+    if (
+      requestedTargetQty >
+      remainingProductionQty
+    ) {
+      throw new Error(
+        `${finishedGood.name}: production quantity cannot exceed remaining Sales Order quantity ${remainingProductionQty} ${
+          salesOrderItem.unit ||
+          finishedGood.unit ||
+          "Pcs"
+        }`
+      );
+    }
+
+    const customerObject =
+      salesOrder.customer &&
+      typeof salesOrder.customer ===
+        "object"
+        ? salesOrder.customer
+        : null;
+
+    const customerName =
+      normalizeText(
+        salesOrder.customerName ||
+          customerObject
+            ?.customerName ||
+          customerObject?.name
+      );
+
+    if (!customerName) {
+      throw new Error(
+        "Sales Order customer name is missing"
+      );
+    }
+
+    return {
+      jobName:
+        normalizeText(
+          body.jobName ??
+            body.name,
+          normalizeText(
+            salesOrderItem
+              .description,
+            finishedGood.name
+          )
+        ),
+
+      sourceType:
+        "Sales Order",
+
+      salesOrder:
+        salesOrder._id,
+
+      salesOrderNo:
+        normalizeText(
+          salesOrder
+            .salesOrderNo
+        ).toUpperCase(),
+
+      salesOrderItemId:
+        salesOrderItem._id,
+
+      salesOrderOrderDate:
+        normalizeDate(
+          salesOrder.orderDate
+        ),
+
+      salesOrderDeliveryDate:
+        normalizeDate(
+          salesOrder
+            .deliveryDate
+        ),
+
+      salesOrderReferenceNo:
+        normalizeText(
+          salesOrder
+            .referenceNo
+        ),
+
+      internalReference: "",
+
+      customer:
+        getId(
+          salesOrder.customer
+        ) || null,
+
+      customerName,
+
+      customerPO:
+        normalizeText(
+          salesOrder.poNo
+        ),
+
+      finishedGoodItem:
+        finishedGood._id,
+
+      finishedGoodCode:
+        finishedGood.code,
+
+      finishedGoodName:
+        finishedGood.name,
+
+      orderDescription:
+        normalizeText(
+          salesOrderItem
+            .description,
+          finishedGood.name
+        ),
+
+      orderSize:
+        normalizeText(
+          salesOrderItem.size
+        ),
+
+      orderTextType:
+        [
+          "",
+          "with-text",
+          "without-text",
+        ].includes(
+          salesOrderItem
+            .textType
+        )
+          ? salesOrderItem
+              .textType
+          : "",
+
+      orderCartons:
+        normalizeNumber(
+          salesOrderItem
+            .cartons
+        ),
+
+      orderedQty,
+
+      orderUnit:
+        normalizeText(
+          salesOrderItem.unit,
+          finishedGood.unit ||
+            "Pcs"
+        ),
+
+      targetQty:
+        requestedTargetQty,
+
+      unit:
+        normalizeText(
+          salesOrderItem.unit,
+          finishedGood.unit ||
+            "Pcs"
+        ),
+
+      jobDate:
+        normalizeDate(
+          body.jobDate,
+          existingJob?.jobDate ||
+            todayDate()
+        ),
+
+      dueDate:
+        normalizeDate(
+          body.dueDate ??
+            body.deliveryDate,
+          existingJob?.dueDate ||
+            salesOrder
+              .deliveryDate ||
+            ""
+        ),
+
+      priority:
+        normalizeText(
+          body.priority,
+          existingJob?.priority ||
+            "Normal"
+        ),
+
+      paperType:
+        normalizeText(
+          body.paperType,
+          existingJob?.paperType ||
+            ""
+        ),
+
+      gsm:
+        normalizeNumber(
+          body.gsm,
+          existingJob?.gsm || 0
+        ),
+
+      sheetSize:
+        normalizeText(
+          body.sheetSize,
+          existingJob?.sheetSize ||
+            ""
+        ),
+
+      finishedSize:
+        normalizeText(
+          body.finishedSize,
+          existingJob
+            ?.finishedSize ||
+            salesOrderItem.size ||
+            ""
+        ),
+
+      totalSheets:
+        normalizeNumber(
+          body.totalSheets,
+          existingJob
+            ?.totalSheets ||
+            0
+        ),
+
+      noOfColors:
+        normalizeText(
+          body.noOfColors,
+          existingJob
+            ?.noOfColors ||
+            ""
+        ),
+
+      dieNo:
+        normalizeText(
+          body.dieNo,
+          existingJob?.dieNo ||
+            ""
+        ),
+
+      materialRequirements,
+
+      instructions:
+        normalizeText(
+          body.instructions,
+          existingJob
+            ?.instructions ||
+            ""
+        ),
+
+      remarks:
+        normalizeText(
+          body.remarks,
+          existingJob?.remarks ||
+            salesOrderItem
+              .remarks ||
+            ""
+        ),
+    };
+  }
+
   const finishedGoodId =
     getId(
       body.finishedGoodItem ??
@@ -491,39 +1184,6 @@ const buildJobPayload = async (
     );
   }
 
-  const sourceType =
-    normalizeText(
-      body.sourceType,
-      existingJob?.sourceType ||
-        (
-          body.salesOrder
-            ? "Sales Order"
-            : "Internal Requirement"
-        )
-    );
-
-  const salesOrderId =
-    sourceType ===
-    "Sales Order"
-      ? getId(
-          body.salesOrder ??
-            existingJob
-              ?.salesOrder
-        )
-      : "";
-
-  if (
-    sourceType ===
-      "Sales Order" &&
-    !isValidObjectId(
-      salesOrderId
-    )
-  ) {
-    throw new Error(
-      "A valid Sales Order is required"
-    );
-  }
-
   const customerId =
     getId(
       body.customer ??
@@ -554,29 +1214,12 @@ const buildJobPayload = async (
     );
   }
 
-  const materialRows =
-    body.materialRequirements ??
-    body.materials ??
-    existingJob
-      ?.materialRequirements ??
-    [];
-
-  const materialRequirements =
-    await prepareMaterialRequirements(
-      materialRows
-    );
-
   const customerName =
     normalizeText(
       body.customerName,
       existingJob
         ?.customerName ||
-        (
-          sourceType ===
-          "Internal Requirement"
-            ? "Internal Production"
-            : ""
-        )
+        "Internal Production"
     );
 
   if (!customerName) {
@@ -594,22 +1237,15 @@ const buildJobPayload = async (
           finishedGood.name
       ),
 
-    sourceType,
+    sourceType:
+      "Internal Requirement",
 
-    salesOrder:
-      sourceType ===
-      "Sales Order"
-        ? salesOrderId
-        : null,
-
-    salesOrderNo:
-      normalizeText(
-        body.salesOrderNo ??
-          body.orderNo,
-        existingJob
-          ?.salesOrderNo ||
-          ""
-      ).toUpperCase(),
+    salesOrder: null,
+    salesOrderNo: "",
+    salesOrderItemId: null,
+    salesOrderOrderDate: "",
+    salesOrderDeliveryDate: "",
+    salesOrderReferenceNo: "",
 
     internalReference:
       normalizeText(
@@ -639,6 +1275,20 @@ const buildJobPayload = async (
 
     finishedGoodName:
       finishedGood.name,
+
+    orderDescription: "",
+    orderSize: "",
+    orderTextType: "",
+    orderCartons: 0,
+    orderedQty: 0,
+
+    orderUnit:
+      normalizeText(
+        body.unit,
+        existingJob?.unit ||
+          finishedGood.unit ||
+          "Pcs"
+      ),
 
     targetQty,
 
@@ -760,7 +1410,7 @@ const populateJob = (
     )
     .populate(
       "salesOrder",
-      "orderNo salesOrderNo customerName orderDate deliveryDate status"
+      "salesOrderNo customer customerName customerPhone customerEmail customerAddress customerCity customerNTN orderDate deliveryDate poNo referenceNo status remarks items.item items.itemCode items.itemName items.description items.size items.textType items.cartons items.quantity items.deliveredQty items.pendingQty items.unit items.remarks"
     );
 };
 
@@ -1058,6 +1708,252 @@ router.get(
 
           error:
             error.message,
+        });
+    }
+  }
+);
+
+router.post(
+  "/add-bulk",
+  async (req, res) => {
+    const createdJobIds = [];
+
+    try {
+      const body =
+        req.body || {};
+
+      if (
+        normalizeText(
+          body.sourceType
+        ) !==
+        "Sales Order"
+      ) {
+        throw new Error(
+          "Bulk production jobs can only be created from a Sales Order"
+        );
+      }
+
+      if (
+        !isValidObjectId(
+          body.salesOrder
+        )
+      ) {
+        throw new Error(
+          "A valid Sales Order is required"
+        );
+      }
+
+      const rows =
+        Array.isArray(
+          body.items
+        )
+          ? body.items.filter(
+              (row) =>
+                row &&
+                getId(
+                  row.salesOrderItemId
+                )
+            )
+          : [];
+
+      if (
+        rows.length === 0
+      ) {
+        throw new Error(
+          "Select at least one Sales Order item"
+        );
+      }
+
+      if (
+        rows.length > 100
+      ) {
+        throw new Error(
+          "A maximum of 100 production jobs can be created at one time"
+        );
+      }
+
+      const rowIds =
+        rows.map(
+          (row) =>
+            getId(
+              row.salesOrderItemId
+            )
+        );
+
+      if (
+        rowIds.some(
+          (rowId) =>
+            !isValidObjectId(
+              rowId
+            )
+        )
+      ) {
+        throw new Error(
+          "One or more Sales Order item IDs are invalid"
+        );
+      }
+
+      if (
+        new Set(
+          rowIds
+        ).size !==
+        rowIds.length
+      ) {
+        throw new Error(
+          "The same Sales Order item cannot be selected more than once"
+        );
+      }
+
+      const sharedMaterials =
+        Array.isArray(
+          body.materialRequirements
+        )
+          ? body.materialRequirements
+          : [];
+
+      if (
+        rows.length > 1 &&
+        sharedMaterials.length > 0
+      ) {
+        throw new Error(
+          "Multiple production jobs must use separate material requirements"
+        );
+      }
+
+      for (
+        const row of
+        rows
+      ) {
+        const rowMaterials =
+          Array.isArray(
+            row.materialRequirements
+          )
+            ? row.materialRequirements
+            : rows.length === 1
+              ? sharedMaterials
+              : [];
+
+        const payload =
+          await buildJobPayload({
+            ...body,
+
+            ...row,
+
+            sourceType:
+              "Sales Order",
+
+            salesOrder:
+              body.salesOrder,
+
+            salesOrderItemId:
+              row.salesOrderItemId,
+
+            jobName:
+              normalizeText(
+                row.jobName
+              ),
+
+            targetQty:
+              row.targetQty,
+
+            finishedSize:
+              normalizeText(
+                row.finishedSize,
+                body.finishedSize
+              ),
+
+            remarks:
+              normalizeText(
+                row.remarks,
+                body.remarks
+              ),
+
+            materialRequirements:
+              rowMaterials,
+          });
+
+        const jobNo =
+          await getNextJobNo();
+
+        const job =
+          await ProductionItem.create({
+            ...payload,
+
+            jobNo,
+
+            status:
+              "Draft",
+          });
+
+        createdJobIds.push(
+          job._id
+        );
+      }
+
+      const createdJobs =
+        await populateJob(
+          ProductionItem.find({
+            _id: {
+              $in:
+                createdJobIds,
+            },
+          }).sort({
+            createdAt: 1,
+          })
+        );
+
+      return res
+        .status(201)
+        .json({
+          success: true,
+
+          message:
+            `${createdJobs.length} production job${
+              createdJobs.length === 1
+                ? ""
+                : "s"
+            } created successfully`,
+
+          createdCount:
+            createdJobs.length,
+
+          data:
+            createdJobs,
+        });
+    } catch (error) {
+      if (
+        createdJobIds.length > 0
+      ) {
+        try {
+          await ProductionItem.deleteMany({
+            _id: {
+              $in:
+                createdJobIds,
+            },
+          });
+        } catch (
+          rollbackError
+        ) {
+          console.error(
+            "Bulk Production Job Rollback Error:",
+            rollbackError
+          );
+        }
+      }
+
+      console.error(
+        "Bulk Production Job Add Error:",
+        error
+      );
+
+      return res
+        .status(400)
+        .json({
+          success: false,
+
+          message:
+            error.message ||
+            "Unable to create production jobs",
         });
     }
   }
@@ -1421,6 +2317,10 @@ router.patch(
 
       await job.save();
 
+      await syncSalesOrderProductionStatus(
+        job.salesOrder
+      );
+
       const populatedJob =
         await populateJob(
           ProductionItem.findById(
@@ -1546,10 +2446,17 @@ router.delete(
           });
       }
 
+      const salesOrderId =
+        job.salesOrder;
+
       await ProductionItem
         .findByIdAndDelete(
           job._id
         );
+
+      await syncSalesOrderProductionStatus(
+        salesOrderId
+      );
 
       return res
         .status(200)

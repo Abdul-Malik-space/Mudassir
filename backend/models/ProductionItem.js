@@ -281,6 +281,72 @@ const productionItemSchema =
         default: "",
       },
 
+      salesOrderItemId: {
+        type: mongoose.Schema.Types.ObjectId,
+        default: null,
+        index: true,
+      },
+
+      salesOrderOrderDate: {
+        type: String,
+        trim: true,
+        default: "",
+      },
+
+      salesOrderDeliveryDate: {
+        type: String,
+        trim: true,
+        default: "",
+      },
+
+      salesOrderReferenceNo: {
+        type: String,
+        trim: true,
+        default: "",
+      },
+
+      orderDescription: {
+        type: String,
+        trim: true,
+        default: "",
+      },
+
+      orderSize: {
+        type: String,
+        trim: true,
+        default: "",
+      },
+
+      orderTextType: {
+        type: String,
+        enum: ["", "with-text", "without-text"],
+        default: "",
+      },
+
+      orderCartons: {
+        type: Number,
+        default: 0,
+        min: [
+          0,
+          "Sales order cartons cannot be negative",
+        ],
+      },
+
+      orderedQty: {
+        type: Number,
+        default: 0,
+        min: [
+          0,
+          "Sales order quantity cannot be negative",
+        ],
+      },
+
+      orderUnit: {
+        type: String,
+        trim: true,
+        default: "Pcs",
+      },
+
       internalReference: {
         type: String,
         trim: true,
@@ -605,6 +671,12 @@ productionItemSchema.index({
   status: 1,
 });
 
+productionItemSchema.index({
+  salesOrder: 1,
+  salesOrderItemId: 1,
+  status: 1,
+});
+
 productionItemSchema.pre(
   "validate",
   function () {
@@ -620,6 +692,58 @@ productionItemSchema.pre(
       normalizeText(
         this.salesOrderNo
       ).toUpperCase();
+
+    this.salesOrderOrderDate =
+      normalizeText(
+        this.salesOrderOrderDate
+      );
+
+    this.salesOrderDeliveryDate =
+      normalizeText(
+        this.salesOrderDeliveryDate
+      );
+
+    this.salesOrderReferenceNo =
+      normalizeText(
+        this.salesOrderReferenceNo
+      );
+
+    this.orderDescription =
+      normalizeText(
+        this.orderDescription
+      );
+
+    this.orderSize =
+      normalizeText(
+        this.orderSize
+      );
+
+    this.orderTextType =
+      [
+        "",
+        "with-text",
+        "without-text",
+      ].includes(
+        this.orderTextType
+      )
+        ? this.orderTextType
+        : "";
+
+    this.orderCartons =
+      normalizeNumber(
+        this.orderCartons
+      );
+
+    this.orderedQty =
+      normalizeNumber(
+        this.orderedQty
+      );
+
+    this.orderUnit =
+      normalizeText(
+        this.orderUnit,
+        "Pcs"
+      );
 
     this.internalReference =
       normalizeText(
@@ -750,6 +874,16 @@ productionItemSchema.pre(
     ) {
       this.salesOrder = null;
       this.salesOrderNo = "";
+      this.salesOrderItemId = null;
+      this.salesOrderOrderDate = "";
+      this.salesOrderDeliveryDate = "";
+      this.salesOrderReferenceNo = "";
+      this.orderDescription = "";
+      this.orderSize = "";
+      this.orderTextType = "";
+      this.orderCartons = 0;
+      this.orderedQty = 0;
+      this.orderUnit = this.unit || "Pcs";
     }
 
     if (

@@ -18,6 +18,7 @@ import {
   Search,
   RotateCcw,
 } from "lucide-react";
+import { API_BASE_URL } from "../config/api";
 
 const todayDate = () => new Date().toISOString().slice(0, 10);
 
@@ -33,20 +34,74 @@ const NormalLabel = ({ children }) => (
   <label className="text-xs font-bold text-slate-600">{children}</label>
 );
 
-const createPurchaseNo = () => {
-  const year = new Date().getFullYear();
-  const random = Math.floor(1000 + Math.random() * 9000);
-  return `PUR-${year}-${random}`;
+const normalizeArray = (data, keys = []) => {
+  if (Array.isArray(data)) return data;
+
+  for (const key of keys) {
+    if (Array.isArray(data?.[key])) return data[key];
+  }
+
+  if (Array.isArray(data?.data)) return data.data;
+
+  return [];
 };
 
-const readLocalArray = (key) => {
-  try {
-    const data = localStorage.getItem(key);
-    return data ? JSON.parse(data) : [];
-  } catch {
-    return [];
+const apiRequest = async (url, options = {}) => {
+  const { headers = {}, ...requestOptions } = options;
+
+  const response = await fetch(url, {
+    ...requestOptions,
+    headers: {
+      Accept: "application/json",
+      ...(requestOptions.body
+        ? { "Content-Type": "application/json" }
+        : {}),
+      ...headers,
+    },
+  });
+
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok || data?.success === false) {
+    throw new Error(
+      data?.message ||
+        data?.error ||
+        `Request failed with status ${response.status}`
+    );
   }
+
+  return data;
 };
+
+const getId = (value) =>
+  String(value?._id || value?.id || value || "");
+
+const getDefaultForm = (purchaseNo = "") => ({
+  purchaseNo,
+  grn: "",
+  grnNo: "",
+  purchaseOrderNo: "",
+  vendorName: "",
+  vendorPhone: "",
+  purchaseDate: todayDate(),
+  dueDate: "",
+  vendorInvoiceNo: "",
+  supplierBillNo: "",
+  challanNo: "",
+  warehouse: "",
+  taxType: "without-tax",
+  taxRate: 18,
+  freightCharges: "",
+  otherCharges: "",
+  overallDiscount: "",
+  paidAmount: "",
+  paymentMethod: "Credit",
+  paymentStatus: "Unpaid",
+  postingStatus: "Draft",
+  status: "Draft",
+  remarks: "",
+  items: [],
+});
 
 const Purchases = () => {
   const [grns, setGrns] = useState([]);
@@ -60,56 +115,75 @@ const Purchases = () => {
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState("All");
 
-  const [form, setForm] = useState({
-    purchaseNo: "",
-    grn: "",
-    grnNo: "",
-    purchaseOrderNo: "",
-    vendorName: "",
-    vendorPhone: "",
-    purchaseDate: todayDate(),
-    dueDate: "",
-    vendorInvoiceNo: "",
-    supplierBillNo: "",
-    challanNo: "",
-    warehouse: "Main Warehouse",
-    taxType: "without-tax",
-    taxRate: 18,
-    freightCharges: "",
-    otherCharges: "",
-    overallDiscount: "",
-    paidAmount: "",
-    paymentMethod: "Cash",
-    paymentStatus: "Unpaid",
-    postingStatus: "Not Posted",
-    status: "Draft",
-    remarks: "",
-    items: [],
-  });
+  const [form, setForm] = useState(getDefaultForm());
 
-  const loadData = () => {
-    setLoading(true);
+  const fetchGRNs = async () => {
+    const data = await apiRequest(`${API_BASE_URL}/grns/all`);
 
-    const savedGrns = readLocalArray("grns");
-    const savedPurchases = readLocalArray("purchases");
+    const availableGRNs = normalizeArray(data, ["grns", "records"])
+      .filter((grn) => {
+        const status = String(grn.status || "");
 
-    setGrns(savedGrns);
-    setPurchases(savedPurchases);
+        return (
+          status !== "Cancelled" &&
+          grn.purchaseStatus !== "Purchased" &&
+          (
+            Number(grn.totalAcceptedQty || 0) > 0 ||
+            (grn.items || []).some(
+              (item) => Number(item.acceptedQty || 0) > 0
+            )
+          )
+        );
+      })
+      .sort((a, b) =>
+        String(b.receivedDate || "").localeCompare(
+          String(a.receivedDate || "")
+        )
+      );
 
-    setLoading(false);
+    setGrns(availableGRNs);
+
+    return availableGRNs;
+  };
+
+  const fetchPurchases = async () => {
+    const data = await apiRequest(`${API_BASE_URL}/purchases/all`);
+    const list = normalizeArray(data, ["purchases", "records"]);
+
+    setPurchases(list);
+
+    return list;
+  };
+
+  const loadData = async () => {
+    try {
+      setLoading(true);
+
+      await Promise.all([fetchGRNs(), fetchPurchases()]);
+    } catch (error) {
+      console.error("Purchase data loading error:", error);
+      alert(error.message || "Purchase data load nahi hua");
+      setGrns([]);
+      setPurchases([]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const fetchNextPurchaseNo = async () => {
+    const data = await apiRequest(
+      `${API_BASE_URL}/purchases/next-no`
+    );
+
+    return data.purchaseNo || "PUR-0001";
   };
 
   useEffect(() => {
     loadData();
   }, []);
 
-  const savePurchasesToLocalStorage = (updatedPurchases) => {
-    setPurchases(updatedPurchases);
-    localStorage.setItem("purchases", JSON.stringify(updatedPurchases));
-  };
-
   const selectedGRN = useMemo(() => {
-    return grns.find((grn) => grn.id === form.grn);
+    return grns.find((grn) => getId(grn) === form.grn);
   }, [grns, form.grn]);
 
   const totals = useMemo(() => {
@@ -187,77 +261,67 @@ const Purchases = () => {
     }
   }, [form.paidAmount, totals.grandTotal]);
 
-  const openNewForm = () => {
-    loadData();
+  const openNewForm = async () => {
+    try {
+      setSaving(true);
 
-    setEditId(null);
+      const [, nextNo] = await Promise.all([
+        fetchGRNs(),
+        fetchNextPurchaseNo(),
+      ]);
 
-    setForm({
-      purchaseNo: createPurchaseNo(),
-      grn: "",
-      grnNo: "",
-      purchaseOrderNo: "",
-      vendorName: "",
-      vendorPhone: "",
-      purchaseDate: todayDate(),
-      dueDate: "",
-      vendorInvoiceNo: "",
-      supplierBillNo: "",
-      challanNo: "",
-      warehouse: "Main Warehouse",
-      taxType: "without-tax",
-      taxRate: 18,
-      freightCharges: "",
-      otherCharges: "",
-      overallDiscount: "",
-      paidAmount: "",
-      paymentMethod: "Cash",
-      paymentStatus: "Unpaid",
-      postingStatus: "Not Posted",
-      status: "Draft",
-      remarks: "",
-      items: [],
-    });
-
-    setShowForm(true);
+      setEditId(null);
+      setForm(getDefaultForm(nextNo));
+      setShowForm(true);
+    } catch (error) {
+      alert(error.message || "Purchase Number load nahi hua");
+    } finally {
+      setSaving(false);
+    }
   };
 
   const closeForm = () => {
     setShowForm(false);
     setEditId(null);
+    setForm(getDefaultForm());
   };
 
   const handleGRNSelect = (grnId) => {
-    const grn = grns.find((item) => item.id === grnId);
+    const grn = grns.find((item) => getId(item) === String(grnId));
 
     if (!grn) {
-      setForm({
-        ...form,
+      setForm((previous) => ({
+        ...previous,
         grn: "",
         grnNo: "",
         purchaseOrderNo: "",
         vendorName: "",
         vendorPhone: "",
         challanNo: "",
-        warehouse: "Main Warehouse",
+        warehouse: "",
         items: [],
-      });
+      }));
+
       return;
     }
 
     const mappedItems = (grn.items || [])
       .filter((item) => Number(item.acceptedQty || 0) > 0)
-      .map((item, index) => {
+      .map((item) => {
         const acceptedQty = Number(item.acceptedQty || 0);
         const unitPrice = Number(item.unitPrice || 0);
 
         return {
-          itemId: item.itemId || index,
-          description: item.description || "",
+          item: getId(item.item),
+          description:
+            item.description ||
+            item.itemName ||
+            item.item?.name ||
+            "",
           size: item.size || "",
           grnAcceptedQty: acceptedQty,
           purchaseQty: acceptedQty,
-          unit: item.unit || "Pcs",
+          unit: item.unit || item.item?.unit || "Pcs",
           unitPrice,
           discount: "",
           amount: acceptedQty * unitPrice,
@@ -265,17 +329,28 @@ const Purchases = () => {
         };
       });
 
-    setForm({
-      ...form,
-      grn: grnId,
+    setForm((previous) => ({
+      ...previous,
+      grn: getId(grn),
       grnNo: grn.grnNo || "",
-      purchaseOrderNo: grn.purchaseOrderNo || "",
-      vendorName: grn.vendorName || "",
-      vendorPhone: grn.vendorPhone || "",
+      purchaseOrderNo:
+        grn.purchaseOrderNo ||
+        grn.purchaseOrder?.purchaseOrderNo ||
+        "",
+      vendorName:
+        grn.vendorName ||
+        grn.vendor?.vendorName ||
+        grn.vendor?.name ||
+        "",
+      vendorPhone:
+        grn.vendorPhone ||
+        grn.vendor?.phoneNumber ||
+        grn.vendor?.phone ||
+        "",
       challanNo: grn.challanNo || "",
       warehouse: grn.warehouse || "Main Warehouse",
       items: mappedItems,
-    });
+    }));
   };
 
   const updateItem = (index, field, value) => {
@@ -298,8 +373,13 @@ const Purchases = () => {
     });
   };
 
-  const handleSubmit = () => {
-    if (!form.purchaseNo.trim()) {
+  const handleSubmit = async () => {
+    const purchaseNo = String(form.purchaseNo || "")
+      .trim()
+      .toUpperCase()
+      .replace(/\s+/g, "");
+
+    if (!purchaseNo) {
       alert("Purchase No required hai");
       return;
     }
@@ -314,12 +394,12 @@ const Purchases = () => {
       return;
     }
 
-    if (!form.vendorInvoiceNo.trim()) {
+    if (!String(form.vendorInvoiceNo || "").trim()) {
       alert("Vendor Invoice No required hai");
       return;
     }
 
-    if (!form.warehouse.trim()) {
+    if (!String(form.warehouse || "").trim()) {
       alert("Warehouse required hai");
       return;
     }
@@ -332,16 +412,22 @@ const Purchases = () => {
     const invalidQty = form.items.some(
       (item) =>
         Number(item.purchaseQty || 0) <= 0 ||
-        Number(item.purchaseQty || 0) > Number(item.grnAcceptedQty || 0)
+        Number(item.purchaseQty || 0) >
+          Number(item.grnAcceptedQty || 0)
     );
 
     if (invalidQty) {
-      alert("Purchase Qty zero nahi ho sakti aur GRN accepted qty se zyada nahi honi chahiye");
+      alert(
+        "Purchase Qty zero nahi ho sakti aur GRN accepted qty se zyada nahi honi chahiye"
+      );
       return;
     }
 
     const invalidDiscount = form.items.some((item) => {
-      const gross = Number(item.purchaseQty || 0) * Number(item.unitPrice || 0);
+      const gross =
+        Number(item.purchaseQty || 0) *
+        Number(item.unitPrice || 0);
+
       return Number(item.discount || 0) > gross;
     });
 
@@ -355,93 +441,175 @@ const Purchases = () => {
       return;
     }
 
-    setSaving(true);
+    const payload = {
+      purchaseNo,
+      grn: form.grn,
+      purchaseDate: form.purchaseDate,
+      dueDate: form.dueDate,
+      vendorInvoiceNo: String(form.vendorInvoiceNo || "").trim(),
+      supplierBillNo: String(form.supplierBillNo || "").trim(),
+      challanNo: String(form.challanNo || "").trim(),
+      warehouse: String(form.warehouse || "").trim(),
+      taxType: form.taxType,
+      taxRate: Number(form.taxRate || 0),
+      freightCharges: Number(form.freightCharges || 0),
+      otherCharges: Number(form.otherCharges || 0),
+      overallDiscount: Number(form.overallDiscount || 0),
+      paidAmount: Number(form.paidAmount || 0),
+      paymentMethod: form.paymentMethod,
+      postingStatus: form.postingStatus,
+      status: form.status,
+      remarks: String(form.remarks || "").trim(),
+      items: form.items.map((item) => ({
+        item: item.item || null,
+        description: String(item.description || "").trim(),
+        size: String(item.size || "").trim(),
+        grnAcceptedQty: Number(item.grnAcceptedQty || 0),
+        purchaseQty: Number(item.purchaseQty || 0),
+        unit: String(item.unit || "Pcs").trim(),
+        unitPrice: Number(item.unitPrice || 0),
+        discount: Number(item.discount || 0),
+        remarks: String(item.remarks || "").trim(),
+      })),
+    };
 
-    setTimeout(() => {
-      const payload = {
-        ...form,
-        totals,
-        paymentStatus: updatePaymentStatus(
-          form.paidAmount,
-          totals.grandTotal
-        ),
-        updatedAt: new Date().toISOString(),
-      };
+    try {
+      setSaving(true);
 
-      if (editId) {
-        const updatedPurchases = purchases.map((purchase) =>
-          purchase.id === editId ? { ...payload, id: editId } : purchase
-        );
+      const url = editId
+        ? `${API_BASE_URL}/purchases/update/${editId}`
+        : `${API_BASE_URL}/purchases/add`;
 
-        savePurchasesToLocalStorage(updatedPurchases);
-      } else {
-        const newPurchase = {
-          ...payload,
-          id: Date.now().toString(),
-          createdAt: new Date().toISOString(),
-        };
+      await apiRequest(url, {
+        method: editId ? "PUT" : "POST",
+        body: JSON.stringify(payload),
+      });
 
-        savePurchasesToLocalStorage([newPurchase, ...purchases]);
-      }
-
-      setSaving(false);
+      await loadData();
       closeForm();
-    }, 500);
+    } catch (error) {
+      alert(error.message || "Purchase save nahi hui");
+    } finally {
+      setSaving(false);
+    }
   };
 
-  const handleEdit = (purchase) => {
-    setEditId(purchase.id);
+  const handleEdit = async (purchase) => {
+    try {
+      setSaving(true);
 
-    setForm({
-      purchaseNo: purchase.purchaseNo || "",
-      grn: purchase.grn || "",
-      grnNo: purchase.grnNo || "",
-      purchaseOrderNo: purchase.purchaseOrderNo || "",
-      vendorName: purchase.vendorName || "",
-      vendorPhone: purchase.vendorPhone || "",
-      purchaseDate: purchase.purchaseDate || todayDate(),
-      dueDate: purchase.dueDate || "",
-      vendorInvoiceNo: purchase.vendorInvoiceNo || "",
-      supplierBillNo: purchase.supplierBillNo || "",
-      challanNo: purchase.challanNo || "",
-      warehouse: purchase.warehouse || "Main Warehouse",
-      taxType: purchase.taxType || "without-tax",
-      taxRate: purchase.taxRate || 18,
-      freightCharges: purchase.freightCharges || "",
-      otherCharges: purchase.otherCharges || "",
-      overallDiscount: purchase.overallDiscount || "",
-      paidAmount: purchase.paidAmount || "",
-      paymentMethod: purchase.paymentMethod || "Cash",
-      paymentStatus: purchase.paymentStatus || "Unpaid",
-      postingStatus: purchase.postingStatus || "Not Posted",
-      status: purchase.status || "Draft",
-      remarks: purchase.remarks || "",
-      items: purchase.items?.length ? purchase.items : [],
-    });
+      const purchaseId = getId(purchase);
+      const result = await apiRequest(
+        `${API_BASE_URL}/purchases/${purchaseId}`
+      );
 
-    setShowForm(true);
+      const data = result.data || purchase;
+
+      await fetchGRNs();
+
+      setEditId(purchaseId);
+
+      setForm({
+        purchaseNo: data.purchaseNo || "",
+        grn: getId(data.grn),
+        grnNo: data.grnNo || data.grn?.grnNo || "",
+        purchaseOrderNo:
+          data.purchaseOrderNo ||
+          data.purchaseOrder?.purchaseOrderNo ||
+          "",
+        vendorName:
+          data.vendorName ||
+          data.vendor?.vendorName ||
+          data.vendor?.name ||
+          "",
+        vendorPhone:
+          data.vendorPhone ||
+          data.vendor?.phoneNumber ||
+          data.vendor?.phone ||
+          "",
+        purchaseDate: data.purchaseDate || todayDate(),
+        dueDate: data.dueDate || "",
+        vendorInvoiceNo: data.vendorInvoiceNo || "",
+        supplierBillNo: data.supplierBillNo || "",
+        challanNo: data.challanNo || "",
+        warehouse: data.warehouse || "Main Warehouse",
+        taxType: data.taxType || "without-tax",
+        taxRate: data.taxRate ?? 18,
+        freightCharges: data.freightCharges || "",
+        otherCharges: data.otherCharges || "",
+        overallDiscount: data.overallDiscount || "",
+        paidAmount: data.paidAmount || "",
+        paymentMethod: data.paymentMethod || "Credit",
+        paymentStatus: data.paymentStatus || "Unpaid",
+        postingStatus: data.postingStatus || "Draft",
+        status: data.status || "Draft",
+        remarks: data.remarks || "",
+        items: (data.items || []).map((item) => ({
+          item: getId(item.item),
+          description: item.description || "",
+          size: item.size || "",
+          grnAcceptedQty: Number(item.grnAcceptedQty || 0),
+          purchaseQty: Number(item.purchaseQty || 0),
+          unit: item.unit || "Pcs",
+          unitPrice: Number(item.unitPrice || 0),
+          discount: Number(item.discount || 0),
+          amount: Number(item.amount || 0),
+          remarks: item.remarks || "",
+        })),
+      });
+
+      setShowForm(true);
+    } catch (error) {
+      alert(error.message || "Purchase load nahi hui");
+    } finally {
+      setSaving(false);
+    }
   };
 
-  const handleDelete = (id) => {
-    if (!window.confirm("Are you sure you want to delete this purchase entry?")) return;
+  const handleDelete = async (id) => {
+    if (
+      !window.confirm(
+        "Are you sure you want to delete this purchase entry?"
+      )
+    ) {
+      return;
+    }
 
-    const updatedPurchases = purchases.filter((purchase) => purchase.id !== id);
-    savePurchasesToLocalStorage(updatedPurchases);
+    try {
+      setSaving(true);
+
+      await apiRequest(
+        `${API_BASE_URL}/purchases/delete/${id}`,
+        {
+          method: "DELETE",
+        }
+      );
+
+      await loadData();
+    } catch (error) {
+      alert(error.message || "Purchase delete nahi hui");
+    } finally {
+      setSaving(false);
+    }
   };
 
-  const markAsPosted = (id) => {
-    const updatedPurchases = purchases.map((purchase) =>
-      purchase.id === id
-        ? {
-            ...purchase,
-            postingStatus: "Posted",
-            status: "Completed",
-            updatedAt: new Date().toISOString(),
-          }
-        : purchase
-    );
+  const markAsPosted = async (id) => {
+    try {
+      setSaving(true);
 
-    savePurchasesToLocalStorage(updatedPurchases);
+      await apiRequest(
+        `${API_BASE_URL}/purchases/post/${id}`,
+        {
+          method: "PUT",
+        }
+      );
+
+      await loadData();
+    } catch (error) {
+      alert(error.message || "Purchase post nahi hui");
+    } finally {
+      setSaving(false);
+    }
   };
 
   const printPurchase = (purchase) => {
@@ -535,16 +703,16 @@ const Purchases = () => {
           </table>
 
           <div class="totals">
-            <div><span>Subtotal</span><b>${money(purchase.totals?.subtotal)}</b></div>
-            <div><span>Item Discount</span><b>${money(purchase.totals?.itemDiscount)}</b></div>
-            <div><span>Overall Discount</span><b>${money(purchase.totals?.overallDiscount)}</b></div>
-            <div><span>Taxable Amount</span><b>${money(purchase.totals?.taxableAmount)}</b></div>
-            <div><span>Sales Tax</span><b>${money(purchase.totals?.salesTax)}</b></div>
-            <div><span>Freight Charges</span><b>${money(purchase.totals?.freightCharges)}</b></div>
-            <div><span>Other Charges</span><b>${money(purchase.totals?.otherCharges)}</b></div>
-            <div><span>Grand Total</span><b>${money(purchase.totals?.grandTotal)}</b></div>
-            <div><span>Paid Amount</span><b>${money(purchase.totals?.paidAmount)}</b></div>
-            <div><span>Balance</span><b>${money(purchase.totals?.balance)}</b></div>
+            <div><span>Subtotal</span><b>${money(purchase.subtotal)}</b></div>
+            <div><span>Item Discount</span><b>${money(purchase.itemDiscount)}</b></div>
+            <div><span>Overall Discount</span><b>${money(purchase.overallDiscount)}</b></div>
+            <div><span>Taxable Amount</span><b>${money(purchase.taxableAmount)}</b></div>
+            <div><span>Sales Tax</span><b>${money(purchase.salesTax)}</b></div>
+            <div><span>Freight Charges</span><b>${money(purchase.freightCharges)}</b></div>
+            <div><span>Other Charges</span><b>${money(purchase.otherCharges)}</b></div>
+            <div><span>Grand Total</span><b>${money(purchase.grandTotal)}</b></div>
+            <div><span>Paid Amount</span><b>${money(purchase.paidAmount)}</b></div>
+            <div><span>Balance</span><b>${money(purchase.balance)}</b></div>
           </div>
 
           <p><b>Remarks:</b> ${purchase.remarks || ""}</p>
@@ -620,10 +788,15 @@ const Purchases = () => {
                 <input
                   value={form.purchaseNo}
                   onChange={(e) =>
-                    setForm({ ...form, purchaseNo: e.target.value })
+                    setForm({
+                      ...form,
+                      purchaseNo: e.target.value
+                        .toUpperCase()
+                        .replace(/\s+/g, ""),
+                    })
                   }
                   className="w-full border rounded-lg px-3 py-2 mt-1"
-                  placeholder="PUR-2026-0001"
+                  placeholder="PUR-0001"
                 />
               </div>
 
@@ -636,9 +809,18 @@ const Purchases = () => {
                   disabled={editId}
                 >
                   <option value="">Select GRN</option>
+
+                  {editId &&
+                    form.grn &&
+                    !grns.some((grn) => getId(grn) === form.grn) && (
+                      <option value={form.grn}>
+                        {form.grnNo} - {form.vendorName}
+                      </option>
+                    )}
+
                   {grns.map((grn) => (
-                    <option key={grn.id} value={grn.id}>
-                      {grn.grnNo} - {grn.vendorName}
+                    <option key={getId(grn)} value={getId(grn)}>
+                      {grn.grnNo} - {grn.vendorName || grn.vendor?.vendorName || grn.vendor?.name || "Vendor"}
                     </option>
                   ))}
                 </select>
@@ -739,10 +921,10 @@ const Purchases = () => {
                   }
                   className="w-full border rounded-lg px-3 py-2 mt-1"
                 >
-                  <option>Main Warehouse</option>
-                  <option>Raw Material Store</option>
-                  <option>Finished Goods Store</option>
-                  <option>UrwaGodam</option>
+                  <option value="">Auto from GRN</option>
+                  <option>Raw Material Godown</option>
+                  <option>Finished Goods Godown</option>
+                  <option>Multiple Warehouses</option>
                 </select>
               </div>
 
@@ -980,10 +1162,10 @@ const Purchases = () => {
                       className="w-full border rounded-lg px-3 py-2 mt-1"
                     >
                       <option>Cash</option>
-                      <option>Bank Transfer</option>
+                      <option>Bank</option>
                       <option>Cheque</option>
                       <option>Credit</option>
-                      <option>JazzCash/EasyPaisa</option>
+                      <option>Other</option>
                     </select>
                   </div>
 
@@ -1005,7 +1187,7 @@ const Purchases = () => {
                       }
                       className="w-full border rounded-lg px-3 py-2 mt-1"
                     >
-                      <option>Not Posted</option>
+                      <option>Draft</option>
                       <option>Posted</option>
                     </select>
                   </div>
@@ -1020,7 +1202,6 @@ const Purchases = () => {
                       className="w-full border rounded-lg px-3 py-2 mt-1"
                     >
                       <option>Draft</option>
-                      <option>Approved</option>
                       <option>Completed</option>
                       <option>Cancelled</option>
                     </select>
@@ -1138,6 +1319,7 @@ const Purchases = () => {
 
         <button
           onClick={openNewForm}
+          disabled={saving}
           className="inline-flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-xl font-semibold shadow-sm"
         >
           <Plus size={18} />
@@ -1165,7 +1347,7 @@ const Purchases = () => {
             <h3 className="text-xl font-bold">
               {money(
                 purchases.reduce(
-                  (s, p) => s + Number(p.totals?.grandTotal || 0),
+                  (s, p) => s + Number(p.grandTotal || 0),
                   0
                 )
               )}
@@ -1182,7 +1364,7 @@ const Purchases = () => {
             <h3 className="text-xl font-bold">
               {money(
                 purchases.reduce(
-                  (s, p) => s + Number(p.totals?.salesTax || 0),
+                  (s, p) => s + Number(p.salesTax || 0),
                   0
                 )
               )}
@@ -1199,7 +1381,7 @@ const Purchases = () => {
             <h3 className="text-xl font-bold">
               {money(
                 purchases.reduce(
-                  (s, p) => s + Number(p.totals?.freightCharges || 0),
+                  (s, p) => s + Number(p.freightCharges || 0),
                   0
                 )
               )}
@@ -1216,7 +1398,7 @@ const Purchases = () => {
             <h3 className="text-xl font-bold">
               {money(
                 purchases.reduce(
-                  (s, p) => s + Number(p.totals?.balance || 0),
+                  (s, p) => s + Number(p.balance || 0),
                   0
                 )
               )}
@@ -1255,14 +1437,12 @@ const Purchases = () => {
             >
               <option>All</option>
               <option>Draft</option>
-              <option>Approved</option>
               <option>Completed</option>
               <option>Cancelled</option>
               <option>Paid</option>
               <option>Partially Paid</option>
               <option>Unpaid</option>
               <option>Posted</option>
-              <option>Not Posted</option>
             </select>
 
             <button
@@ -1308,7 +1488,7 @@ const Purchases = () => {
                 </tr>
               ) : (
                 filteredPurchases.map((purchase) => (
-                  <tr key={purchase.id} className="border-t hover:bg-slate-50">
+                  <tr key={getId(purchase)} className="border-t hover:bg-slate-50">
                     <td className="p-3 font-bold text-blue-700">
                       {purchase.purchaseNo}
                     </td>
@@ -1337,15 +1517,15 @@ const Purchases = () => {
                     <td className="p-3">{purchase.purchaseDate}</td>
 
                     <td className="p-3 text-right font-bold">
-                      {money(purchase.totals?.grandTotal)}
+                      {money(purchase.grandTotal)}
                     </td>
 
                     <td className="p-3 text-right font-bold text-emerald-600">
-                      {money(purchase.totals?.paidAmount)}
+                      {money(purchase.paidAmount)}
                     </td>
 
                     <td className="p-3 text-right font-bold text-red-600">
-                      {money(purchase.totals?.balance)}
+                      {money(purchase.balance)}
                     </td>
 
                     <td className="p-3 text-center">
@@ -1386,7 +1566,7 @@ const Purchases = () => {
 
                         {purchase.postingStatus !== "Posted" && (
                           <button
-                            onClick={() => markAsPosted(purchase.id)}
+                            onClick={() => markAsPosted(getId(purchase))}
                             className="p-2 rounded-lg bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
                             title="Post Entry"
                           >
@@ -1403,7 +1583,7 @@ const Purchases = () => {
                         </button>
 
                         <button
-                          onClick={() => handleDelete(purchase.id)}
+                          onClick={() => handleDelete(getId(purchase))}
                           className="p-2 rounded-lg bg-red-50 text-red-700 hover:bg-red-100"
                           title="Delete"
                         >
@@ -1420,9 +1600,7 @@ const Purchases = () => {
       </div>
 
       <div className="bg-blue-50 border border-blue-100 rounded-2xl p-4 text-sm text-blue-800">
-        <b>Flow:</b> Pehle Purchase Order create hoga, phir us ke against GRN create hoga,
-        phir GRN ke accepted items se final Purchase Entry create hogi. Backend banate waqt yahi
-        structure MongoDB/API ke sath connect ho jayega.
+        <b>Flow:</b> Purchase Order → GRN → Purchase Entry. Data MongoDB/API se load aur save hota hai.
       </div>
     </div>
   );

@@ -102,6 +102,24 @@ const duplicateMessage = (
   return `Duplicate ${field}: ${String(value)}`;
 };
 
+const productionOutputPopulate = {
+  path: "productionOutput",
+  select:
+    "readyNo productionJob jobNo sourceType salesOrder salesOrderNo internalReference customer customerName customerPO finishedGoodItem finishedGoodCode finishedGoodName passedQty unit status stockPosted rate packaging qcDate remarks",
+  populate: [
+    {
+      path: "productionJob",
+      select:
+        "jobNo jobName sourceType salesOrder salesOrderNo internalReference customer customerName customerPO targetQty unit status finishedGoodItem finishedGoodCode finishedGoodName finishedSize sheetSize salesOrderItemId salesOrderOrderDate salesOrderDeliveryDate salesOrderReferenceNo orderDescription orderSize orderTextType orderCartons orderedQty orderUnit",
+    },
+    {
+      path: "finishedGoodItem",
+      select:
+        "code name itemType unit salePrice purchasePrice status stockManaged",
+    },
+  ],
+};
+
 const populateChallan = (query) =>
   query
     .populate(
@@ -109,27 +127,19 @@ const populateChallan = (query) =>
       "salesOrderNo orderNo poNo customerName customerPhone customerEmail customerAddress deliveryAddress status items"
     )
     .populate(
-      {
-        path: "productionOutput",
-        select:
-          "readyNo productionJob jobNo sourceType salesOrder salesOrderNo internalReference customer customerName customerPO finishedGoodItem finishedGoodCode finishedGoodName passedQty unit status stockPosted rate packaging qcDate",
-        populate: [
-          {
-            path: "productionJob",
-            select:
-              "jobNo jobName sourceType salesOrder salesOrderNo internalReference customer customerName customerPO targetQty unit status finishedGoodItem finishedGoodCode finishedGoodName finishedSize sheetSize",
-          },
-          {
-            path: "finishedGoodItem",
-            select:
-              "code name itemType unit salePrice purchasePrice status stockManaged",
-          },
-        ],
-      }
+      productionOutputPopulate
     )
+    .populate({
+      ...productionOutputPopulate,
+      path: "productionOutputs",
+    })
     .populate(
       "productionJob",
-      "jobNo jobName sourceType salesOrder salesOrderNo internalReference customer customerName customerPO targetQty unit status finishedGoodItem finishedGoodCode finishedGoodName"
+      "jobNo jobName sourceType salesOrder salesOrderNo internalReference customer customerName customerPO targetQty unit status finishedGoodItem finishedGoodCode finishedGoodName finishedSize sheetSize salesOrderItemId salesOrderOrderDate salesOrderDeliveryDate salesOrderReferenceNo orderDescription orderSize orderTextType orderCartons orderedQty orderUnit"
+    )
+    .populate(
+      "productionJobs",
+      "jobNo jobName sourceType salesOrder salesOrderNo internalReference customer customerName customerPO targetQty unit status finishedGoodItem finishedGoodCode finishedGoodName finishedSize sheetSize salesOrderItemId salesOrderOrderDate salesOrderDeliveryDate salesOrderReferenceNo orderDescription orderSize orderTextType orderCartons orderedQty orderUnit"
     )
     .populate(
       "customer",
@@ -138,6 +148,14 @@ const populateChallan = (query) =>
     .populate(
       "items.item",
       "code name itemType unit salePrice purchasePrice status stockManaged"
+    )
+    .populate(
+      "items.productionOutput",
+      "readyNo jobNo salesOrder salesOrderNo customer customerName finishedGoodItem finishedGoodCode finishedGoodName passedQty unit status stockPosted qcDate"
+    )
+    .populate(
+      "items.productionJob",
+      "jobNo jobName salesOrder salesOrderNo customer customerName finishedGoodItem finishedGoodCode finishedGoodName targetQty unit orderDescription orderSize orderTextType orderCartons salesOrderItemId"
     )
     .populate(
       "warehouseId",
@@ -367,18 +385,6 @@ const getDeliveredQuantityMap =
         $in:
           ACTIVE_DELIVERY_STATUSES,
       },
-
-      $or: [
-        {
-          sourceType:
-            "Sales Order",
-        },
-        {
-          sourceType: {
-            $exists: false,
-          },
-        },
-      ],
     };
 
     if (excludedChallanId) {
@@ -593,7 +599,7 @@ const loadProductionOutput =
             path:
               "productionJob",
             select:
-              "jobNo jobName sourceType salesOrder salesOrderNo internalReference customer customerName customerPO targetQty unit status finishedGoodItem finishedGoodCode finishedGoodName finishedSize sheetSize",
+              "jobNo jobName sourceType salesOrder salesOrderNo internalReference customer customerName customerPO targetQty unit status finishedGoodItem finishedGoodCode finishedGoodName finishedSize sheetSize salesOrderItemId salesOrderOrderDate salesOrderDeliveryDate salesOrderReferenceNo orderDescription orderSize orderTextType orderCartons orderedQty orderUnit finishedSize sheetSize salesOrderItemId salesOrderOrderDate salesOrderDeliveryDate salesOrderReferenceNo orderDescription orderSize orderTextType orderCartons orderedQty orderUnit",
             populate: [
               {
                 path:
@@ -694,17 +700,37 @@ const getProductionDispatchedQty =
     productionOutputId,
     excludedChallanId = null
   ) => {
+    if (
+      !isValidId(
+        productionOutputId
+      )
+    ) {
+      return 0;
+    }
+
     const query = {
       sourceType:
         "Production Output",
-
-      productionOutput:
-        productionOutputId,
 
       status: {
         $in:
           ACTIVE_DELIVERY_STATUSES,
       },
+
+      $or: [
+        {
+          "items.productionOutput":
+            productionOutputId,
+        },
+        {
+          productionOutput:
+            productionOutputId,
+        },
+        {
+          productionOutputs:
+            productionOutputId,
+        },
+      ],
     };
 
     if (excludedChallanId) {
@@ -714,47 +740,68 @@ const getProductionDispatchedQty =
       };
     }
 
-    const result =
-      await DeliveryChallan.aggregate([
-        {
-          $match: {
-            ...query,
+    const challans =
+      await DeliveryChallan.find(
+        query
+      )
+        .select(
+          "productionOutput productionOutputs items.productionOutput items.quantity"
+        )
+        .lean();
 
-            productionOutput:
-              new mongoose.Types.ObjectId(
+    let total = 0;
+
+    for (
+      const challan of
+      challans
+    ) {
+      for (
+        const row of
+        challan.items || []
+      ) {
+        const rowOutputId =
+          idOf(
+            row.productionOutput
+          );
+
+        const legacyMatch =
+          !rowOutputId &&
+          (
+            idOf(
+              challan.productionOutput
+            ) ===
+              String(
                 productionOutputId
-              ),
+              ) ||
+            (
+              challan.productionOutputs ||
+              []
+            ).some(
+              (value) =>
+                idOf(value) ===
+                String(
+                  productionOutputId
+                )
+            )
+          );
 
-            ...(excludedChallanId
-              ? {
-                  _id: {
-                    $ne:
-                      new mongoose.Types.ObjectId(
-                        excludedChallanId
-                      ),
-                  },
-                }
-              : {}),
-          },
-        },
-        {
-          $unwind:
-            "$items",
-        },
-        {
-          $group: {
-            _id: null,
-
-            total: {
-              $sum:
-                "$items.quantity",
-            },
-          },
-        },
-      ]);
+        if (
+          rowOutputId ===
+            String(
+              productionOutputId
+            ) ||
+          legacyMatch
+        ) {
+          total +=
+            cleanNumber(
+              row.quantity
+            );
+        }
+      }
+    }
 
     return cleanNumber(
-      result[0]?.total
+      total
     );
   };
 
@@ -863,6 +910,253 @@ const buildProductionCustomerDetails =
             salesOrder.attentionTo
         ),
     };
+  };
+
+const uniqueIds = (
+  values = []
+) => [
+  ...new Set(
+    values
+      .map(
+        (value) =>
+          idOf(value)
+      )
+      .filter(Boolean)
+  ),
+];
+
+const extractProductionOutputIds = ({
+  body = {},
+  rows = [],
+  challan = null,
+}) => {
+  const rowIds =
+    uniqueIds(
+      Array.isArray(rows)
+        ? rows.map(
+            (row) =>
+              row?.productionOutput
+          )
+        : []
+    );
+
+  if (
+    Array.isArray(
+      body.productionOutputs
+    )
+  ) {
+    return uniqueIds([
+      ...body.productionOutputs,
+      ...rowIds,
+    ]);
+  }
+
+  if (
+    body.productionOutput
+  ) {
+    return uniqueIds([
+      body.productionOutput,
+      ...rowIds,
+    ]);
+  }
+
+  if (rowIds.length) {
+    return rowIds;
+  }
+
+  return uniqueIds([
+    ...(
+      Array.isArray(
+        challan?.productionOutputs
+      )
+        ? challan.productionOutputs
+        : []
+    ),
+
+    challan?.productionOutput,
+
+    ...(
+      Array.isArray(
+        challan?.items
+      )
+        ? challan.items.map(
+            (row) =>
+              row?.productionOutput
+          )
+        : []
+    ),
+  ]);
+};
+
+const loadProductionOutputs =
+  async (
+    productionOutputIds
+  ) => {
+    const ids =
+      uniqueIds(
+        productionOutputIds
+      );
+
+    if (!ids.length) {
+      throw new Error(
+        "Select at least one Production Output"
+      );
+    }
+
+    const outputs = [];
+
+    for (
+      const outputId of
+      ids
+    ) {
+      outputs.push(
+        await loadProductionOutput(
+          outputId
+        )
+      );
+    }
+
+    return outputs;
+  };
+
+const getProductionGroupIdentity =
+  (
+    output
+  ) => {
+    const {
+      job,
+      salesOrder,
+      customer,
+    } =
+      getProductionContext(
+        output
+      );
+
+    const salesOrderId =
+      idOf(
+        salesOrder
+      ) ||
+      idOf(
+        output.salesOrder
+      ) ||
+      idOf(
+        job.salesOrder
+      );
+
+    const customerId =
+      idOf(
+        customer
+      ) ||
+      idOf(
+        output.customer
+      ) ||
+      idOf(
+        job.customer
+      ) ||
+      idOf(
+        salesOrder.customer
+      );
+
+    const customerName =
+      cleanText(
+        output.customerName ||
+          job.customerName ||
+          salesOrder.customerName ||
+          customer.customerName ||
+          customer.name
+      ).toLowerCase();
+
+    const internalReference =
+      cleanText(
+        output.internalReference ||
+          job.internalReference
+      ).toLowerCase();
+
+    return {
+      salesOrderId,
+      customerId,
+      customerName,
+      internalReference,
+    };
+  };
+
+const validateProductionOutputGroup =
+  (
+    outputs
+  ) => {
+    if (!outputs.length) {
+      throw new Error(
+        "Select at least one Production Output"
+      );
+    }
+
+    const firstIdentity =
+      getProductionGroupIdentity(
+        outputs[0]
+      );
+
+    for (
+      const output of
+      outputs.slice(1)
+    ) {
+      const identity =
+        getProductionGroupIdentity(
+          output
+        );
+
+      if (
+        firstIdentity.salesOrderId ||
+        identity.salesOrderId
+      ) {
+        if (
+          !firstIdentity.salesOrderId ||
+          !identity.salesOrderId ||
+          firstIdentity.salesOrderId !==
+            identity.salesOrderId
+        ) {
+          throw new Error(
+            "All selected Production Outputs must belong to the same Sales Order"
+          );
+        }
+      }
+
+      if (
+        firstIdentity.customerId &&
+        identity.customerId &&
+        firstIdentity.customerId !==
+          identity.customerId
+      ) {
+        throw new Error(
+          "All selected Production Outputs must belong to the same Customer"
+        );
+      }
+
+      if (
+        !firstIdentity.customerId &&
+        !identity.customerId &&
+        firstIdentity.customerName !==
+          identity.customerName
+      ) {
+        throw new Error(
+          "All selected Production Outputs must belong to the same Customer"
+        );
+      }
+
+      if (
+        !firstIdentity.salesOrderId &&
+        !identity.salesOrderId &&
+        firstIdentity.internalReference &&
+        identity.internalReference &&
+        firstIdentity.internalReference !==
+          identity.internalReference
+      ) {
+        throw new Error(
+          "Internal Production Outputs from different references cannot be combined in one Delivery Challan"
+        );
+      }
+    }
+
+    return firstIdentity;
   };
 
 const prepareProductionDeliveryItems =
@@ -984,6 +1278,7 @@ const prepareProductionDeliveryItems =
     return [
       {
         salesOrderItemId:
+          job.salesOrderItemId ||
           null,
 
         productionOutput:
@@ -992,6 +1287,17 @@ const prepareProductionDeliveryItems =
         productionJob:
           job._id ||
           job,
+
+        productionOutputNo:
+          cleanText(
+            output.readyNo
+          ).toUpperCase(),
+
+        productionJobNo:
+          cleanText(
+            output.jobNo ||
+              job.jobNo
+          ).toUpperCase(),
 
         item:
           finishedGood._id,
@@ -1005,6 +1311,7 @@ const prepareProductionDeliveryItems =
         description:
           cleanText(
             row.description ||
+              job.orderDescription ||
               output.finishedGoodName,
             finishedGood.name
           ),
@@ -1012,8 +1319,15 @@ const prepareProductionDeliveryItems =
         size:
           cleanText(
             row.size ||
+              job.orderSize ||
               job.finishedSize ||
               job.sheetSize
+          ),
+
+        textType:
+          cleanText(
+            row.textType ||
+              job.orderTextType
           ),
 
         orderedQty:
@@ -1027,7 +1341,8 @@ const prepareProductionDeliveryItems =
 
         cartons:
           cleanNumber(
-            row.cartons
+            row.cartons ??
+              job.orderCartons
           ),
 
         rolls:
@@ -1082,6 +1397,158 @@ const prepareProductionDeliveryItems =
           warehouse.name,
       },
     ];
+  };
+
+const prepareProductionOutputGroup =
+  async ({
+    body = {},
+    rows = [],
+    challan = null,
+    warehouse,
+    excludedChallanId = null,
+    requireCurrentStock = false,
+  }) => {
+    const outputIds =
+      extractProductionOutputIds({
+        body,
+        rows,
+        challan,
+      });
+
+    const outputs =
+      await loadProductionOutputs(
+        outputIds
+      );
+
+    validateProductionOutputGroup(
+      outputs
+    );
+
+    const preparedItems =
+      [];
+
+    for (
+      const output of
+      outputs
+    ) {
+      const outputItems =
+        await prepareProductionDeliveryItems({
+          rows,
+          output,
+          warehouse,
+          excludedChallanId,
+          requireCurrentStock,
+        });
+
+      preparedItems.push(
+        ...outputItems
+      );
+    }
+
+    const firstOutput =
+      outputs[0];
+
+    const {
+      job:
+        firstJob,
+      salesOrder:
+        firstSalesOrder,
+    } =
+      getProductionContext(
+        firstOutput
+      );
+
+    const productionOutputIds =
+      outputs.map(
+        (output) =>
+          output._id
+      );
+
+    const productionJobIds =
+      uniqueIds(
+        outputs.map(
+          (output) =>
+            output.productionJob
+        )
+      );
+
+    const readyNumbers =
+      outputs
+        .map(
+          (output) =>
+            cleanText(
+              output.readyNo
+            ).toUpperCase()
+        )
+        .filter(Boolean);
+
+    const salesOrderId =
+      idOf(
+        firstSalesOrder
+      ) ||
+      idOf(
+        firstOutput.salesOrder
+      ) ||
+      idOf(
+        firstJob.salesOrder
+      );
+
+    const salesOrderNo =
+      cleanText(
+        firstOutput.salesOrderNo ||
+          firstJob.salesOrderNo ||
+          firstSalesOrder.salesOrderNo
+      ).toUpperCase();
+
+    return {
+      outputs,
+      items:
+        preparedItems,
+
+      customerDetails:
+        buildProductionCustomerDetails(
+          body,
+          firstOutput
+        ),
+
+      sourceFields: {
+        sourceType:
+          "Production Output",
+
+        sourceNo:
+          readyNumbers.join(
+            ", "
+          ),
+
+        productionOutput:
+          productionOutputIds[0] ||
+          null,
+
+        productionOutputs:
+          productionOutputIds,
+
+        productionJob:
+          productionJobIds[0] ||
+          null,
+
+        productionJobs:
+          productionJobIds,
+
+        salesOrder:
+          salesOrderId ||
+          null,
+
+        salesOrderNo,
+      },
+
+      poNo:
+        cleanText(
+          body.poNo ||
+            firstOutput.customerPO ||
+            firstJob.customerPO ||
+            firstSalesOrder.poNo
+        ),
+    };
   };
 
 const prepareDeliveryItems =
@@ -1734,7 +2201,7 @@ const getEligibleProductionOutputs =
             path:
               "productionJob",
             select:
-              "jobNo jobName sourceType salesOrder salesOrderNo internalReference customer customerName customerPO targetQty unit status finishedGoodItem finishedGoodCode finishedGoodName finishedSize sheetSize",
+              "jobNo jobName sourceType salesOrder salesOrderNo internalReference customer customerName customerPO targetQty unit status finishedGoodItem finishedGoodCode finishedGoodName finishedSize sheetSize salesOrderItemId salesOrderOrderDate salesOrderDeliveryDate salesOrderReferenceNo orderDescription orderSize orderTextType orderCartons orderedQty orderUnit finishedSize sheetSize salesOrderItemId salesOrderOrderDate salesOrderDeliveryDate salesOrderReferenceNo orderDescription orderSize orderTextType orderCartons orderedQty orderUnit",
             populate: [
               {
                 path:
@@ -1933,9 +2400,29 @@ const getEligibleProductionOutputs =
               salesOrder.attentionTo
           ),
 
+        compatibilityKey:
+          `${
+            idOf(
+              salesOrder
+            ) ||
+            "NO-SALES-ORDER"
+          }|${
+            idOf(
+              customer
+            ) ||
+            customerName.toLowerCase()
+          }`,
+
+        internalReference:
+          cleanText(
+            output.internalReference ||
+              job.internalReference
+          ),
+
         items: [
           {
             salesOrderItemId:
+              job.salesOrderItemId ||
               null,
 
             productionOutput:
@@ -1956,14 +2443,21 @@ const getEligibleProductionOutputs =
 
             description:
               cleanText(
-                output.finishedGoodName,
+                job.orderDescription ||
+                  output.finishedGoodName,
                 finishedGood.name
               ),
 
             size:
               cleanText(
-                job.finishedSize ||
+                job.orderSize ||
+                  job.finishedSize ||
                   job.sheetSize
+              ),
+
+            textType:
+              cleanText(
+                job.orderTextType
               ),
 
             orderedQty:
@@ -1989,7 +2483,10 @@ const getEligibleProductionOutputs =
                   "Pcs"
               ),
 
-            cartons: 0,
+            cartons:
+              cleanNumber(
+                job.orderCartons
+              ),
             rolls: 0,
             grossWeight: 0,
             netWeight: 0,
@@ -2114,10 +2611,6 @@ const syncChallanSource =
     challan
   ) => {
     if (
-      normalizeSourceType(
-        challan.sourceType
-      ) ===
-        "Sales Order" &&
       challan.salesOrder
     ) {
       await syncSalesOrder(
@@ -2184,17 +2677,20 @@ const dispatchChallan =
       sourceType ===
       "Production Output"
     ) {
-      const output =
-        await loadProductionOutput(
-          challan.productionOutput
-        );
+      const prepared =
+        await prepareProductionOutputGroup({
+          body: {
+            productionOutputs:
+              challan.productionOutputs,
 
-      preparedItems =
-        await prepareProductionDeliveryItems({
+            productionOutput:
+              challan.productionOutput,
+          },
+
           rows:
             challan.items,
 
-          output,
+          challan,
 
           warehouse,
 
@@ -2204,6 +2700,18 @@ const dispatchChallan =
           requireCurrentStock:
             true,
         });
+
+      preparedItems =
+        prepared.items;
+
+      Object.assign(
+        challan,
+        prepared.sourceFields,
+        prepared.customerDetails
+      );
+
+      challan.poNo =
+        prepared.poNo;
     } else {
       const salesOrder =
         await loadSalesOrder(
@@ -2304,8 +2812,11 @@ const dispatchChallan =
           sourceType ===
           "Production Output"
             ? `Production Output ${
+                row.productionOutputNo ||
+                idOf(
+                  row.productionOutput
+                ) ||
                 challan.sourceNo ||
-                challan.productionOutput ||
                 ""
               }`
             : `Sales Order ${
@@ -2408,15 +2919,9 @@ const dispatchChallan =
 
       await challan.save();
 
-      if (
-        sourceType ===
-          "Sales Order" &&
-        challan.salesOrder
-      ) {
-        await syncChallanSource(
-          challan
-        );
-      }
+      await syncChallanSource(
+        challan
+      );
     } catch (error) {
       if (createdEntry) {
         await removeFailedDispatchEntries(
@@ -2773,8 +3278,28 @@ router.get(
             });
         }
 
-        query.productionOutput =
-          productionOutput;
+        query.$and = [
+          ...(
+            query.$and ||
+            []
+          ),
+
+          {
+            $or: [
+              {
+                productionOutput,
+              },
+              {
+                productionOutputs:
+                  productionOutput,
+              },
+              {
+                "items.productionOutput":
+                  productionOutput,
+              },
+            ],
+          },
+        ];
       }
 
       if (salesOrder) {
@@ -2988,17 +3513,12 @@ router.post(
         sourceType ===
         "Production Output"
       ) {
-        const output =
-          await loadProductionOutput(
-            body.productionOutput
-          );
+        const prepared =
+          await prepareProductionOutputGroup({
+            body,
 
-        items =
-          await prepareProductionDeliveryItems({
             rows:
               body.items,
-
-            output,
 
             warehouse,
 
@@ -3006,54 +3526,17 @@ router.post(
               false,
           });
 
+        items =
+          prepared.items;
+
         customerDetails =
-          buildProductionCustomerDetails(
-            body,
-            output
-          );
+          prepared.customerDetails;
 
-        const {
-          job,
-          salesOrder,
-        } =
-          getProductionContext(
-            output
-          );
-
-        sourceFields = {
-          sourceType,
-
-          sourceNo:
-            output.readyNo,
-
-          productionOutput:
-            output._id,
-
-          productionJob:
-            job._id ||
-            job,
-
-          salesOrder:
-            salesOrder._id ||
-            output.salesOrder ||
-            job.salesOrder ||
-            null,
-
-          salesOrderNo:
-            cleanText(
-              output.salesOrderNo ||
-                job.salesOrderNo ||
-                salesOrder.salesOrderNo
-            ).toUpperCase(),
-        };
+        sourceFields =
+          prepared.sourceFields;
 
         poNo =
-          cleanText(
-            body.poNo ||
-              output.customerPO ||
-              job.customerPO ||
-              salesOrder.poNo
-          );
+          prepared.poNo;
       } else {
         const salesOrder =
           await loadSalesOrder(
@@ -3099,8 +3582,14 @@ router.post(
           productionOutput:
             null,
 
+          productionOutputs:
+            [],
+
           productionJob:
             null,
+
+          productionJobs:
+            [],
         };
 
         poNo =
@@ -3354,19 +3843,15 @@ router.put(
         sourceType ===
         "Production Output"
       ) {
-        const output =
-          await loadProductionOutput(
-            body.productionOutput ||
-              challan.productionOutput
-          );
+        const prepared =
+          await prepareProductionOutputGroup({
+            body,
 
-        items =
-          await prepareProductionDeliveryItems({
             rows:
               body.items ||
               challan.items,
 
-            output,
+            challan,
 
             warehouse,
 
@@ -3377,54 +3862,17 @@ router.put(
               false,
           });
 
+        items =
+          prepared.items;
+
         customerDetails =
-          buildProductionCustomerDetails(
-            body,
-            output
-          );
+          prepared.customerDetails;
 
-        const {
-          job,
-          salesOrder,
-        } =
-          getProductionContext(
-            output
-          );
-
-        sourceFields = {
-          sourceType,
-
-          sourceNo:
-            output.readyNo,
-
-          productionOutput:
-            output._id,
-
-          productionJob:
-            job._id ||
-            job,
-
-          salesOrder:
-            salesOrder._id ||
-            output.salesOrder ||
-            job.salesOrder ||
-            null,
-
-          salesOrderNo:
-            cleanText(
-              output.salesOrderNo ||
-                job.salesOrderNo ||
-                salesOrder.salesOrderNo
-            ).toUpperCase(),
-        };
+        sourceFields =
+          prepared.sourceFields;
 
         poNo =
-          cleanText(
-            body.poNo ||
-              output.customerPO ||
-              job.customerPO ||
-              salesOrder.poNo
-          );
+          prepared.poNo;
       } else {
         const salesOrder =
           await loadSalesOrder(
@@ -3475,8 +3923,14 @@ router.put(
           productionOutput:
             null,
 
+          productionOutputs:
+            [],
+
           productionJob:
             null,
+
+          productionJobs:
+            [],
         };
 
         poNo =

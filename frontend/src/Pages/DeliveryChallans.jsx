@@ -164,6 +164,199 @@ const normalizeArray = (
   return [];
 };
 
+const primaryOutputItem = (
+  output
+) =>
+  output?.items?.[0] ||
+  {};
+
+const outputCompatibilityKey = (
+  output
+) => {
+  const salesOrderId =
+    idOf(
+      output?.salesOrder
+    );
+
+  const customerId =
+    idOf(
+      output?.customer
+    );
+
+  const customerName =
+    String(
+      output?.customerName ||
+        ""
+    )
+      .trim()
+      .toLowerCase();
+
+  return `${
+    salesOrderId ||
+    "NO-SALES-ORDER"
+  }|${
+    customerId ||
+    customerName ||
+    "NO-CUSTOMER"
+  }`;
+};
+
+const outputToDeliveryItem = (
+  output,
+  existingItem = null
+) => {
+  const source =
+    primaryOutputItem(
+      output
+    );
+
+  return {
+    salesOrderItemId:
+      idOf(
+        source.salesOrderItemId
+      ) ||
+      null,
+
+    productionOutput:
+      idOf(
+        output?._id ||
+          output?.productionOutput
+      ),
+
+    productionOutputNo:
+      output?.readyNo ||
+      output?.sourceNo ||
+      "",
+
+    productionJob:
+      idOf(
+        output?.productionJob
+      ),
+
+    productionJobNo:
+      output?.jobNo ||
+      output?.productionJob?.jobNo ||
+      "",
+
+    item:
+      idOf(
+        source.item
+      ),
+
+    itemCode:
+      source.itemCode ||
+      "",
+
+    itemName:
+      source.itemName ||
+      source.description ||
+      "Finished Good",
+
+    description:
+      source.description ||
+      source.itemName ||
+      "",
+
+    size:
+      source.size ||
+      "",
+
+    textType:
+      source.textType ||
+      "",
+
+    orderedQty:
+      numberValue(
+        source.orderedQty
+      ),
+
+    alreadyDeliveredQty:
+      numberValue(
+        source.alreadyDeliveredQty
+      ),
+
+    pendingQty:
+      numberValue(
+        source.pendingQty
+      ),
+
+    availableStock:
+      numberValue(
+        source.availableStock
+      ),
+
+    quantity:
+      existingItem
+        ? existingItem.quantity
+        : (
+            numberValue(
+              source.quantity
+            ) > 0
+              ? String(
+                  source.quantity
+                )
+              : ""
+          ),
+
+    unit:
+      source.unit ||
+      "Pcs",
+
+    cartons:
+      existingItem
+        ? existingItem.cartons
+        : (
+            source.cartons ||
+            ""
+          ),
+
+    rolls:
+      existingItem
+        ? existingItem.rolls
+        : (
+            source.rolls ||
+            ""
+          ),
+
+    grossWeight:
+      existingItem
+        ? existingItem.grossWeight
+        : (
+            source.grossWeight ||
+            ""
+          ),
+
+    netWeight:
+      existingItem
+        ? existingItem.netWeight
+        : (
+            source.netWeight ||
+            ""
+          ),
+
+    unitPrice:
+      numberValue(
+        source.unitPrice
+      ),
+
+    remarks:
+      existingItem
+        ? existingItem.remarks
+        : (
+            source.remarks ||
+            ""
+          ),
+
+    warehouseId:
+      idOf(
+        source.warehouseId
+      ),
+
+    warehouse:
+      "Finished Goods Godown",
+  };
+};
+
 const apiRequest =
   async (
     url,
@@ -213,7 +406,9 @@ const emptyForm = (
   salesOrder: "",
   salesOrderNo: "",
   productionOutput: "",
+  productionOutputs: [],
   productionJob: "",
+  productionJobs: [],
   jobNo: "",
   poNo: "",
   customerName: "",
@@ -425,21 +620,47 @@ const DeliveryChallans =
         ]
       );
 
-    const selectedOutput =
+    const selectedProductionOutputs =
       useMemo(
         () =>
-          productionOutputs.find(
+          productionOutputs.filter(
             (output) =>
-              String(
-                output._id
-              ) ===
-              String(
-                form.productionOutput
+              (
+                form.productionOutputs ||
+                []
+              ).includes(
+                idOf(
+                  output._id
+                )
               )
           ),
         [
           productionOutputs,
-          form.productionOutput,
+          form.productionOutputs,
+        ]
+      );
+
+    const selectedOutputGroupKey =
+      selectedProductionOutputs.length
+        ? outputCompatibilityKey(
+            selectedProductionOutputs[0]
+          )
+        : "";
+
+    const compatibleProductionOutputs =
+      useMemo(
+        () =>
+          productionOutputs.filter(
+            (output) =>
+              !selectedOutputGroupKey ||
+              outputCompatibilityKey(
+                output
+              ) ===
+                selectedOutputGroupKey
+          ),
+        [
+          productionOutputs,
+          selectedOutputGroupKey,
         ]
       );
 
@@ -597,7 +818,21 @@ const DeliveryChallans =
                   challan.sourceNo,
                   challan.salesOrderNo,
                   challan.productionOutput?.readyNo,
+                  ...(
+                    challan.productionOutputs ||
+                    []
+                  ).map(
+                    (output) =>
+                      output.readyNo
+                  ),
                   challan.productionJob?.jobNo,
+                  ...(
+                    challan.productionJobs ||
+                    []
+                  ).map(
+                    (job) =>
+                      job.jobNo
+                  ),
                   challan.customerName,
                   challan.poNo,
                   challan.vehicleNo,
@@ -723,10 +958,11 @@ const DeliveryChallans =
       index
     ) => {
       setForm(
-        (current) => ({
-          ...current,
+        (current) => {
+          const removed =
+            current.items[index];
 
-          items:
+          const items =
             current.items.filter(
               (
                 _,
@@ -734,8 +970,38 @@ const DeliveryChallans =
               ) =>
                 itemIndex !==
                 index
-            ),
-        })
+            );
+
+          if (
+            current.sourceType !==
+            "Production Output"
+          ) {
+            return {
+              ...current,
+              items,
+            };
+          }
+
+          const selectedIds =
+            (
+              current.productionOutputs ||
+              []
+            ).filter(
+              (id) =>
+                id !==
+                idOf(
+                  removed?.productionOutput
+                )
+            );
+
+          return rebuildProductionOutputForm(
+            {
+              ...current,
+              items,
+            },
+            selectedIds
+          );
+        }
       );
     };
 
@@ -970,14 +1236,152 @@ const DeliveryChallans =
         );
       };
 
-    const handleProductionOutputChange =
+    const rebuildProductionOutputForm =
+      (
+        current,
+        selectedIds
+      ) => {
+        const selectedOutputs =
+          productionOutputs.filter(
+            (output) =>
+              selectedIds.includes(
+                idOf(
+                  output._id
+                )
+              )
+          );
+
+        const existingByOutput =
+          new Map(
+            (
+              current.items ||
+              []
+            ).map(
+              (item) => [
+                idOf(
+                  item.productionOutput
+                ),
+                item,
+              ]
+            )
+          );
+
+        const items =
+          selectedOutputs.map(
+            (output) =>
+              outputToDeliveryItem(
+                output,
+                existingByOutput.get(
+                  idOf(
+                    output._id
+                  )
+                )
+              )
+          );
+
+        const first =
+          selectedOutputs[0];
+
+        const productionJobs = [
+          ...new Set(
+            selectedOutputs
+              .map(
+                (output) =>
+                  idOf(
+                    output.productionJob
+                  )
+              )
+              .filter(Boolean)
+          ),
+        ];
+
+        return {
+          ...current,
+
+          productionOutputs:
+            selectedIds,
+
+          productionOutput:
+            selectedIds[0] ||
+            "",
+
+          productionJobs,
+
+          productionJob:
+            productionJobs[0] ||
+            "",
+
+          jobNo:
+            selectedOutputs
+              .map(
+                (output) =>
+                  output.jobNo ||
+                  output.productionJob?.jobNo
+              )
+              .filter(Boolean)
+              .join(", "),
+
+          sourceNo:
+            selectedOutputs
+              .map(
+                (output) =>
+                  output.sourceNo ||
+                  output.readyNo
+              )
+              .filter(Boolean)
+              .join(", "),
+
+          salesOrder:
+            first
+              ? idOf(
+                  first.salesOrder
+                )
+              : "",
+
+          salesOrderNo:
+            first?.salesOrderNo ||
+            "",
+
+          poNo:
+            first?.poNo ||
+            "",
+
+          customerName:
+            first?.customerName ||
+            "",
+
+          customerPhone:
+            first?.customerPhone ||
+            "",
+
+          customerEmail:
+            first?.customerEmail ||
+            "",
+
+          customerAddress:
+            first?.customerAddress ||
+            "",
+
+          deliveryAddress:
+            first?.customerAddress ||
+            "",
+
+          attentionTo:
+            first?.attentionTo ||
+            "",
+
+          items,
+        };
+      };
+
+    const toggleProductionOutput =
       (
         productionOutputId
       ) => {
         const output =
           productionOutputs.find(
             (row) =>
-              String(
+              idOf(
                 row._id
               ) ===
               String(
@@ -986,228 +1390,140 @@ const DeliveryChallans =
           );
 
         if (!output) {
-          setForm(
-            (current) => ({
-              ...current,
-
-              productionOutput:
-                "",
-
-              productionJob:
-                "",
-
-              jobNo:
-                "",
-
-              sourceNo:
-                "",
-
-              salesOrder:
-                "",
-
-              salesOrderNo:
-                "",
-
-              poNo:
-                "",
-
-              customerName:
-                "",
-
-              customerPhone:
-                "",
-
-              customerEmail:
-                "",
-
-              customerAddress:
-                "",
-
-              deliveryAddress:
-                "",
-
-              attentionTo:
-                "",
-
-              items: [],
-            })
-          );
-
           return;
         }
 
-        const items =
-          (
-            output.items ||
-            []
-          ).map(
-            (item) => ({
-              salesOrderItemId:
-                "",
-
-              productionOutput:
-                output._id,
-
-              productionJob:
-                idOf(
-                  output.productionJob
-                ),
-
-              item:
-                idOf(
-                  item.item
-                ),
-
-              itemCode:
-                item.itemCode ||
-                "",
-
-              itemName:
-                item.itemName ||
-                item.description ||
-                "",
-
-              description:
-                item.description ||
-                item.itemName ||
-                "",
-
-              size:
-                item.size ||
-                "",
-
-              orderedQty:
-                numberValue(
-                  item.orderedQty
-                ),
-
-              alreadyDeliveredQty:
-                numberValue(
-                  item.alreadyDeliveredQty
-                ),
-
-              pendingQty:
-                numberValue(
-                  item.pendingQty
-                ),
-
-              availableStock:
-                numberValue(
-                  item.availableStock
-                ),
-
-              quantity:
-                numberValue(
-                  item.quantity
-                ) > 0
-                  ? String(
-                      item.quantity
-                    )
-                  : "",
-
-              unit:
-                item.unit ||
-                "Pcs",
-
-              cartons:
-                item.cartons ||
-                "",
-
-              rolls:
-                item.rolls ||
-                "",
-
-              grossWeight:
-                item.grossWeight ||
-                "",
-
-              netWeight:
-                item.netWeight ||
-                "",
-
-              unitPrice:
-                numberValue(
-                  item.unitPrice
-                ),
-
-              remarks:
-                item.remarks ||
-                "",
-
-              warehouseId:
-                idOf(
-                  item.warehouseId
-                ),
-
-              warehouse:
-                "Finished Goods Godown",
-            })
-          );
-
         setForm(
-          (current) => ({
-            ...current,
-
-            sourceType:
-              "Production Output",
-
-            sourceNo:
-              output.sourceNo ||
-              output.readyNo ||
-              "",
-
-            productionOutput:
-              output._id,
-
-            productionJob:
-              idOf(
-                output.productionJob
+          (current) => {
+            const selectedIds = [
+              ...(
+                current.productionOutputs ||
+                []
               ),
+            ];
 
-            jobNo:
-              output.jobNo ||
-              output.productionJob?.jobNo ||
-              "",
+            const exists =
+              selectedIds.includes(
+                String(
+                  productionOutputId
+                )
+              );
 
-            salesOrder:
-              idOf(
-                output.salesOrder
-              ),
+            if (exists) {
+              return rebuildProductionOutputForm(
+                current,
+                selectedIds.filter(
+                  (id) =>
+                    id !==
+                    String(
+                      productionOutputId
+                    )
+                )
+              );
+            }
 
-            salesOrderNo:
-              output.salesOrderNo ||
-              "",
+            if (
+              selectedIds.length
+            ) {
+              const first =
+                productionOutputs.find(
+                  (row) =>
+                    idOf(
+                      row._id
+                    ) ===
+                    selectedIds[0]
+                );
 
-            poNo:
-              output.poNo ||
-              "",
+              if (
+                first &&
+                outputCompatibilityKey(
+                  first
+                ) !==
+                  outputCompatibilityKey(
+                    output
+                  )
+              ) {
+                alert(
+                  "Only Production Outputs from the same Sales Order and Customer can be combined."
+                );
 
-            customerName:
-              output.customerName ||
-              "",
+                return current;
+              }
+            }
 
-            customerPhone:
-              output.customerPhone ||
-              "",
+            return rebuildProductionOutputForm(
+              current,
+              [
+                ...selectedIds,
+                String(
+                  productionOutputId
+                ),
+              ]
+            );
+          }
+        );
+      };
 
-            customerEmail:
-              output.customerEmail ||
-              "",
+    const toggleAllCompatibleOutputs =
+      () => {
+        setForm(
+          (current) => {
+            const selectedIds =
+              current.productionOutputs ||
+              [];
 
-            customerAddress:
-              output.customerAddress ||
-              "",
+            let candidates =
+              compatibleProductionOutputs;
 
-            deliveryAddress:
-              output.customerAddress ||
-              "",
+            if (
+              !selectedIds.length
+            ) {
+              const first =
+                productionOutputs[0];
 
-            attentionTo:
-              output.attentionTo ||
-              "",
+              if (!first) {
+                return current;
+              }
 
-            items,
-          })
+              const key =
+                outputCompatibilityKey(
+                  first
+                );
+
+              candidates =
+                productionOutputs.filter(
+                  (output) =>
+                    outputCompatibilityKey(
+                      output
+                    ) ===
+                    key
+                );
+            }
+
+            const candidateIds =
+              candidates.map(
+                (output) =>
+                  idOf(
+                    output._id
+                  )
+              );
+
+            const allSelected =
+              candidateIds.length > 0 &&
+              candidateIds.every(
+                (id) =>
+                  selectedIds.includes(
+                    id
+                  )
+              );
+
+            return rebuildProductionOutputForm(
+              current,
+              allSelected
+                ? []
+                : candidateIds
+            );
+          }
         );
       };
 
@@ -1226,7 +1542,11 @@ const DeliveryChallans =
         sourceType:
           challan.sourceType ||
           (
-            challan.productionOutput
+            challan.productionOutput ||
+            (
+              challan.productionOutputs ||
+              []
+            ).length
               ? "Production Output"
               : "Sales Order"
           ),
@@ -1242,10 +1562,62 @@ const DeliveryChallans =
             challan.productionOutput
           ),
 
+        productionOutputs:
+          [
+            ...new Set(
+              [
+                ...(
+                  challan.productionOutputs ||
+                  []
+                ).map(idOf),
+
+                idOf(
+                  challan.productionOutput
+                ),
+
+                ...(
+                  challan.items ||
+                  []
+                ).map(
+                  (item) =>
+                    idOf(
+                      item.productionOutput
+                    )
+                ),
+              ].filter(Boolean)
+            ),
+          ],
+
         productionJob:
           idOf(
             challan.productionJob
           ),
+
+        productionJobs:
+          [
+            ...new Set(
+              [
+                ...(
+                  challan.productionJobs ||
+                  []
+                ).map(idOf),
+
+                idOf(
+                  challan.productionJob
+                ),
+
+                ...(
+                  challan.items ||
+                  []
+                ).map(
+                  (item) =>
+                    idOf(
+                      item.productionJob
+                    )
+                ),
+              ].filter(Boolean)
+            ),
+          ],
 
         jobNo:
           challan.productionJob?.jobNo ||
@@ -1382,11 +1754,21 @@ const DeliveryChallans =
                   challan.productionOutput
                 ),
 
+              productionOutputNo:
+                item.productionOutputNo ||
+                item.productionOutput?.readyNo ||
+                "",
+
               productionJob:
                 idOf(
                   item.productionJob ||
                   challan.productionJob
                 ),
+
+              productionJobNo:
+                item.productionJobNo ||
+                item.productionJob?.jobNo ||
+                "",
 
               item:
                 idOf(
@@ -1410,6 +1792,10 @@ const DeliveryChallans =
 
               size:
                 item.size ||
+                "",
+
+              textType:
+                item.textType ||
                 "",
 
               orderedQty:
@@ -1506,10 +1892,13 @@ const DeliveryChallans =
         if (
           form.sourceType ===
             "Production Output" &&
-          !form.productionOutput
+          !(
+            form.productionOutputs ||
+            []
+          ).length
         ) {
           alert(
-            "Please select a production output."
+            "Please select at least one production output."
           );
 
           return false;
@@ -1611,9 +2000,17 @@ const DeliveryChallans =
           form.productionOutput ||
           null,
 
+        productionOutputs:
+          form.productionOutputs ||
+          [],
+
         productionJob:
           form.productionJob ||
           null,
+
+        productionJobs:
+          form.productionJobs ||
+          [],
 
         challanDate:
           form.challanDate,
@@ -1698,13 +2095,19 @@ const DeliveryChallans =
 
                 productionOutput:
                   item.productionOutput ||
-                  form.productionOutput ||
                   null,
+
+                productionOutputNo:
+                  item.productionOutputNo ||
+                  "",
 
                 productionJob:
                   item.productionJob ||
-                  form.productionJob ||
                   null,
+
+                productionJobNo:
+                  item.productionJobNo ||
+                  "",
 
                 item:
                   item.item,
@@ -1714,6 +2117,12 @@ const DeliveryChallans =
 
                 size:
                   item.size.trim(),
+
+                textType:
+                  String(
+                    item.textType ||
+                    ""
+                  ).trim(),
 
                 quantity:
                   numberValue(
@@ -3060,71 +3469,256 @@ const DeliveryChallans =
                     </select>
                   </Field>
                 ) : (
-                  <Field
-                    label="Production Output"
-                    required
-                    wide
-                  >
-                    <select
-                      value={
-                        form.productionOutput
-                      }
-                      onChange={(
-                        event
-                      ) =>
-                        handleProductionOutputChange(
-                          event.target.value
-                        )
-                      }
-                      disabled={
-                        Boolean(
-                          editId
-                        )
-                      }
-                      className={
-                        inputClass
-                      }
-                    >
-                      <option value="">
-                        Select Production Output
-                      </option>
+                  <div className="md:col-span-2 xl:col-span-4">
+                    <div className="mb-2 flex flex-col gap-2 rounded-lg border border-blue-200 bg-blue-50 p-3 sm:flex-row sm:items-center sm:justify-between">
+                      <div>
+                        <p className="text-xs font-bold text-blue-800">
+                          Select Production Outputs
+                        </p>
 
-                      {productionOutputs.map(
-                        (output) => (
-                          <option
-                            key={
-                              output._id
+                        <p className="text-[11px] text-blue-700">
+                          Multiple outputs can be selected only when they belong to the same Sales Order and Customer.
+                        </p>
+                      </div>
+
+                      <div className="flex items-center gap-3">
+                        <span className="text-xs font-bold text-blue-800">
+                          Selected:{" "}
+                          {
+                            (
+                              form.productionOutputs ||
+                              []
+                            ).length
+                          }
+                        </span>
+
+                        <label className="flex cursor-pointer items-center gap-2 text-xs font-semibold text-blue-800">
+                          <input
+                            type="checkbox"
+                            checked={
+                              compatibleProductionOutputs.length >
+                                0 &&
+                              compatibleProductionOutputs.every(
+                                (output) =>
+                                  (
+                                    form.productionOutputs ||
+                                    []
+                                  ).includes(
+                                    idOf(
+                                      output._id
+                                    )
+                                  )
+                              )
                             }
-                            value={
-                              output._id
+                            onChange={
+                              toggleAllCompatibleOutputs
                             }
-                          >
-                            {
-                              output.readyNo ||
-                              output.sourceNo
-                            }{" "}
-                            —{" "}
-                            {
-                              output.jobNo
-                            }{" "}
-                            —{" "}
-                            {
-                              output.items?.[0]?.itemName ||
-                              "Finished Good"
-                            }{" "}
-                            | Remaining:{" "}
-                            {formatQuantity(
-                              output.items?.[0]?.pendingQty
-                            )}{" "}
-                            {
-                              output.items?.[0]?.unit ||
-                              ""
-                            }
-                          </option>
-                        )
-                      )}
-                    </select>
-                  </Field>
+                          />
+
+                          Select All Same Order
+                        </label>
+                      </div>
+                    </div>
+
+                    <div className="max-h-80 overflow-auto rounded-xl border">
+                      <table className="w-full min-w-[1250px] text-left text-xs">
+                        <thead className="sticky top-0 bg-slate-800 text-white">
+                          <tr>
+                            <th className="p-3 text-center">
+                              Select
+                            </th>
+
+                            <th className="p-3">
+                              Output
+                            </th>
+
+                            <th className="p-3">
+                              Job
+                            </th>
+
+                            <th className="p-3">
+                              Sales Order
+                            </th>
+
+                            <th className="p-3">
+                              Finished Good
+                            </th>
+
+                            <th className="p-3">
+                              Description
+                            </th>
+
+                            <th className="p-3">
+                              Size
+                            </th>
+
+                            <th className="p-3">
+                              Text Type
+                            </th>
+
+                            <th className="p-3 text-right">
+                              Ready
+                            </th>
+
+                            <th className="p-3 text-right">
+                              Delivered
+                            </th>
+
+                            <th className="p-3 text-right">
+                              Remaining
+                            </th>
+
+                            <th className="p-3">
+                              Unit
+                            </th>
+                          </tr>
+                        </thead>
+
+                        <tbody>
+                          {productionOutputs.length ===
+                          0 ? (
+                            <tr>
+                              <td
+                                colSpan="12"
+                                className="p-8 text-center text-slate-400"
+                              >
+                                No posted Production Output is available for delivery.
+                              </td>
+                            </tr>
+                          ) : (
+                            productionOutputs.map(
+                              (output) => {
+                                const item =
+                                  primaryOutputItem(
+                                    output
+                                  );
+
+                                const outputId =
+                                  idOf(
+                                    output._id
+                                  );
+
+                                const selected =
+                                  (
+                                    form.productionOutputs ||
+                                    []
+                                  ).includes(
+                                    outputId
+                                  );
+
+                                const compatible =
+                                  !selectedOutputGroupKey ||
+                                  outputCompatibilityKey(
+                                    output
+                                  ) ===
+                                    selectedOutputGroupKey;
+
+                                return (
+                                  <tr
+                                    key={
+                                      outputId
+                                    }
+                                    className={`border-t ${
+                                      selected
+                                        ? "bg-blue-50"
+                                        : compatible
+                                          ? "hover:bg-slate-50"
+                                          : "bg-slate-100 opacity-60"
+                                    }`}
+                                  >
+                                    <td className="p-3 text-center">
+                                      <input
+                                        type="checkbox"
+                                        checked={
+                                          selected
+                                        }
+                                        disabled={
+                                          !compatible
+                                        }
+                                        onChange={() =>
+                                          toggleProductionOutput(
+                                            outputId
+                                          )
+                                        }
+                                      />
+                                    </td>
+
+                                    <td className="p-3 font-bold text-blue-700">
+                                      {output.readyNo ||
+                                        output.sourceNo ||
+                                        "-"}
+                                    </td>
+
+                                    <td className="p-3">
+                                      {output.jobNo ||
+                                        output.productionJob?.jobNo ||
+                                        "-"}
+                                    </td>
+
+                                    <td className="p-3">
+                                      {output.salesOrderNo ||
+                                        "Internal"}
+                                    </td>
+
+                                    <td className="p-3">
+                                      <div className="font-semibold">
+                                        {item.itemName ||
+                                          item.description ||
+                                          "Finished Good"}
+                                      </div>
+
+                                      <div className="font-mono text-[10px] text-blue-600">
+                                        {item.itemCode ||
+                                          ""}
+                                      </div>
+                                    </td>
+
+                                    <td className="p-3">
+                                      {item.description ||
+                                        "-"}
+                                    </td>
+
+                                    <td className="p-3">
+                                      {item.size ||
+                                        "-"}
+                                    </td>
+
+                                    <td className="p-3">
+                                      {item.textType ||
+                                        "-"}
+                                    </td>
+
+                                    <td className="p-3 text-right">
+                                      {formatQuantity(
+                                        item.orderedQty
+                                      )}
+                                    </td>
+
+                                    <td className="p-3 text-right">
+                                      {formatQuantity(
+                                        item.alreadyDeliveredQty
+                                      )}
+                                    </td>
+
+                                    <td className="p-3 text-right font-bold text-orange-700">
+                                      {formatQuantity(
+                                        item.pendingQty
+                                      )}
+                                    </td>
+
+                                    <td className="p-3">
+                                      {item.unit ||
+                                        "Pcs"}
+                                    </td>
+                                  </tr>
+                                );
+                              }
+                            )
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
                 )}
 
                 <Field
@@ -3384,7 +3978,7 @@ const DeliveryChallans =
                         >
                           {form.sourceType ===
                           "Production Output"
-                            ? "Select a production output."
+                            ? "Select one or more production outputs."
                             : "Select a sales order."}
                         </td>
                       </tr>
@@ -3413,6 +4007,28 @@ const DeliveryChallans =
                                 {
                                   item.itemCode
                                 }
+                              </div>
+
+                              {form.sourceType ===
+                                "Production Output" && (
+                                <div className="mt-1 text-[10px] text-slate-500">
+                                  {item.productionOutputNo ||
+                                    "-"}
+                                  {" • "}
+                                  {item.productionJobNo ||
+                                    "-"}
+                                </div>
+                              )}
+
+                              <div className="mt-1 text-[10px] text-slate-500">
+                                {item.description ||
+                                  "-"}
+                                {item.size
+                                  ? ` • ${item.size}`
+                                  : ""}
+                                {item.textType
+                                  ? ` • ${item.textType}`
+                                  : ""}
                               </div>
                             </td>
 
@@ -4078,6 +4694,16 @@ const DeliveryChallans =
                               {
                                 challan.sourceNo ||
                                 challan.salesOrderNo ||
+                                (
+                                  challan.productionOutputs ||
+                                  []
+                                )
+                                  .map(
+                                    (output) =>
+                                      output.readyNo
+                                  )
+                                  .filter(Boolean)
+                                  .join(", ") ||
                                 challan.productionOutput?.readyNo ||
                                 "-"
                               }

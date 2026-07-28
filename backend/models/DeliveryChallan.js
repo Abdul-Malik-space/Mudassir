@@ -46,6 +46,20 @@ const deliveryChallanItemSchema = new mongoose.Schema(
       index: true,
     },
 
+    productionOutputNo: {
+      type: String,
+      trim: true,
+      uppercase: true,
+      default: "",
+    },
+
+    productionJobNo: {
+      type: String,
+      trim: true,
+      uppercase: true,
+      default: "",
+    },
+
     warehouseId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Warehouse",
@@ -78,6 +92,12 @@ const deliveryChallanItemSchema = new mongoose.Schema(
     },
 
     size: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+
+    textType: {
       type: String,
       trim: true,
       default: "",
@@ -225,10 +245,32 @@ const deliveryChallanSchema = new mongoose.Schema(
       index: true,
     },
 
+    productionOutputs: {
+      type: [
+        {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "ReadyProduct",
+        },
+      ],
+      default: [],
+      index: true,
+    },
+
     productionJob: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "ProductionItem",
       default: null,
+      index: true,
+    },
+
+    productionJobs: {
+      type: [
+        {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "ProductionItem",
+        },
+      ],
+      default: [],
       index: true,
     },
 
@@ -580,7 +622,18 @@ deliveryChallanSchema.index({
 });
 
 deliveryChallanSchema.index({
+  sourceType: 1,
+  productionOutputs: 1,
+  status: 1,
+});
+
+deliveryChallanSchema.index({
   productionJob: 1,
+  challanDate: -1,
+});
+
+deliveryChallanSchema.index({
+  productionJobs: 1,
   challanDate: -1,
 });
 
@@ -615,6 +668,77 @@ deliveryChallanSchema.pre("validate", function () {
     this.salesOrderNo
   ).toUpperCase();
 
+  const uniqueObjectIds = (values = []) => {
+    const map = new Map();
+
+    for (const value of values) {
+      if (!value) {
+        continue;
+      }
+
+      const key = String(
+        value._id ||
+          value
+      );
+
+      if (key) {
+        map.set(key, value._id || value);
+      }
+    }
+
+    return [
+      ...map.values(),
+    ];
+  };
+
+  this.productionOutputs =
+    uniqueObjectIds([
+      ...(Array.isArray(
+        this.productionOutputs
+      )
+        ? this.productionOutputs
+        : []),
+
+      this.productionOutput,
+
+      ...(Array.isArray(
+        this.items
+      )
+        ? this.items.map(
+            (item) =>
+              item.productionOutput
+          )
+        : []),
+    ]);
+
+  this.productionJobs =
+    uniqueObjectIds([
+      ...(Array.isArray(
+        this.productionJobs
+      )
+        ? this.productionJobs
+        : []),
+
+      this.productionJob,
+
+      ...(Array.isArray(
+        this.items
+      )
+        ? this.items.map(
+            (item) =>
+              item.productionJob
+          )
+        : []),
+    ]);
+
+  this.productionOutput =
+    this.productionOutputs[0] ||
+    null;
+
+  this.productionJob =
+    this.productionJobs[0] ||
+    null;
+
   if (
     this.sourceType === "Sales Order"
   ) {
@@ -632,21 +756,37 @@ deliveryChallanSchema.pre("validate", function () {
       );
     }
 
+    this.productionOutput =
+      null;
+
+    this.productionOutputs =
+      [];
+
+    this.productionJob =
+      null;
+
+    this.productionJobs =
+      [];
+
     this.sourceNo =
       this.sourceNo ||
       this.salesOrderNo;
   } else {
-    if (!this.productionOutput) {
+    if (
+      !this.productionOutputs.length
+    ) {
       this.invalidate(
-        "productionOutput",
-        "Production output is required for a Production Output delivery challan"
+        "productionOutputs",
+        "At least one Production Output is required"
       );
     }
 
-    if (!this.productionJob) {
+    if (
+      !this.productionJobs.length
+    ) {
       this.invalidate(
-        "productionJob",
-        "Production job is required for a Production Output delivery challan"
+        "productionJobs",
+        "At least one Production Job is required"
       );
     }
 
@@ -801,6 +941,20 @@ deliveryChallanSchema.pre("validate", function () {
         item.size
       );
 
+      item.textType = cleanText(
+        item.textType
+      );
+
+      item.productionOutputNo =
+        cleanText(
+          item.productionOutputNo
+        ).toUpperCase();
+
+      item.productionJobNo =
+        cleanText(
+          item.productionJobNo
+        ).toUpperCase();
+
       item.orderedQty = cleanNumber(
         item.orderedQty
       );
@@ -871,16 +1025,33 @@ deliveryChallanSchema.pre("validate", function () {
       ) {
         item.productionOutput =
           item.productionOutput ||
-          this.productionOutput;
+          (
+            this.productionOutputs.length ===
+            1
+              ? this.productionOutputs[0]
+              : null
+          );
 
         item.productionJob =
           item.productionJob ||
-          this.productionJob;
+          (
+            this.productionJobs.length ===
+            1
+              ? this.productionJobs[0]
+              : null
+          );
 
         if (!item.productionOutput) {
           this.invalidate(
             "items",
             `Production output reference is required for ${item.description}`
+          );
+        }
+
+        if (!item.productionJob) {
+          this.invalidate(
+            "items",
+            `Production job reference is required for ${item.description}`
           );
         }
       }
@@ -899,6 +1070,35 @@ deliveryChallanSchema.pre("validate", function () {
       return item;
     }
   );
+
+  if (
+    this.sourceType ===
+    "Production Output"
+  ) {
+    this.productionOutputs =
+      uniqueObjectIds(
+        this.items.map(
+          (item) =>
+            item.productionOutput
+        )
+      );
+
+    this.productionJobs =
+      uniqueObjectIds(
+        this.items.map(
+          (item) =>
+            item.productionJob
+        )
+      );
+
+    this.productionOutput =
+      this.productionOutputs[0] ||
+      null;
+
+    this.productionJob =
+      this.productionJobs[0] ||
+      null;
+  }
 
   this.totalCartons =
     this.items.reduce(

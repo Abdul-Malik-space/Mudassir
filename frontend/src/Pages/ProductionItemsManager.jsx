@@ -31,9 +31,6 @@ const API_ITEMS =
 const API_SALES_ORDERS =
   `${API_BASE_URL}/sales-orders`;
 
-const API_CUSTOMERS =
-  `${API_BASE_URL}/customers`;
-
 const API_STOCK =
   `${API_BASE_URL}/stock-ledger`;
 
@@ -200,6 +197,18 @@ const emptyJob = () => ({
 
   salesOrderNo: "",
 
+  salesOrderItemId: "",
+
+  selectedSalesOrderItemIds: [],
+
+  productionSelections: [],
+
+  salesOrderOrderDate: "",
+
+  salesOrderDeliveryDate: "",
+
+  salesOrderReferenceNo: "",
+
   internalReference: "",
 
   customer: "",
@@ -207,9 +216,43 @@ const emptyJob = () => ({
   customerName:
     "Internal Production",
 
+  customerPhone: "",
+
+  customerEmail: "",
+
+  customerAddress: "",
+
+  customerCity: "",
+
+  customerNTN: "",
+
   customerPO: "",
 
   finishedGoodItem: "",
+
+  finishedGoodCode: "",
+
+  finishedGoodName: "",
+
+  orderDescription: "",
+
+  orderSize: "",
+
+  orderTextType: "",
+
+  orderCartons: 0,
+
+  orderedQty: 0,
+
+  plannedProductionQty: 0,
+
+  remainingProductionQty: 0,
+
+  preparedQty: 0,
+
+  orderUnit: "Pcs",
+
+  existingTargetQty: 0,
 
   targetQty: "",
 
@@ -309,9 +352,14 @@ const ProductionItemsManager =
     ] = useState([]);
 
     const [
-      customers,
-      setCustomers,
-    ] = useState([]);
+      selectedSalesOrder,
+      setSelectedSalesOrder,
+    ] = useState(null);
+
+    const [
+      salesOrderLoading,
+      setSalesOrderLoading,
+    ] = useState(false);
 
     const [
       stockBalances,
@@ -454,7 +502,6 @@ const ProductionItemsManager =
             jobData,
             itemData,
             orderData,
-            customerData,
             stockData,
           ] = await Promise.all([
             apiRequest(
@@ -466,16 +513,11 @@ const ProductionItemsManager =
             ),
 
             optionalArrayRequest(
-              `${API_SALES_ORDERS}/all`,
+              `${API_SALES_ORDERS}/production-options`,
               [
                 "salesOrders",
                 "orders",
               ]
-            ),
-
-            optionalArrayRequest(
-              `${API_CUSTOMERS}/all`,
-              ["customers"]
             ),
 
             optionalArrayRequest(
@@ -506,10 +548,6 @@ const ProductionItemsManager =
 
           setSalesOrders(
             orderData
-          );
-
-          setCustomers(
-            customerData
           );
 
           setStockBalances(
@@ -608,6 +646,42 @@ const ProductionItemsManager =
         job.salesOrderNo ||
         "",
 
+      salesOrderItemId:
+        idOf(
+          job.salesOrderItemId
+        ),
+
+      selectedSalesOrderItemIds:
+        idOf(
+          job.salesOrderItemId
+        )
+          ? [
+              idOf(
+                job.salesOrderItemId
+              ),
+            ]
+          : [],
+
+      productionSelections: [],
+
+      salesOrderOrderDate:
+        dateOnly(
+          job.salesOrderOrderDate ||
+            job.salesOrder
+              ?.orderDate
+        ),
+
+      salesOrderDeliveryDate:
+        dateOnly(
+          job.salesOrderDeliveryDate ||
+            job.salesOrder
+              ?.deliveryDate
+        ),
+
+      salesOrderReferenceNo:
+        job.salesOrderReferenceNo ||
+        "",
+
       internalReference:
         job.internalReference ||
         "",
@@ -620,6 +694,26 @@ const ProductionItemsManager =
         job.customerName ||
         "",
 
+      customerPhone:
+        job.customerPhone ||
+        "",
+
+      customerEmail:
+        job.customerEmail ||
+        "",
+
+      customerAddress:
+        job.customerAddress ||
+        "",
+
+      customerCity:
+        job.customerCity ||
+        "",
+
+      customerNTN:
+        job.customerNTN ||
+        "",
+
       customerPO:
         job.customerPO ||
         "",
@@ -627,6 +721,63 @@ const ProductionItemsManager =
       finishedGoodItem:
         idOf(
           job.finishedGoodItem
+        ),
+
+      finishedGoodCode:
+        job.finishedGoodCode ||
+        job.finishedGoodItem
+          ?.code ||
+        "",
+
+      finishedGoodName:
+        job.finishedGoodName ||
+        job.finishedGoodItem
+          ?.name ||
+        "",
+
+      orderDescription:
+        job.orderDescription ||
+        "",
+
+      orderSize:
+        job.orderSize ||
+        "",
+
+      orderTextType:
+        job.orderTextType ||
+        "",
+
+      orderCartons:
+        num(
+          job.orderCartons
+        ),
+
+      orderedQty:
+        num(
+          job.orderedQty
+        ),
+
+      plannedProductionQty:
+        0,
+
+      remainingProductionQty:
+        num(
+          job.targetQty
+        ),
+
+      preparedQty:
+        num(
+          job.productionOutputQty
+        ),
+
+      orderUnit:
+        job.orderUnit ||
+        job.unit ||
+        "Pcs",
+
+      existingTargetQty:
+        num(
+          job.targetQty
         ),
 
       targetQty:
@@ -734,16 +885,270 @@ const ProductionItemsManager =
         })),
     });
 
+    const loadSalesOrderSource =
+      async (
+        orderId
+      ) => {
+        const response =
+          await apiRequest(
+            `${API_SALES_ORDERS}/production-source/${orderId}`
+          );
+
+        return (
+          response.data ||
+          response
+        );
+      };
+
     const openForm =
       async (job = null) => {
         if (job) {
           setEditId(job._id);
 
+          let nextForm =
+            jobToForm(job);
+
+          if (
+            job.sourceType ===
+              "Sales Order" &&
+            idOf(
+              job.salesOrder
+            )
+          ) {
+            try {
+              setSalesOrderLoading(
+                true
+              );
+
+              const order =
+                await loadSalesOrderSource(
+                  idOf(
+                    job.salesOrder
+                  )
+                );
+
+              setSelectedSalesOrder(
+                order
+              );
+
+              setSalesOrders(
+                (current) => {
+                  const exists =
+                    current.some(
+                      (row) =>
+                        String(
+                          row._id
+                        ) ===
+                        String(
+                          order._id
+                        )
+                    );
+
+                  return exists
+                    ? current.map(
+                        (row) =>
+                          String(
+                            row._id
+                          ) ===
+                          String(
+                            order._id
+                          )
+                            ? order
+                            : row
+                      )
+                    : [
+                        order,
+                        ...current,
+                      ];
+                }
+              );
+
+              const line =
+                (
+                  order.items || []
+                ).find(
+                  (row) =>
+                    String(
+                      row.salesOrderItemId
+                    ) ===
+                    String(
+                      idOf(
+                        job.salesOrderItemId
+                      )
+                    )
+                );
+
+              const editableQty =
+                num(
+                  line
+                    ?.remainingProductionQty
+                ) +
+                num(
+                  job.targetQty
+                );
+
+              nextForm = {
+                ...nextForm,
+
+                salesOrder:
+                  order._id,
+
+                salesOrderNo:
+                  order.salesOrderNo ||
+                  nextForm.salesOrderNo,
+
+                salesOrderOrderDate:
+                  dateOnly(
+                    order.orderDate
+                  ),
+
+                salesOrderDeliveryDate:
+                  dateOnly(
+                    order.deliveryDate
+                  ),
+
+                salesOrderReferenceNo:
+                  order.referenceNo ||
+                  "",
+
+                customer:
+                  idOf(
+                    order.customer
+                  ),
+
+                customerName:
+                  order.customerName ||
+                  nextForm.customerName,
+
+                customerPhone:
+                  order.customerPhone ||
+                  "",
+
+                customerEmail:
+                  order.customerEmail ||
+                  "",
+
+                customerAddress:
+                  order.customerAddress ||
+                  "",
+
+                customerCity:
+                  order.customerCity ||
+                  "",
+
+                customerNTN:
+                  order.customerNTN ||
+                  "",
+
+                customerPO:
+                  order.poNo ||
+                  nextForm.customerPO,
+
+                plannedProductionQty:
+                  num(
+                    line
+                      ?.plannedProductionQty
+                  ),
+
+                remainingProductionQty:
+                  editableQty,
+
+                preparedQty:
+                  num(
+                    line
+                      ?.preparedQty
+                  ),
+
+                orderedQty:
+                  num(
+                    line?.orderedQty ??
+                      job.orderedQty
+                  ),
+
+                orderCartons:
+                  num(
+                    line?.cartons ??
+                      job.orderCartons
+                  ),
+
+                orderDescription:
+                  line?.description ||
+                  job.orderDescription ||
+                  "",
+
+                orderSize:
+                  line?.size ||
+                  job.orderSize ||
+                  "",
+
+                orderTextType:
+                  line?.textType ||
+                  job.orderTextType ||
+                  "",
+
+                orderUnit:
+                  line?.unit ||
+                  job.orderUnit ||
+                  job.unit ||
+                  "Pcs",
+
+                selectedSalesOrderItemIds:
+                  line
+                    ? [
+                        String(
+                          line
+                            .salesOrderItemId
+                        ),
+                      ]
+                    : [],
+
+                productionSelections:
+                  line
+                    ? [
+                        buildProductionSelection(
+                          {
+                            ...line,
+
+                            remainingProductionQty:
+                              editableQty,
+                          },
+
+                          job.targetQty,
+
+                          job.jobName
+                        ),
+                      ]
+                    : [],
+              };
+            } catch (error) {
+              alert(
+                error.message ||
+                  "Unable to load Sales Order details"
+              );
+
+              setSelectedSalesOrder(
+                null
+              );
+            } finally {
+              setSalesOrderLoading(
+                false
+              );
+            }
+          } else {
+            setSelectedSalesOrder(
+              null
+            );
+          }
+
           setForm(
-            jobToForm(job)
+            nextForm
           );
         } else {
           setEditId(null);
+
+          setSelectedSalesOrder(
+            null
+          );
 
           setForm({
             ...emptyJob(),
@@ -759,6 +1164,7 @@ const ProductionItemsManager =
     const closeForm = () => {
       setFormOpen(false);
       setEditId(null);
+      setSelectedSalesOrder(null);
       setForm(emptyJob());
     };
 
@@ -774,6 +1180,10 @@ const ProductionItemsManager =
     const changeSource = (
       sourceType
     ) => {
+      setSelectedSalesOrder(
+        null
+      );
+
       setForm((current) => ({
         ...current,
 
@@ -783,97 +1193,963 @@ const ProductionItemsManager =
 
         salesOrderNo: "",
 
-        internalReference:
-          "",
+        salesOrderItemId: "",
 
-        customer:
-          sourceType ===
-          "Internal Requirement"
-            ? ""
-            : current.customer,
+        selectedSalesOrderItemIds: [],
+
+        productionSelections: [],
+
+        salesOrderOrderDate: "",
+
+        salesOrderDeliveryDate: "",
+
+        salesOrderReferenceNo: "",
+
+        internalReference: "",
+
+        customer: "",
 
         customerName:
           sourceType ===
           "Internal Requirement"
             ? "Internal Production"
-            : current.customerName ===
-              "Internal Production"
-            ? ""
-            : current.customerName,
+            : "",
+
+        customerPhone: "",
+
+        customerEmail: "",
+
+        customerAddress: "",
+
+        customerCity: "",
+
+        customerNTN: "",
+
+        customerPO: "",
+
+        finishedGoodItem: "",
+
+        finishedGoodCode: "",
+
+        finishedGoodName: "",
+
+        orderDescription: "",
+
+        orderSize: "",
+
+        orderTextType: "",
+
+        orderCartons: 0,
+
+        orderedQty: 0,
+
+        plannedProductionQty: 0,
+
+        remainingProductionQty: 0,
+
+        preparedQty: 0,
+
+        orderUnit: "Pcs",
+
+        existingTargetQty: 0,
+
+        targetQty: "",
+
+        unit: "Pcs",
+
+        dueDate: "",
+
+        finishedSize: "",
       }));
     };
 
-    const selectSalesOrder = (
-      orderId
+    const selectSalesOrder =
+      async (
+        orderId
+      ) => {
+        if (!orderId) {
+          setSelectedSalesOrder(
+            null
+          );
+
+          setForm(
+            (current) => ({
+              ...current,
+
+              salesOrder: "",
+
+              salesOrderNo: "",
+
+              salesOrderItemId: "",
+
+              selectedSalesOrderItemIds: [],
+
+              productionSelections: [],
+
+              salesOrderOrderDate: "",
+
+              salesOrderDeliveryDate: "",
+
+              salesOrderReferenceNo: "",
+
+              customer: "",
+
+              customerName: "",
+
+              customerPhone: "",
+
+              customerEmail: "",
+
+              customerAddress: "",
+
+              customerCity: "",
+
+              customerNTN: "",
+
+              customerPO: "",
+
+              finishedGoodItem: "",
+
+              finishedGoodCode: "",
+
+              finishedGoodName: "",
+
+              orderDescription: "",
+
+              orderSize: "",
+
+              orderTextType: "",
+
+              orderCartons: 0,
+
+              orderedQty: 0,
+
+              plannedProductionQty: 0,
+
+              remainingProductionQty: 0,
+
+              preparedQty: 0,
+
+              orderUnit: "Pcs",
+
+              existingTargetQty: 0,
+
+              targetQty: "",
+
+              unit: "Pcs",
+
+              dueDate: "",
+
+              finishedSize: "",
+            })
+          );
+
+          return;
+        }
+
+        try {
+          setSalesOrderLoading(
+            true
+          );
+
+          const order =
+            await loadSalesOrderSource(
+              orderId
+            );
+
+          setSelectedSalesOrder(
+            order
+          );
+
+          setSalesOrders(
+            (current) => {
+              const exists =
+                current.some(
+                  (row) =>
+                    String(
+                      row._id
+                    ) ===
+                    String(
+                      order._id
+                    )
+                );
+
+              return exists
+                ? current.map(
+                    (row) =>
+                      String(
+                        row._id
+                      ) ===
+                      String(
+                        order._id
+                      )
+                        ? order
+                        : row
+                  )
+                : [
+                    order,
+                    ...current,
+                  ];
+            }
+          );
+
+          setForm(
+            (current) => ({
+              ...current,
+
+              salesOrder:
+                order._id,
+
+              salesOrderNo:
+                order.salesOrderNo ||
+                "",
+
+              salesOrderItemId: "",
+
+              selectedSalesOrderItemIds: [],
+
+              productionSelections: [],
+
+              salesOrderOrderDate:
+                dateOnly(
+                  order.orderDate
+                ),
+
+              salesOrderDeliveryDate:
+                dateOnly(
+                  order.deliveryDate
+                ),
+
+              salesOrderReferenceNo:
+                order.referenceNo ||
+                "",
+
+              customer:
+                idOf(
+                  order.customer
+                ),
+
+              customerName:
+                order.customerName ||
+                "",
+
+              customerPhone:
+                order.customerPhone ||
+                "",
+
+              customerEmail:
+                order.customerEmail ||
+                "",
+
+              customerAddress:
+                order.customerAddress ||
+                "",
+
+              customerCity:
+                order.customerCity ||
+                "",
+
+              customerNTN:
+                order.customerNTN ||
+                "",
+
+              customerPO:
+                order.poNo ||
+                "",
+
+              finishedGoodItem: "",
+
+              finishedGoodCode: "",
+
+              finishedGoodName: "",
+
+              jobName: "",
+
+              orderDescription: "",
+
+              orderSize: "",
+
+              orderTextType: "",
+
+              orderCartons: 0,
+
+              orderedQty: 0,
+
+              plannedProductionQty: 0,
+
+              remainingProductionQty: 0,
+
+              preparedQty: 0,
+
+              orderUnit: "Pcs",
+
+              existingTargetQty: 0,
+
+              targetQty: "",
+
+              unit: "Pcs",
+
+              dueDate:
+                dateOnly(
+                  order.deliveryDate
+                ),
+
+              finishedSize: "",
+            })
+          );
+        } catch (error) {
+          setSelectedSalesOrder(
+            null
+          );
+
+          alert(
+            error.message ||
+              "Unable to load Sales Order details"
+          );
+        } finally {
+          setSalesOrderLoading(
+            false
+          );
+        }
+      };
+
+    const buildProductionSelection = (
+      line,
+      targetQtyOverride = null,
+      jobNameOverride = ""
     ) => {
-      const order =
-        salesOrders.find(
-          (row) =>
-            String(row._id) ===
-            String(orderId)
+      const availableQty =
+        num(
+          line
+            ?.remainingProductionQty
         );
 
-      const customerObject =
-        typeof order?.customer ===
-        "object"
-          ? order.customer
-          : null;
+      const targetQty =
+        targetQtyOverride ===
+          null ||
+        targetQtyOverride ===
+          undefined ||
+        targetQtyOverride ===
+          ""
+          ? availableQty
+          : num(
+              targetQtyOverride
+            );
 
-      setForm((current) => ({
-        ...current,
+      return {
+        salesOrderItemId:
+          String(
+            line
+              ?.salesOrderItemId ||
+              ""
+          ),
 
-        salesOrder: orderId,
+        finishedGoodItem:
+          idOf(
+            line?.item
+          ),
 
-        salesOrderNo:
-          order?.salesOrderNo ||
-          order?.orderNo ||
-          order?.code ||
+        finishedGoodCode:
+          line?.itemCode ||
           "",
 
-        customer: idOf(
-          order?.customer
-        ),
+        finishedGoodName:
+          line?.itemName ||
+          "",
 
-        customerName:
-          order?.customerName ||
-          customerObject
-            ?.customerName ||
-          customerObject?.name ||
-          current.customerName,
+        jobName:
+          jobNameOverride ||
+          line?.description ||
+          line?.itemName ||
+          "Production Job",
 
-        customerPO:
-          order?.customerPO ||
-          order?.poNo ||
-          current.customerPO,
-      }));
+        orderDescription:
+          line?.description ||
+          line?.itemName ||
+          "",
+
+        orderSize:
+          line?.size ||
+          "",
+
+        orderTextType:
+          line?.textType ||
+          "",
+
+        orderCartons:
+          num(
+            line?.cartons
+          ),
+
+        orderedQty:
+          num(
+            line?.orderedQty
+          ),
+
+        plannedProductionQty:
+          num(
+            line
+              ?.plannedProductionQty
+          ),
+
+        remainingProductionQty:
+          availableQty,
+
+        preparedQty:
+          num(
+            line?.preparedQty
+          ),
+
+        targetQty:
+          targetQty > 0
+            ? String(
+                targetQty
+              )
+            : "",
+
+        unit:
+          line?.unit ||
+          "Pcs",
+
+        remarks:
+          line?.remarks ||
+          "",
+      };
     };
 
-    const selectCustomer = (
-      customerId
+    const applyProductionSelections = (
+      current,
+      selections
     ) => {
-      const customer =
-        customers.find(
-          (row) =>
-            String(row._id) ===
-            String(customerId)
+      const cleanSelections =
+        selections.filter(
+          (selection) =>
+            selection
+              ?.salesOrderItemId
         );
 
-      setForm((current) => ({
+      const selectedIds =
+        cleanSelections.map(
+          (selection) =>
+            String(
+              selection
+                .salesOrderItemId
+            )
+        );
+
+      const primary =
+        cleanSelections[0];
+
+      if (!primary) {
+        return {
+          ...current,
+
+          salesOrderItemId: "",
+
+          selectedSalesOrderItemIds:
+            [],
+
+          productionSelections:
+            [],
+
+          finishedGoodItem: "",
+
+          finishedGoodCode: "",
+
+          finishedGoodName: "",
+
+          jobName: "",
+
+          orderDescription: "",
+
+          orderSize: "",
+
+          orderTextType: "",
+
+          orderCartons: 0,
+
+          orderedQty: 0,
+
+          plannedProductionQty:
+            0,
+
+          remainingProductionQty:
+            0,
+
+          preparedQty: 0,
+
+          orderUnit: "Pcs",
+
+          existingTargetQty: 0,
+
+          targetQty: "",
+
+          unit: "Pcs",
+
+          finishedSize: "",
+        };
+      }
+
+      const allUnits =
+        [
+          ...new Set(
+            cleanSelections.map(
+              (selection) =>
+                selection.unit ||
+                "Pcs"
+            )
+          ),
+        ];
+
+      const totalTargetQty =
+        cleanSelections.reduce(
+          (
+            total,
+            selection
+          ) =>
+            total +
+            num(
+              selection.targetQty
+            ),
+          0
+        );
+
+      return {
         ...current,
 
-        customer:
-          customerId,
+        salesOrderItemId:
+          primary.salesOrderItemId,
 
-        customerName:
-          customer
-            ?.customerName ||
-          customer?.name ||
-          current.customerName,
-      }));
+        selectedSalesOrderItemIds:
+          selectedIds,
+
+        productionSelections:
+          cleanSelections,
+
+        finishedGoodItem:
+          primary.finishedGoodItem,
+
+        finishedGoodCode:
+          primary.finishedGoodCode,
+
+        finishedGoodName:
+          primary.finishedGoodName,
+
+        jobName:
+          cleanSelections.length ===
+          1
+            ? primary.jobName
+            : `${cleanSelections.length} Production Jobs`,
+
+        orderDescription:
+          cleanSelections.length ===
+          1
+            ? primary.orderDescription
+            : "Multiple Sales Order Items",
+
+        orderSize:
+          cleanSelections.length ===
+          1
+            ? primary.orderSize
+            : "Multiple",
+
+        orderTextType:
+          cleanSelections.length ===
+          1
+            ? primary.orderTextType
+            : "multiple",
+
+        orderCartons:
+          cleanSelections.reduce(
+            (
+              total,
+              selection
+            ) =>
+              total +
+              num(
+                selection
+                  .orderCartons
+              ),
+            0
+          ),
+
+        orderedQty:
+          cleanSelections.reduce(
+            (
+              total,
+              selection
+            ) =>
+              total +
+              num(
+                selection.orderedQty
+              ),
+            0
+          ),
+
+        plannedProductionQty:
+          cleanSelections.reduce(
+            (
+              total,
+              selection
+            ) =>
+              total +
+              num(
+                selection
+                  .plannedProductionQty
+              ),
+            0
+          ),
+
+        remainingProductionQty:
+          cleanSelections.reduce(
+            (
+              total,
+              selection
+            ) =>
+              total +
+              num(
+                selection
+                  .remainingProductionQty
+              ),
+            0
+          ),
+
+        preparedQty:
+          cleanSelections.reduce(
+            (
+              total,
+              selection
+            ) =>
+              total +
+              num(
+                selection.preparedQty
+              ),
+            0
+          ),
+
+        orderUnit:
+          allUnits.length === 1
+            ? allUnits[0]
+            : "Mixed",
+
+        existingTargetQty:
+          cleanSelections.length ===
+          1
+            ? num(
+                current
+                  .existingTargetQty
+              )
+            : 0,
+
+        targetQty:
+          cleanSelections.length ===
+          1
+            ? primary.targetQty
+            : String(
+                totalTargetQty
+              ),
+
+        unit:
+          allUnits.length === 1
+            ? allUnits[0]
+            : "Mixed",
+
+        finishedSize:
+          cleanSelections.length ===
+          1
+            ? primary.orderSize ||
+              current.finishedSize
+            : "",
+      };
     };
+
+    const selectSalesOrderItem = (
+      lineId
+    ) => {
+      const line =
+        (
+          selectedSalesOrder
+            ?.items || []
+        ).find(
+          (row) =>
+            String(
+              row.salesOrderItemId
+            ) ===
+            String(
+              lineId
+            )
+        );
+
+      if (!line) {
+        return;
+      }
+
+      setForm(
+        (current) => {
+          const lineKey =
+            String(
+              line.salesOrderItemId
+            );
+
+          const alreadySelected =
+            (
+              current
+                .selectedSalesOrderItemIds ||
+              []
+            ).some(
+              (value) =>
+                String(value) ===
+                lineKey
+            );
+
+          if (editId) {
+            const editableQty =
+              productionAvailableQty(
+                line
+              );
+
+            const selection =
+              buildProductionSelection(
+                {
+                  ...line,
+
+                  remainingProductionQty:
+                    editableQty,
+                },
+
+                String(
+                  lineKey
+                ) ===
+                  String(
+                    current
+                      .salesOrderItemId
+                  )
+                  ? current.targetQty
+                  : editableQty,
+
+                String(
+                  lineKey
+                ) ===
+                  String(
+                    current
+                      .salesOrderItemId
+                  )
+                  ? current.jobName
+                  : ""
+              );
+
+            return applyProductionSelections(
+              current,
+              [
+                selection,
+              ]
+            );
+          }
+
+          if (
+            alreadySelected
+          ) {
+            return applyProductionSelections(
+              current,
+
+              (
+                current
+                  .productionSelections ||
+                []
+              ).filter(
+                (selection) =>
+                  String(
+                    selection
+                      .salesOrderItemId
+                  ) !==
+                  lineKey
+              )
+            );
+          }
+
+          const availableQty =
+            productionAvailableQty(
+              line
+            );
+
+          if (
+            availableQty <= 0
+          ) {
+            return current;
+          }
+
+          const selection =
+            buildProductionSelection({
+              ...line,
+
+              remainingProductionQty:
+                availableQty,
+            });
+
+          return applyProductionSelections(
+            current,
+
+            [
+              ...(
+                current
+                  .productionSelections ||
+                []
+              ),
+
+              selection,
+            ]
+          );
+        }
+      );
+    };
+
+    const toggleAllSalesOrderItems =
+      () => {
+        if (
+          editId ||
+          !selectedSalesOrder
+        ) {
+          return;
+        }
+
+        setForm(
+          (current) => {
+            const eligibleRows =
+              (
+                selectedSalesOrder
+                  .items || []
+              ).filter(
+                (row) =>
+                  productionAvailableQty(
+                    row
+                  ) > 0
+              );
+
+            const allSelected =
+              eligibleRows.length >
+                0 &&
+              eligibleRows.every(
+                (row) =>
+                  (
+                    current
+                      .selectedSalesOrderItemIds ||
+                    []
+                  ).some(
+                    (value) =>
+                      String(
+                        value
+                      ) ===
+                      String(
+                        row
+                          .salesOrderItemId
+                      )
+                  )
+              );
+
+            if (allSelected) {
+              return applyProductionSelections(
+                current,
+                []
+              );
+            }
+
+            const existingMap =
+              new Map(
+                (
+                  current
+                    .productionSelections ||
+                  []
+                ).map(
+                  (selection) => [
+                    String(
+                      selection
+                        .salesOrderItemId
+                    ),
+
+                    selection,
+                  ]
+                )
+              );
+
+            const selections =
+              eligibleRows.map(
+                (row) => {
+                  const key =
+                    String(
+                      row
+                        .salesOrderItemId
+                    );
+
+                  return (
+                    existingMap.get(
+                      key
+                    ) ||
+                    buildProductionSelection({
+                      ...row,
+
+                      remainingProductionQty:
+                        productionAvailableQty(
+                          row
+                        ),
+                    })
+                  );
+                }
+              );
+
+            return applyProductionSelections(
+              current,
+              selections
+            );
+          }
+        );
+      };
+
+    const updateProductionSelection =
+      (
+        lineId,
+        field,
+        value
+      ) => {
+        setForm(
+          (current) => {
+            const selections =
+              (
+                current
+                  .productionSelections ||
+                []
+              ).map(
+                (selection) =>
+                  String(
+                    selection
+                      .salesOrderItemId
+                  ) ===
+                  String(lineId)
+                    ? {
+                        ...selection,
+
+                        [field]:
+                          value,
+                      }
+                    : selection
+              );
+
+            return applyProductionSelections(
+              current,
+              selections
+            );
+          }
+        );
+      };
 
     const selectFinishedGood =
       (itemId) => {
+        if (
+          form.sourceType ===
+          "Sales Order"
+        ) {
+          return;
+        }
+
         const item =
           finishedGoods.find(
             (row) =>
@@ -886,6 +2162,14 @@ const ProductionItemsManager =
 
           finishedGoodItem:
             itemId,
+
+          finishedGoodCode:
+            item?.code ||
+            "",
+
+          finishedGoodName:
+            item?.name ||
+            "",
 
           jobName:
             current.jobName ||
@@ -994,34 +2278,155 @@ const ProductionItemsManager =
 
     const validateJob = () => {
       if (
-        !form.jobName.trim()
+        form.sourceType ===
+        "Sales Order"
       ) {
-        alert(
-          "Job name is required"
-        );
+        if (
+          !form.salesOrder
+        ) {
+          alert(
+            "Please select a Sales Order"
+          );
 
-        return false;
-      }
+          return false;
+        }
 
-      if (
-        !form.finishedGoodItem
-      ) {
-        alert(
-          "Please select a finished good item"
-        );
+        const selections =
+          form
+            .productionSelections ||
+          [];
 
-        return false;
-      }
+        if (
+          selections.length === 0
+        ) {
+          alert(
+            "Select at least one Sales Order item"
+          );
 
-      if (
-        num(form.targetQty) <=
-        0
-      ) {
-        alert(
-          "Target quantity must be greater than zero"
-        );
+          return false;
+        }
 
-        return false;
+        if (
+          editId &&
+          selections.length !== 1
+        ) {
+          alert(
+            "Only one Sales Order item can be selected while editing a production job"
+          );
+
+          return false;
+        }
+
+        for (
+          const selection of
+          selections
+        ) {
+          if (
+            !selection
+              .salesOrderItemId ||
+            !selection
+              .finishedGoodItem
+          ) {
+            alert(
+              "One selected Sales Order item is invalid"
+            );
+
+            return false;
+          }
+
+          if (
+            !String(
+              selection.jobName ||
+              ""
+            ).trim()
+          ) {
+            alert(
+              "Job name is required for every selected item"
+            );
+
+            return false;
+          }
+
+          const targetQty =
+            num(
+              selection.targetQty
+            );
+
+          if (
+            targetQty <= 0
+          ) {
+            alert(
+              `${selection.finishedGoodName || "Selected item"}: target quantity must be greater than zero`
+            );
+
+            return false;
+          }
+
+          if (
+            targetQty >
+            num(
+              selection
+                .remainingProductionQty
+            )
+          ) {
+            alert(
+              `${selection.finishedGoodName || "Selected item"}: target quantity cannot exceed available quantity ${qty(
+                selection
+                  .remainingProductionQty
+              )} ${
+                selection.unit ||
+                "Pcs"
+              }`
+            );
+
+            return false;
+          }
+        }
+
+        if (
+          selections.length > 1 &&
+          form
+            .materialRequirements
+            .length > 0
+        ) {
+          alert(
+            "Multiple production jobs use separate material requirements. Remove the material rows, create the jobs, then add materials to each job separately."
+          );
+
+          return false;
+        }
+      } else {
+        if (
+          !form.jobName.trim()
+        ) {
+          alert(
+            "Job name is required"
+          );
+
+          return false;
+        }
+
+        if (
+          !form.finishedGoodItem
+        ) {
+          alert(
+            "Please select a finished good item"
+          );
+
+          return false;
+        }
+
+        if (
+          num(
+            form.targetQty
+          ) <= 0
+        ) {
+          alert(
+            "Target quantity must be greater than zero"
+          );
+
+          return false;
+        }
       }
 
       if (!form.jobDate) {
@@ -1039,18 +2444,6 @@ const ProductionItemsManager =
       ) {
         alert(
           "Due date cannot be earlier than job date"
-        );
-
-        return false;
-      }
-
-      if (
-        form.sourceType ===
-          "Sales Order" &&
-        !form.salesOrder
-      ) {
-        alert(
-          "Please select a sales order"
         );
 
         return false;
@@ -1114,133 +2507,257 @@ const ProductionItemsManager =
       return true;
     };
 
-    const jobPayload = () => ({
-      jobNo:
-        form.jobNo,
+    const materialPayload =
+      () =>
+        form
+          .materialRequirements
+          .map(
+            (row) => ({
+              _id:
+                row._id,
 
-      jobName:
-        form.jobName.trim(),
+              item:
+                row.item,
 
-      sourceType:
-        form.sourceType,
+              requiredQty:
+                num(
+                  row.requiredQty
+                ),
 
-      salesOrder:
-        form.sourceType ===
-        "Sales Order"
-          ? form.salesOrder
-          : null,
+              issuedQty:
+                num(
+                  row.issuedQty
+                ),
 
-      salesOrderNo:
-        form.sourceType ===
-        "Sales Order"
-          ? form.salesOrderNo
-          : "",
+              returnedQty:
+                num(
+                  row.returnedQty
+                ),
 
-      internalReference:
-        form.sourceType ===
-        "Internal Requirement"
-          ? form.internalReference.trim()
-          : "",
+              wastageQty:
+                num(
+                  row.wastageQty
+                ),
 
-      customer:
-        form.customer ||
-        null,
+              unit:
+                row.unit,
 
-      customerName:
-        form.customerName.trim(),
+              rate:
+                num(
+                  row.rate
+                ),
 
-      customerPO:
-        form.customerPO.trim(),
-
-      finishedGoodItem:
-        form.finishedGoodItem,
-
-      targetQty: num(
-        form.targetQty
-      ),
-
-      unit:
-        form.unit,
-
-      jobDate:
-        form.jobDate,
-
-      dueDate:
-        form.dueDate,
-
-      priority:
-        form.priority,
-
-      paperType:
-        form.paperType.trim(),
-
-      gsm: num(form.gsm),
-
-      sheetSize:
-        form.sheetSize.trim(),
-
-      finishedSize:
-        form.finishedSize.trim(),
-
-      totalSheets: num(
-        form.totalSheets
-      ),
-
-      noOfColors:
-        form.noOfColors.trim(),
-
-      dieNo:
-        form.dieNo.trim(),
-
-      instructions:
-        form.instructions.trim(),
-
-      remarks:
-        form.remarks.trim(),
-
-      materialRequirements:
-        form.materialRequirements.map(
-          (row) => ({
-            _id:
-              row._id,
-
-            item:
-              row.item,
-
-            requiredQty:
-              num(
-                row.requiredQty
-              ),
-
-            issuedQty:
-              num(
-                row.issuedQty
-              ),
-
-            returnedQty:
-              num(
-                row.returnedQty
-              ),
-
-            wastageQty:
-              num(
-                row.wastageQty
-              ),
-
-            unit:
-              row.unit,
-
-            rate:
-              num(row.rate),
-
-            remarks:
-              String(
-                row.remarks ||
+              remarks:
+                String(
+                  row.remarks ||
                   ""
-              ).trim(),
-          })
-        ),
-    });
+                ).trim(),
+            })
+          );
+
+    const commonJobPayload =
+      () => ({
+        sourceType:
+          form.sourceType,
+
+        salesOrder:
+          form.sourceType ===
+          "Sales Order"
+            ? form.salesOrder
+            : null,
+
+        salesOrderNo:
+          form.sourceType ===
+          "Sales Order"
+            ? form.salesOrderNo
+            : "",
+
+        internalReference:
+          form.sourceType ===
+          "Internal Requirement"
+            ? form
+                .internalReference
+                .trim()
+            : "",
+
+        customer:
+          form.customer ||
+          null,
+
+        customerName:
+          form
+            .customerName
+            .trim(),
+
+        customerPO:
+          form.customerPO.trim(),
+
+        jobDate:
+          form.jobDate,
+
+        dueDate:
+          form.dueDate,
+
+        priority:
+          form.priority,
+
+        paperType:
+          form.paperType.trim(),
+
+        gsm:
+          num(
+            form.gsm
+          ),
+
+        sheetSize:
+          form.sheetSize.trim(),
+
+        finishedSize:
+          form.finishedSize.trim(),
+
+        totalSheets:
+          num(
+            form.totalSheets
+          ),
+
+        noOfColors:
+          form.noOfColors.trim(),
+
+        dieNo:
+          form.dieNo.trim(),
+
+        instructions:
+          form.instructions.trim(),
+
+        remarks:
+          form.remarks.trim(),
+      });
+
+    const singleJobPayload =
+      () => {
+        const selection =
+          form.sourceType ===
+          "Sales Order"
+            ? (
+                form
+                  .productionSelections ||
+                []
+              )[0]
+            : null;
+
+        return {
+          ...commonJobPayload(),
+
+          jobNo:
+            form.jobNo,
+
+          jobName:
+            selection
+              ? String(
+                  selection.jobName ||
+                  ""
+                ).trim()
+              : form.jobName.trim(),
+
+          salesOrderItemId:
+            selection
+              ? selection
+                  .salesOrderItemId
+              : null,
+
+          finishedGoodItem:
+            selection
+              ? selection
+                  .finishedGoodItem
+              : form.finishedGoodItem,
+
+          targetQty:
+            selection
+              ? num(
+                  selection.targetQty
+                )
+              : num(
+                  form.targetQty
+                ),
+
+          unit:
+            selection
+              ? selection.unit
+              : form.unit,
+
+          finishedSize:
+            selection
+              ?.orderSize ||
+            form.finishedSize.trim(),
+
+          materialRequirements:
+            materialPayload(),
+        };
+      };
+
+    const bulkSalesOrderPayload =
+      () => {
+        const selections =
+          form
+            .productionSelections ||
+          [];
+
+        return {
+          ...commonJobPayload(),
+
+          sourceType:
+            "Sales Order",
+
+          salesOrder:
+            form.salesOrder,
+
+          items:
+            selections.map(
+              (selection) => ({
+                salesOrderItemId:
+                  selection
+                    .salesOrderItemId,
+
+                jobName:
+                  String(
+                    selection.jobName ||
+                    selection
+                      .orderDescription ||
+                    selection
+                      .finishedGoodName ||
+                    ""
+                  ).trim(),
+
+                finishedGoodItem:
+                  selection
+                    .finishedGoodItem,
+
+                targetQty:
+                  num(
+                    selection.targetQty
+                  ),
+
+                unit:
+                  selection.unit,
+
+                finishedSize:
+                  selection
+                    .orderSize ||
+                  form.finishedSize.trim(),
+
+                remarks:
+                  selection.remarks ||
+                  form.remarks.trim(),
+
+                materialRequirements:
+                  selections.length ===
+                  1
+                    ? materialPayload()
+                    : [],
+              })
+            ),
+        };
+      };
 
     const saveJob =
       async (event) => {
@@ -1253,21 +2770,65 @@ const ProductionItemsManager =
         try {
           setSaving(true);
 
-          await apiRequest(
-            editId
-              ? `${API_JOBS}/update/${editId}`
-              : `${API_JOBS}/add`,
-            {
-              method: editId
-                ? "PUT"
-                : "POST",
+          if (editId) {
+            await apiRequest(
+              `${API_JOBS}/update/${editId}`,
+              {
+                method: "PUT",
 
-              body:
-                JSON.stringify(
-                  jobPayload()
-                ),
-            }
-          );
+                body:
+                  JSON.stringify(
+                    singleJobPayload()
+                  ),
+              }
+            );
+          } else if (
+            form.sourceType ===
+            "Sales Order"
+          ) {
+            const response =
+              await apiRequest(
+                `${API_JOBS}/add-bulk`,
+                {
+                  method: "POST",
+
+                  body:
+                    JSON.stringify(
+                      bulkSalesOrderPayload()
+                    ),
+                }
+              );
+
+            const createdCount =
+              num(
+                response.createdCount ??
+                response.data
+                  ?.length ??
+                form
+                  .productionSelections
+                  .length
+              );
+
+            alert(
+              `${createdCount} production job${
+                createdCount === 1
+                  ? ""
+                  : "s"
+              } created successfully`
+            );
+          } else {
+            await apiRequest(
+              `${API_JOBS}/add`,
+              {
+                method: "POST",
+
+                body:
+                  JSON.stringify(
+                    singleJobPayload()
+                  ),
+              }
+            );
+          }
 
           await fetchData();
 
@@ -1639,6 +3200,12 @@ const ProductionItemsManager =
 
                 job.finishedGoodName,
 
+                job.orderDescription,
+
+                job.orderSize,
+
+                job.salesOrderReferenceNo,
+
                 job
                   .finishedGoodItem
                   ?.code,
@@ -1759,6 +3326,28 @@ const ProductionItemsManager =
           num(
             row.issuedQty
           )
+      );
+
+    const productionAvailableQty = (
+      row
+    ) =>
+      num(
+        row
+          .remainingProductionQty
+      ) +
+      (
+        editId &&
+        String(
+          form.salesOrderItemId
+        ) ===
+          String(
+            row.salesOrderItemId
+          )
+          ? num(
+              form
+                .existingTargetQty
+            )
+          : 0
       );
 
     return (
@@ -2148,23 +3737,48 @@ const ProductionItemsManager =
                                 </div>
 
                                 <div className="mt-1 text-[10px] text-slate-500">
-                                  {job.paperType ||
+                                  {job.orderSize ||
+                                    job.finishedSize ||
+                                    job.paperType ||
                                     "-"}
 
-                                  {num(
-                                    job.gsm
-                                  ) > 0
-                                    ? ` · ${job.gsm} GSM`
-                                    : ""}
+                                  {job.orderTextType
+                                    ? ` · ${String(
+                                        job.orderTextType
+                                      ).replace(
+                                        /-/g,
+                                        " "
+                                      )}`
+                                    : num(
+                                        job.gsm
+                                      ) > 0
+                                      ? ` · ${job.gsm} GSM`
+                                      : ""}
                                 </div>
+
+                                {job.orderDescription && (
+                                  <div className="mt-1 text-[10px] text-slate-500">
+                                    {job.orderDescription}
+                                  </div>
+                                )}
                               </td>
 
-                              <td className="p-4 text-right font-bold text-blue-700">
-                                {qty(
-                                  job.targetQty ??
-                                    job.quantity
-                                )}{" "}
-                                {job.unit}
+                              <td className="p-4 text-right">
+                                <div className="font-bold text-blue-700">
+                                  {qty(
+                                    job.targetQty ??
+                                      job.quantity
+                                  )}{" "}
+                                  {job.unit}
+                                </div>
+
+                                <div className="mt-1 text-[10px] text-emerald-700">
+                                  Prepared:{" "}
+                                  {qty(
+                                    job.productionOutputQty
+                                  )}{" "}
+                                  {job.unit}
+                                </div>
                               </td>
 
                               <td className="p-4">
@@ -2412,6 +4026,11 @@ const ProductionItemsManager =
                             .value
                         )
                       }
+                      disabled={
+                        Boolean(
+                          editId
+                        )
+                      }
                       className={
                         inputClass
                       }
@@ -2431,6 +4050,7 @@ const ProductionItemsManager =
                     <Field
                       label="Sales Order"
                       required
+                      wide
                     >
                       <select
                         value={
@@ -2445,12 +4065,20 @@ const ProductionItemsManager =
                               .value
                           )
                         }
+                        disabled={
+                          salesOrderLoading ||
+                          Boolean(
+                            editId
+                          )
+                        }
                         className={
                           inputClass
                         }
                       >
                         <option value="">
-                          Select Sales Order
+                          {salesOrderLoading
+                            ? "Loading Sales Order..."
+                            : "Select Sales Order"}
                         </option>
 
                         {salesOrders.map(
@@ -2473,13 +4101,24 @@ const ProductionItemsManager =
                               {order.customerName
                                 ? ` — ${order.customerName}`
                                 : ""}
+
+                              {num(
+                                order.totalQuantity
+                              ) > 0
+                                ? ` — ${qty(
+                                    order.totalQuantity
+                                  )}`
+                                : ""}
                             </option>
                           )
                         )}
                       </select>
                     </Field>
                   ) : (
-                    <Field label="Internal Reference">
+                    <Field
+                      label="Internal Reference"
+                      wide
+                    >
                       <input
                         value={
                           form.internalReference
@@ -2502,53 +4141,6 @@ const ProductionItemsManager =
                     </Field>
                   )}
 
-                  <Field label="Customer">
-                    <select
-                      value={
-                        form.customer
-                      }
-                      onChange={(
-                        event
-                      ) =>
-                        selectCustomer(
-                          event
-                            .target
-                            .value
-                        )
-                      }
-                      disabled={
-                        form.sourceType ===
-                        "Internal Requirement"
-                      }
-                      className={
-                        inputClass
-                      }
-                    >
-                      <option value="">
-                        Select Customer
-                      </option>
-
-                      {customers.map(
-                        (
-                          customer
-                        ) => (
-                          <option
-                            key={
-                              customer._id
-                            }
-                            value={
-                              customer._id
-                            }
-                          >
-                            {customer.customerName ||
-                              customer.name ||
-                              customer._id}
-                          </option>
-                        )
-                      )}
-                    </select>
-                  </Field>
-
                   <Field
                     label="Customer Name"
                     required
@@ -2557,20 +4149,7 @@ const ProductionItemsManager =
                       value={
                         form.customerName
                       }
-                      onChange={(
-                        event
-                      ) =>
-                        change(
-                          "customerName",
-                          event
-                            .target
-                            .value
-                        )
-                      }
-                      readOnly={
-                        form.sourceType ===
-                        "Internal Requirement"
-                      }
+                      readOnly
                       className={
                         inputClass
                       }
@@ -2592,6 +4171,10 @@ const ProductionItemsManager =
                             .value
                         )
                       }
+                      readOnly={
+                        form.sourceType ===
+                        "Sales Order"
+                      }
                       className={
                         inputClass
                       }
@@ -2605,17 +4188,50 @@ const ProductionItemsManager =
                   >
                     <input
                       value={
-                        form.jobName
+                        form.sourceType ===
+                          "Sales Order" &&
+                        (
+                          form
+                            .productionSelections ||
+                          []
+                        ).length > 1
+                          ? `${form.productionSelections.length} Production Jobs`
+                          : form.jobName
                       }
                       onChange={(
                         event
                       ) =>
-                        change(
-                          "jobName",
-                          event
-                            .target
-                            .value
-                        )
+                        form.sourceType ===
+                          "Sales Order" &&
+                        (
+                          form
+                            .productionSelections ||
+                          []
+                        ).length === 1
+                          ? updateProductionSelection(
+                              form
+                                .productionSelections[0]
+                                .salesOrderItemId,
+                              "jobName",
+                              event
+                                .target
+                                .value
+                            )
+                          : change(
+                              "jobName",
+                              event
+                                .target
+                                .value
+                            )
+                      }
+                      readOnly={
+                        form.sourceType ===
+                          "Sales Order" &&
+                        (
+                          form
+                            .productionSelections ||
+                          []
+                        ).length > 1
                       }
                       className={
                         inputClass
@@ -2626,77 +4242,640 @@ const ProductionItemsManager =
                 </div>
               </Section>
 
-              <Section title="2. Finished Good and Schedule">
+              {form.sourceType ===
+                "Sales Order" &&
+                selectedSalesOrder && (
+                <Section title="2. Sales Order Details — Production View">
+                  <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                    <Detail
+                      label="Sales Order No"
+                      value={
+                        selectedSalesOrder.salesOrderNo
+                      }
+                    />
+
+                    <Detail
+                      label="Status"
+                      value={
+                        selectedSalesOrder.status
+                      }
+                    />
+
+                    <Detail
+                      label="Order Date"
+                      value={
+                        dateOnly(
+                          selectedSalesOrder.orderDate
+                        )
+                      }
+                    />
+
+                    <Detail
+                      label="Delivery Date"
+                      value={
+                        dateOnly(
+                          selectedSalesOrder.deliveryDate
+                        )
+                      }
+                    />
+
+                    <Detail
+                      label="Customer"
+                      value={
+                        selectedSalesOrder.customerName
+                      }
+                    />
+
+                    <Detail
+                      label="Phone"
+                      value={
+                        selectedSalesOrder.customerPhone
+                      }
+                    />
+
+                    <Detail
+                      label="Email"
+                      value={
+                        selectedSalesOrder.customerEmail
+                      }
+                    />
+
+                    <Detail
+                      label="City"
+                      value={
+                        selectedSalesOrder.customerCity
+                      }
+                    />
+
+                    <Detail
+                      label="Address"
+                      value={
+                        selectedSalesOrder.customerAddress
+                      }
+                    />
+
+                    <Detail
+                      label="Customer NTN"
+                      value={
+                        selectedSalesOrder.customerNTN
+                      }
+                    />
+
+                    <Detail
+                      label="Customer PO"
+                      value={
+                        selectedSalesOrder.poNo
+                      }
+                    />
+
+                    <Detail
+                      label="Reference No"
+                      value={
+                        selectedSalesOrder.referenceNo
+                      }
+                    />
+
+                    <Detail
+                      label="Total Cartons"
+                      value={qty(
+                        selectedSalesOrder.totalCartons
+                      )}
+                    />
+
+                    <Detail
+                      label="Total Quantity"
+                      value={qty(
+                        selectedSalesOrder.totalQuantity
+                      )}
+                    />
+
+                    <Detail
+                      label="Production Planned"
+                      value={qty(
+                        selectedSalesOrder
+                          .totalPlannedProductionQty
+                      )}
+                    />
+
+                    <Detail
+                      label="Prepared Quantity"
+                      value={qty(
+                        selectedSalesOrder
+                          .totalPreparedQty
+                      )}
+                    />
+                  </div>
+
+                  <div className="mb-3 flex flex-col gap-2 rounded-lg border border-blue-200 bg-blue-50 p-3 text-xs text-blue-800 sm:flex-row sm:items-center sm:justify-between">
+                    <span>
+                      Tick every Sales Order item that should become a Production Job.
+                    </span>
+
+                    <strong>
+                      Selected:{" "}
+                      {
+                        (
+                          form
+                            .productionSelections ||
+                          []
+                        ).length
+                      }
+                    </strong>
+                  </div>
+
+                  <div className="overflow-x-auto rounded-xl border">
+                    <table className="w-full min-w-[1650px] text-xs">
+                      <thead className="bg-slate-800 uppercase text-white">
+                        <tr>
+                          <th className="p-3 text-center">
+                            <div className="flex items-center justify-center gap-2">
+                              <input
+                                type="checkbox"
+                                checked={
+                                  !editId &&
+                                  (
+                                    selectedSalesOrder
+                                      .items ||
+                                    []
+                                  ).filter(
+                                    (row) =>
+                                      productionAvailableQty(
+                                        row
+                                      ) > 0
+                                  ).length >
+                                    0 &&
+                                  (
+                                    selectedSalesOrder
+                                      .items ||
+                                    []
+                                  )
+                                    .filter(
+                                      (row) =>
+                                        productionAvailableQty(
+                                          row
+                                        ) > 0
+                                    )
+                                    .every(
+                                      (row) =>
+                                        (
+                                          form
+                                            .selectedSalesOrderItemIds ||
+                                          []
+                                        ).some(
+                                          (value) =>
+                                            String(
+                                              value
+                                            ) ===
+                                            String(
+                                              row
+                                                .salesOrderItemId
+                                            )
+                                        )
+                                    )
+                                }
+                                disabled={
+                                  Boolean(
+                                    editId
+                                  )
+                                }
+                                onChange={
+                                  toggleAllSalesOrderItems
+                                }
+                                className="h-4 w-4 accent-blue-600"
+                              />
+
+                              <span>
+                                Select
+                              </span>
+                            </div>
+                          </th>
+
+                          <th className="p-3 text-left">
+                            Finished Good
+                          </th>
+
+                          <th className="p-3 text-left">
+                            Description
+                          </th>
+
+                          <th className="p-3 text-left">
+                            Size
+                          </th>
+
+                          <th className="p-3 text-left">
+                            Text Type
+                          </th>
+
+                          <th className="p-3 text-right">
+                            Cartons
+                          </th>
+
+                          <th className="p-3 text-right">
+                            Ordered
+                          </th>
+
+                          <th className="p-3 text-right">
+                            Planned
+                          </th>
+
+                          <th className="p-3 text-right">
+                            Prepared
+                          </th>
+
+                          <th className="p-3 text-right">
+                            Available
+                          </th>
+
+                          <th className="p-3 text-right">
+                            Production Qty
+                          </th>
+
+                          <th className="p-3 text-left">
+                            Unit
+                          </th>
+
+                          <th className="p-3 text-left">
+                            Remarks
+                          </th>
+                        </tr>
+                      </thead>
+
+                      <tbody>
+                        {(
+                          selectedSalesOrder.items ||
+                          []
+                        ).map(
+                          (row) => {
+                            const availableQty =
+                              productionAvailableQty(
+                                row
+                              );
+
+                            const selected =
+                              (
+                                form
+                                  .selectedSalesOrderItemIds ||
+                                []
+                              ).some(
+                                (value) =>
+                                  String(
+                                    value
+                                  ) ===
+                                  String(
+                                    row
+                                      .salesOrderItemId
+                                  )
+                              );
+
+                            const selection =
+                              (
+                                form
+                                  .productionSelections ||
+                                []
+                              ).find(
+                                (value) =>
+                                  String(
+                                    value
+                                      .salesOrderItemId
+                                  ) ===
+                                  String(
+                                    row
+                                      .salesOrderItemId
+                                  )
+                              );
+
+                            return (
+                              <tr
+                                key={
+                                  row.salesOrderItemId
+                                }
+                                className={
+                                  selected
+                                    ? "border-t bg-blue-50"
+                                    : "border-t hover:bg-slate-50"
+                                }
+                              >
+                                <td className="p-3 text-center">
+                                  <input
+                                    type="checkbox"
+                                    checked={
+                                      selected
+                                    }
+                                    disabled={
+                                      availableQty <=
+                                        0 &&
+                                      !selected
+                                    }
+                                    onChange={() =>
+                                      selectSalesOrderItem(
+                                        row.salesOrderItemId
+                                      )
+                                    }
+                                    className="h-4 w-4 accent-blue-700"
+                                  />
+                                </td>
+
+                                <td className="p-3">
+                                  <div className="font-semibold text-slate-900">
+                                    {row.itemName ||
+                                      "-"}
+                                  </div>
+
+                                  <div className="font-mono text-[10px] text-blue-600">
+                                    {row.itemCode ||
+                                      ""}
+                                  </div>
+                                </td>
+
+                                <td className="p-3">
+                                  {row.description ||
+                                    "-"}
+                                </td>
+
+                                <td className="p-3">
+                                  {row.size ||
+                                    "-"}
+                                </td>
+
+                                <td className="p-3">
+                                  {row.textType
+                                    ? row.textType.replace(
+                                        /-/g,
+                                        " "
+                                      )
+                                    : "-"}
+                                </td>
+
+                                <td className="p-3 text-right">
+                                  {qty(
+                                    row.cartons
+                                  )}
+                                </td>
+
+                                <td className="p-3 text-right font-semibold">
+                                  {qty(
+                                    row.orderedQty
+                                  )}
+                                </td>
+
+                                <td className="p-3 text-right">
+                                  {qty(
+                                    row
+                                      .plannedProductionQty
+                                  )}
+                                </td>
+
+                                <td className="p-3 text-right text-emerald-700">
+                                  {qty(
+                                    row.preparedQty
+                                  )}
+                                </td>
+
+                                <td className="p-3 text-right font-bold text-blue-700">
+                                  {qty(
+                                    availableQty
+                                  )}
+                                </td>
+
+                                <td className="p-3">
+                                  {selected ? (
+                                    <input
+                                      type="number"
+                                      min="0.000001"
+                                      step="any"
+                                      max={
+                                        availableQty
+                                      }
+                                      value={
+                                        selection
+                                          ?.targetQty ||
+                                        ""
+                                      }
+                                      onChange={(
+                                        event
+                                      ) =>
+                                        updateProductionSelection(
+                                          row
+                                            .salesOrderItemId,
+                                          "targetQty",
+                                          event
+                                            .target
+                                            .value
+                                        )
+                                      }
+                                      className="w-28 rounded border border-blue-300 bg-white px-2 py-1.5 text-right font-semibold outline-none focus:border-blue-600"
+                                    />
+                                  ) : (
+                                    <span className="text-slate-400">
+                                      —
+                                    </span>
+                                  )}
+                                </td>
+
+                                <td className="p-3">
+                                  {row.unit ||
+                                    "Pcs"}
+                                </td>
+
+                                <td className="p-3">
+                                  {row.remarks ||
+                                    "-"}
+                                </td>
+                              </tr>
+                            );
+                          }
+                        )}
+
+                        {!(
+                          selectedSalesOrder.items ||
+                          []
+                        ).length && (
+                          <tr>
+                            <td
+                              colSpan="13"
+                              className="p-8 text-center text-slate-400"
+                            >
+                              No Sales Order items are available for production.
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <p className="mt-3 text-xs text-slate-500">
+                    Production view intentionally excludes selling price, amounts, tax type, tax rate, sales tax, and grand total.
+                  </p>
+                </Section>
+              )}
+
+              <Section
+                title={
+                  form.sourceType ===
+                  "Sales Order"
+                    ? "3. Finished Good and Schedule"
+                    : "2. Finished Good and Schedule"
+                }
+              >
                 <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
                   <Field
                     label="Finished Good Item"
                     required
                     wide
                   >
-                    <select
-                      value={
-                        form.finishedGoodItem
-                      }
-                      onChange={(
-                        event
-                      ) =>
-                        selectFinishedGood(
+                    {form.sourceType ===
+                    "Sales Order" ? (
+                      <input
+                        value={
+                          (
+                            form
+                              .productionSelections ||
+                            []
+                          ).length > 1
+                            ? `${form.productionSelections.length} Finished Goods Selected`
+                            : form.finishedGoodItem
+                              ? `${form.finishedGoodCode || ""}${
+                                  form.finishedGoodCode
+                                    ? " — "
+                                    : ""
+                                }${form.finishedGoodName || ""}`
+                              : ""
+                        }
+                        readOnly
+                        className={
+                          inputClass
+                        }
+                        placeholder="Select a Sales Order item above"
+                      />
+                    ) : (
+                      <select
+                        value={
+                          form.finishedGoodItem
+                        }
+                        onChange={(
                           event
-                            .target
-                            .value
-                        )
-                      }
-                      className={
-                        inputClass
-                      }
-                    >
-                      <option value="">
-                        Select Finished Good
-                      </option>
+                        ) =>
+                          selectFinishedGood(
+                            event
+                              .target
+                              .value
+                          )
+                        }
+                        className={
+                          inputClass
+                        }
+                      >
+                        <option value="">
+                          Select Finished Good
+                        </option>
 
-                      {finishedGoods.map(
-                        (item) => (
-                          <option
-                            key={
-                              item._id
-                            }
-                            value={
-                              item._id
-                            }
-                          >
-                            {item.code} —{" "}
-                            {item.name}
-                          </option>
-                        )
-                      )}
-                    </select>
+                        {finishedGoods.map(
+                          (item) => (
+                            <option
+                              key={
+                                item._id
+                              }
+                              value={
+                                item._id
+                              }
+                            >
+                              {item.code} —{" "}
+                              {item.name}
+                            </option>
+                          )
+                        )}
+                      </select>
+                    )}
                   </Field>
 
                   <Field
                     label="Target Quantity"
                     required
                   >
-                    <input
-                      type="number"
-                      min="0"
-                      step="any"
-                      value={
-                        form.targetQty
-                      }
-                      onChange={(
-                        event
-                      ) =>
-                        change(
-                          "targetQty",
+                    <div>
+                      <input
+                        type="number"
+                        min="0"
+                        step="any"
+                        max={
+                          form.sourceType ===
+                          "Sales Order"
+                            ? form
+                                .remainingProductionQty ||
+                              undefined
+                            : undefined
+                        }
+                        value={
+                          form.targetQty
+                        }
+                        onChange={(
                           event
-                            .target
-                            .value
-                        )
-                      }
-                      className={
-                        inputClass
-                      }
-                    />
+                        ) =>
+                          form.sourceType ===
+                            "Sales Order" &&
+                          (
+                            form
+                              .productionSelections ||
+                            []
+                          ).length === 1
+                            ? updateProductionSelection(
+                                form
+                                  .productionSelections[0]
+                                  .salesOrderItemId,
+                                "targetQty",
+                                event
+                                  .target
+                                  .value
+                              )
+                            : (
+                                form
+                                  .productionSelections ||
+                                []
+                              ).length > 1
+                              ? undefined
+                              : change(
+                                  "targetQty",
+                                  event
+                                    .target
+                                    .value
+                                )
+                        }
+                        readOnly={
+                          form.sourceType ===
+                            "Sales Order" &&
+                          (
+                            form
+                              .productionSelections ||
+                            []
+                          ).length > 1
+                        }
+                        className={
+                          inputClass
+                        }
+                      />
+
+                      {form.sourceType ===
+                        "Sales Order" &&
+                        form.salesOrderItemId && (
+                          <p className="mt-1 text-[10px] text-slate-500">
+                            Ordered:{" "}
+                            {qty(
+                              form.orderedQty
+                            )}{" "}
+                            {form.unit} · Planned:{" "}
+                            {qty(
+                              form
+                                .plannedProductionQty
+                            )}{" "}
+                            {form.unit} · Available:{" "}
+                            {qty(
+                              form
+                                .remainingProductionQty
+                            )}{" "}
+                            {form.unit}
+                          </p>
+                        )}
+                    </div>
                   </Field>
 
                   <Field label="Unit">
@@ -2713,6 +4892,10 @@ const ProductionItemsManager =
                             .target
                             .value
                         )
+                      }
+                      readOnly={
+                        form.sourceType ===
+                        "Sales Order"
                       }
                       className={
                         inputClass
@@ -2799,10 +4982,88 @@ const ProductionItemsManager =
                       </option>
                     </select>
                   </Field>
+
+                  {form.sourceType ===
+                    "Sales Order" &&
+                    (
+                      form
+                        .productionSelections ||
+                      []
+                    ).length === 1 && (
+                      <>
+                        <Field label="Order Description">
+                          <input
+                            value={
+                              form.orderDescription
+                            }
+                            readOnly
+                            className={
+                              inputClass
+                            }
+                          />
+                        </Field>
+
+                        <Field label="Order Size">
+                          <input
+                            value={
+                              form.orderSize
+                            }
+                            readOnly
+                            className={
+                              inputClass
+                            }
+                          />
+                        </Field>
+
+                        <Field label="Text Type">
+                          <input
+                            value={
+                              form.orderTextType
+                                ? form.orderTextType.replace(
+                                    /-/g,
+                                    " "
+                                  )
+                                : ""
+                            }
+                            readOnly
+                            className={
+                              inputClass
+                            }
+                          />
+                        </Field>
+
+                        <Field label="Order Cartons">
+                          <input
+                            value={
+                              form.orderCartons
+                            }
+                            readOnly
+                            className={
+                              inputClass
+                            }
+                          />
+                        </Field>
+
+                        <Field label="Prepared Quantity">
+                          <input
+                            value={`${qty(
+                              form.preparedQty
+                            )} ${
+                              form.unit ||
+                              ""
+                            }`}
+                            readOnly
+                            className={
+                              inputClass
+                            }
+                          />
+                        </Field>
+                      </>
+                    )}
                 </div>
               </Section>
 
-              <Section title="3. Printing Specifications">
+              <Section title="4. Printing Specifications">
                 <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
                   <Field label="Paper Type">
                     <input
@@ -2957,7 +5218,7 @@ const ProductionItemsManager =
                 </div>
               </Section>
 
-              <Section title="4. Material Requirements">
+              <Section title="5. Material Requirements">
                 <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                   <p className="text-xs text-slate-500">
                     Add every material required before printing starts.
@@ -3207,7 +5468,7 @@ const ProductionItemsManager =
                 </div>
               </Section>
 
-              <Section title="5. Instructions and Remarks">
+              <Section title="6. Instructions and Remarks">
                 <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
                   <Field label="Production Instructions">
                     <textarea
@@ -3276,8 +5537,16 @@ const ProductionItemsManager =
                   {saving
                     ? "Saving..."
                     : editId
-                    ? "Update Job"
-                    : "Save Draft Job"}
+                      ? "Update Job"
+                      : form.sourceType ===
+                          "Sales Order" &&
+                        (
+                          form
+                            .productionSelections ||
+                          []
+                        ).length > 1
+                        ? `Create ${form.productionSelections.length} Draft Jobs`
+                        : "Save Draft Job"}
                 </button>
               </div>
             </form>
@@ -3597,8 +5866,8 @@ const JobDetails = ({
   onClose,
 }) => (
   <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4">
-    <div className="max-h-[90vh] w-full max-w-5xl overflow-y-auto rounded-2xl bg-white shadow-xl">
-      <div className="sticky top-0 flex items-center justify-between bg-blue-700 px-5 py-4 text-white">
+    <div className="max-h-[90vh] w-full max-w-6xl overflow-y-auto rounded-2xl bg-white shadow-xl">
+      <div className="sticky top-0 z-10 flex items-center justify-between bg-blue-700 px-5 py-4 text-white">
         <div>
           <h3 className="text-lg font-bold">
             {job.jobNo ||
@@ -3637,9 +5906,24 @@ const JobDetails = ({
           />
 
           <Detail
+            label="Sales Order"
+            value={
+              job.salesOrderNo ||
+              job.internalReference
+            }
+          />
+
+          <Detail
             label="Customer"
             value={
               job.customerName
+            }
+          />
+
+          <Detail
+            label="Customer PO"
+            value={
+              job.customerPO
             }
           />
 
@@ -3654,12 +5938,115 @@ const JobDetails = ({
           />
 
           <Detail
-            label="Target"
+            label="Item Code"
+            value={
+              job.finishedGoodCode ||
+              job
+                .finishedGoodItem
+                ?.code
+            }
+          />
+
+          <Detail
+            label="Order Description"
+            value={
+              job.orderDescription
+            }
+          />
+
+          <Detail
+            label="Order Size"
+            value={
+              job.orderSize
+            }
+          />
+
+          <Detail
+            label="Text Type"
+            value={
+              job.orderTextType
+                ? String(
+                    job.orderTextType
+                  ).replace(
+                    /-/g,
+                    " "
+                  )
+                : ""
+            }
+          />
+
+          <Detail
+            label="Order Cartons"
+            value={qty(
+              job.orderCartons
+            )}
+          />
+
+          <Detail
+            label="Ordered Quantity"
+            value={`${qty(
+              job.orderedQty
+            )} ${
+              job.orderUnit ||
+              job.unit ||
+              ""
+            }`}
+          />
+
+          <Detail
+            label="Production Target"
             value={`${qty(
               job.targetQty
             )} ${
               job.unit || ""
             }`}
+          />
+
+          <Detail
+            label="Prepared Quantity"
+            value={`${qty(
+              job.productionOutputQty
+            )} ${
+              job.unit || ""
+            }`}
+          />
+
+          <Detail
+            label="Pending Production"
+            value={`${qty(
+              Math.max(
+                num(
+                  job.targetQty
+                ) -
+                  num(
+                    job.productionOutputQty
+                  ),
+                0
+              )
+            )} ${
+              job.unit || ""
+            }`}
+          />
+
+          <Detail
+            label="Sales Order Date"
+            value={dateOnly(
+              job.salesOrderOrderDate
+            )}
+          />
+
+          <Detail
+            label="Sales Order Delivery"
+            value={dateOnly(
+              job.salesOrderDeliveryDate
+            )}
+          />
+
+          <Detail
+            label="Reference No"
+            value={
+              job.salesOrderReferenceNo
+            }
           />
 
           <Detail
@@ -3682,6 +6069,31 @@ const JobDetails = ({
               job.priority
             }
           />
+
+          <Detail
+            label="Finished Size"
+            value={
+              job.finishedSize
+            }
+          />
+
+          <Detail
+            label="Sheet Size"
+            value={
+              job.sheetSize
+            }
+          />
+
+          <Detail
+            label="Total Sheets"
+            value={qty(
+              job.totalSheets
+            )}
+          />
+        </div>
+
+        <div className="rounded-xl border border-blue-100 bg-blue-50 p-4 text-xs text-blue-800">
+          Selling price, order amount, tax type, tax rate, sales tax, and grand total are intentionally excluded from Production.
         </div>
 
         <div className="overflow-x-auto rounded-xl border">

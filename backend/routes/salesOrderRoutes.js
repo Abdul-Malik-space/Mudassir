@@ -31,6 +31,10 @@ const DeliveryChallan = require(
   "../models/DeliveryChallan"
 );
 
+const ProductionItem = require(
+  "../models/ProductionItem"
+);
+
 const {
   ensureDefaultWarehouses,
 } = require(
@@ -43,6 +47,21 @@ const FINISHED_GOODS_GODOWN =
 const FINISHED_GOODS_ALIASES = [
   "Finished Goods Godown",
   "Finished Goods Warehouse",
+];
+
+const PRODUCTION_ELIGIBLE_SALES_ORDER_STATUSES = [
+  "Confirmed",
+  "In Production",
+];
+
+const ACTIVE_PRODUCTION_JOB_STATUSES = [
+  "Draft",
+  "Approved",
+  "Material Issued",
+  "In Printing",
+  "Quality Check",
+  "Completed",
+  "Closed",
 ];
 
 const MANUAL_STATUS_TRANSITIONS = {
@@ -882,6 +901,385 @@ const prepareSalesOrderItems =
     );
   };
 
+const getProductionPlannedQtyMap =
+  async (
+    salesOrderIds = []
+  ) => {
+    const cleanIds = [
+      ...new Set(
+        salesOrderIds
+          .map(
+            (value) =>
+              idOf(value)
+          )
+          .filter(
+            (value) =>
+              isValidId(value)
+          )
+      ),
+    ];
+
+    if (
+      cleanIds.length === 0
+    ) {
+      return new Map();
+    }
+
+    const rows =
+      await ProductionItem.aggregate([
+        {
+          $match: {
+            salesOrder: {
+              $in:
+                cleanIds.map(
+                  (value) =>
+                    new mongoose.Types.ObjectId(
+                      value
+                    )
+                ),
+            },
+
+            salesOrderItemId: {
+              $ne: null,
+            },
+
+            status: {
+              $in:
+                ACTIVE_PRODUCTION_JOB_STATUSES,
+            },
+          },
+        },
+
+        {
+          $group: {
+            _id: {
+              salesOrder:
+                "$salesOrder",
+
+              salesOrderItemId:
+                "$salesOrderItemId",
+            },
+
+            plannedQty: {
+              $sum: {
+                $ifNull: [
+                  "$targetQty",
+                  0,
+                ],
+              },
+            },
+
+            preparedQty: {
+              $sum: {
+                $ifNull: [
+                  "$productionOutputQty",
+                  0,
+                ],
+              },
+            },
+          },
+        },
+      ]);
+
+    return new Map(
+      rows.map(
+        (row) => [
+          `${row._id.salesOrder}:${row._id.salesOrderItemId}`,
+
+          {
+            plannedQty:
+              cleanNumber(
+                row.plannedQty
+              ),
+
+            preparedQty:
+              cleanNumber(
+                row.preparedQty
+              ),
+          },
+        ]
+      )
+    );
+  };
+
+const buildProductionSalesOrderView = (
+  order,
+  productionMap
+) => {
+  const customer =
+    order.customer &&
+    typeof order.customer ===
+      "object"
+      ? order.customer
+      : null;
+
+  const items =
+    (
+      order.items || []
+    ).map(
+      (row) => {
+        const key =
+          `${order._id}:${row._id}`;
+
+        const production =
+          productionMap.get(
+            key
+          ) || {
+            plannedQty: 0,
+            preparedQty: 0,
+          };
+
+        const orderedQty =
+          cleanNumber(
+            row.quantity
+          );
+
+        const plannedQty =
+          Math.min(
+            cleanNumber(
+              production.plannedQty
+            ),
+            orderedQty
+          );
+
+        const preparedQty =
+          Math.min(
+            cleanNumber(
+              production.preparedQty
+            ),
+            plannedQty
+          );
+
+        return {
+          salesOrderItemId:
+            row._id,
+
+          item:
+            idOf(
+              row.item
+            ) || null,
+
+          itemCode:
+            cleanText(
+              row.itemCode ||
+                row.item?.code
+            ).toUpperCase(),
+
+          itemName:
+            cleanText(
+              row.itemName ||
+                row.item?.name
+            ),
+
+          description:
+            cleanText(
+              row.description,
+              row.itemName ||
+                row.item?.name
+            ),
+
+          size:
+            cleanText(
+              row.size
+            ),
+
+          textType:
+            cleanText(
+              row.textType
+            ),
+
+          cartons:
+            cleanNumber(
+              row.cartons
+            ),
+
+          orderedQty,
+
+          plannedProductionQty:
+            plannedQty,
+
+          remainingProductionQty:
+            Math.max(
+              orderedQty -
+                plannedQty,
+              0
+            ),
+
+          preparedQty,
+
+          remainingToPrepareQty:
+            Math.max(
+              orderedQty -
+                preparedQty,
+              0
+            ),
+
+          deliveredQty:
+            cleanNumber(
+              row.deliveredQty
+            ),
+
+          pendingDeliveryQty:
+            Math.max(
+              orderedQty -
+                cleanNumber(
+                  row.deliveredQty
+                ),
+              0
+            ),
+
+          unit:
+            cleanText(
+              row.unit ||
+                row.item?.unit,
+              "Pcs"
+            ),
+
+          remarks:
+            cleanText(
+              row.remarks
+            ),
+        };
+      }
+    );
+
+  return {
+    _id:
+      order._id,
+
+    salesOrderNo:
+      cleanText(
+        order.salesOrderNo
+      ).toUpperCase(),
+
+    status:
+      order.status,
+
+    customer:
+      idOf(
+        order.customer
+      ) || null,
+
+    customerName:
+      cleanText(
+        order.customerName ||
+          customer?.customerName ||
+          customer?.name
+      ),
+
+    customerPhone:
+      cleanText(
+        order.customerPhone ||
+          customer?.phoneNumber ||
+          customer?.phone
+      ),
+
+    customerEmail:
+      cleanText(
+        order.customerEmail ||
+          customer?.email
+      ),
+
+    customerAddress:
+      cleanText(
+        order.customerAddress ||
+          customer?.address
+      ),
+
+    customerCity:
+      cleanText(
+        order.customerCity ||
+          customer?.city
+      ),
+
+    customerNTN:
+      cleanText(
+        order.customerNTN ||
+          customer?.customerNTN ||
+          customer?.ntn
+      ).toUpperCase(),
+
+    orderDate:
+      cleanText(
+        order.orderDate
+      ),
+
+    deliveryDate:
+      cleanText(
+        order.deliveryDate
+      ),
+
+    poNo:
+      cleanText(
+        order.poNo
+      ),
+
+    referenceNo:
+      cleanText(
+        order.referenceNo
+      ),
+
+    totalCartons:
+      items.reduce(
+        (
+          total,
+          row
+        ) =>
+          total +
+          cleanNumber(
+            row.cartons
+          ),
+        0
+      ),
+
+    totalQuantity:
+      items.reduce(
+        (
+          total,
+          row
+        ) =>
+          total +
+          cleanNumber(
+            row.orderedQty
+          ),
+        0
+      ),
+
+    totalPlannedProductionQty:
+      items.reduce(
+        (
+          total,
+          row
+        ) =>
+          total +
+          cleanNumber(
+            row.plannedProductionQty
+          ),
+        0
+      ),
+
+    totalPreparedQty:
+      items.reduce(
+        (
+          total,
+          row
+        ) =>
+          total +
+          cleanNumber(
+            row.preparedQty
+          ),
+        0
+      ),
+
+    remarks:
+      cleanText(
+        order.remarks
+      ),
+
+    items,
+  };
+};
+
 const hasDeliveryHistory =
   async (
     salesOrderId
@@ -1207,6 +1605,156 @@ router.get(
           message:
             error.message ||
             "Unable to load sales orders",
+        });
+    }
+  }
+);
+
+router.get(
+  "/production-options",
+  async (
+    req,
+    res
+  ) => {
+    try {
+      const orders =
+        await populateSalesOrder(
+          SalesOrder.find({
+            status: {
+              $in:
+                PRODUCTION_ELIGIBLE_SALES_ORDER_STATUSES,
+            },
+          }).sort({
+            orderDate: -1,
+            createdAt: -1,
+          })
+        );
+
+      const productionMap =
+        await getProductionPlannedQtyMap(
+          orders.map(
+            (order) =>
+              order._id
+          )
+        );
+
+      const data =
+        orders
+          .map(
+            (order) =>
+              buildProductionSalesOrderView(
+                order,
+                productionMap
+              )
+          )
+          .filter(
+            (order) =>
+              order.items.some(
+                (row) =>
+                  row.remainingProductionQty >
+                  0
+              )
+          );
+
+      return res.json({
+        success: true,
+        data,
+        salesOrders: data,
+      });
+    } catch (error) {
+      return res
+        .status(500)
+        .json({
+          success: false,
+
+          message:
+            error.message ||
+            "Unable to load Sales Orders for production",
+        });
+    }
+  }
+);
+
+router.get(
+  "/production-source/:id",
+  async (
+    req,
+    res
+  ) => {
+    try {
+      if (
+        !isValidId(
+          req.params.id
+        )
+      ) {
+        return res
+          .status(400)
+          .json({
+            success: false,
+
+            message:
+              "Invalid Sales Order ID",
+          });
+      }
+
+      const order =
+        await populateSalesOrder(
+          SalesOrder.findById(
+            req.params.id
+          )
+        );
+
+      if (!order) {
+        return res
+          .status(404)
+          .json({
+            success: false,
+
+            message:
+              "Sales Order not found",
+          });
+      }
+
+      if (
+        !PRODUCTION_ELIGIBLE_SALES_ORDER_STATUSES
+          .includes(
+            order.status
+          )
+      ) {
+        return res
+          .status(400)
+          .json({
+            success: false,
+
+            message:
+              `Sales Order with status ${order.status} cannot be selected for production`,
+          });
+      }
+
+      const productionMap =
+        await getProductionPlannedQtyMap([
+          order._id,
+        ]);
+
+      const data =
+        buildProductionSalesOrderView(
+          order,
+          productionMap
+        );
+
+      return res.json({
+        success: true,
+        data,
+      });
+    } catch (error) {
+      return res
+        .status(500)
+        .json({
+          success: false,
+
+          message:
+            error.message ||
+            "Unable to load Sales Order production details",
         });
     }
   }
