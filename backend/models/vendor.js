@@ -57,13 +57,17 @@ const vendorSchema = new mongoose.Schema(
     ntn: {
       type: String,
       trim: true,
+      uppercase: true,
       default: "",
+      maxlength: [30, "NTN number cannot exceed 30 characters"],
     },
 
     strn: {
       type: String,
       trim: true,
+      uppercase: true,
       default: "",
+      maxlength: [30, "STRN number cannot exceed 30 characters"],
     },
 
     openingBalance: {
@@ -96,33 +100,64 @@ const vendorSchema = new mongoose.Schema(
       default: "",
     },
   },
-  { timestamps: true }
+  {
+    timestamps: true,
+    versionKey: false,
+  }
 );
 
-// Important: no next() here
 vendorSchema.pre("save", function () {
   if (!this.email || this.email === "") {
     this.email = undefined;
   }
 
+  this.ntn = String(this.ntn || "")
+    .trim()
+    .toUpperCase();
+
+  this.strn = String(this.strn || "")
+    .trim()
+    .toUpperCase();
+
   this.openingBalance = Number(this.openingBalance || 0);
   this.creditLimit = Number(this.creditLimit || 0);
 });
 
-// Important: no next() here
 vendorSchema.pre("findOneAndUpdate", function () {
   const update = this.getUpdate() || {};
+  const payload = update.$set || update;
 
-  if (update.email === "") {
-    update.email = undefined;
+  if (payload.email === "") {
+    if (!update.$unset) {
+      update.$unset = {};
+    }
+
+    update.$unset.email = 1;
+    delete payload.email;
   }
 
-  if (update.openingBalance !== undefined) {
-    update.openingBalance = Number(update.openingBalance || 0);
+  if (payload.ntn !== undefined) {
+    payload.ntn = String(payload.ntn || "")
+      .trim()
+      .toUpperCase();
   }
 
-  if (update.creditLimit !== undefined) {
-    update.creditLimit = Number(update.creditLimit || 0);
+  if (payload.strn !== undefined) {
+    payload.strn = String(payload.strn || "")
+      .trim()
+      .toUpperCase();
+  }
+
+  if (payload.openingBalance !== undefined) {
+    payload.openingBalance = Number(payload.openingBalance || 0);
+  }
+
+  if (payload.creditLimit !== undefined) {
+    payload.creditLimit = Number(payload.creditLimit || 0);
+  }
+
+  if (update.$set) {
+    update.$set = payload;
   }
 
   this.setUpdate(update);

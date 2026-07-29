@@ -54,6 +54,14 @@ const customerSchema = new mongoose.Schema(
       default: "",
     },
 
+    ntn: {
+      type: String,
+      trim: true,
+      uppercase: true,
+      default: "",
+      maxlength: [30, "NTN number cannot exceed 30 characters"],
+    },
+
     openingBalance: {
       type: Number,
       default: 0,
@@ -78,36 +86,78 @@ const customerSchema = new mongoose.Schema(
       default: "",
     },
   },
-  { timestamps: true }
+  {
+    timestamps: true,
+    versionKey: false,
+  }
 );
 
-// Important: no next() here
 customerSchema.pre("save", function () {
   if (!this.email || this.email === "") {
     this.email = undefined;
   }
 
-  this.openingBalance = Number(this.openingBalance || 0);
-  this.creditLimit = Number(this.creditLimit || 0);
+  this.ntn = String(this.ntn || "")
+    .trim()
+    .toUpperCase();
+
+  this.openingBalance = Number(
+    this.openingBalance || 0
+  );
+
+  this.creditLimit = Number(
+    this.creditLimit || 0
+  );
 });
 
-// Important: no next() here
-customerSchema.pre("findOneAndUpdate", function () {
-  const update = this.getUpdate() || {};
+customerSchema.pre(
+  "findOneAndUpdate",
+  function () {
+    const update =
+      this.getUpdate() || {};
 
-  if (update.email === "") {
-    update.email = undefined;
+    const values =
+      update.$set || update;
+
+    if (values.email === "") {
+      values.email = undefined;
+    }
+
+    if (values.ntn !== undefined) {
+      values.ntn = String(
+        values.ntn || ""
+      )
+        .trim()
+        .toUpperCase();
+    }
+
+    if (
+      values.openingBalance !==
+      undefined
+    ) {
+      values.openingBalance = Number(
+        values.openingBalance || 0
+      );
+    }
+
+    if (
+      values.creditLimit !==
+      undefined
+    ) {
+      values.creditLimit = Number(
+        values.creditLimit || 0
+      );
+    }
+
+    if (update.$set) {
+      update.$set = values;
+    }
+
+    this.setUpdate(update);
   }
+);
 
-  if (update.openingBalance !== undefined) {
-    update.openingBalance = Number(update.openingBalance || 0);
-  }
-
-  if (update.creditLimit !== undefined) {
-    update.creditLimit = Number(update.creditLimit || 0);
-  }
-
-  this.setUpdate(update);
-});
-
-module.exports = mongoose.model("Customer", customerSchema);
+module.exports = mongoose.model(
+  "Customer",
+  customerSchema
+);

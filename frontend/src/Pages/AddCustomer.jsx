@@ -19,6 +19,7 @@ const getDefaultForm = () => ({
   email: "",
   address: "",
   city: "",
+  ntn: "",
   openingBalance: "",
   status: "Active",
   notes: "",
@@ -104,6 +105,7 @@ const CustomerManager = () => {
       email: customer.email || "",
       address: customer.address || "",
       city: customer.city || "",
+      ntn: customer.ntn || "",
       openingBalance: customer.openingBalance || customer.balance || "",
       status: customer.status || "Active",
       notes: customer.notes || "",
@@ -142,6 +144,7 @@ const CustomerManager = () => {
       alternatePhone: String(formData.alternatePhone || "").trim(),
       address: String(formData.address || "").trim(),
       city: String(formData.city || "").trim(),
+      ntn: String(formData.ntn || "").trim().toUpperCase(),
       openingBalance,
       status: formData.status || "Active",
       notes: String(formData.notes || "").trim(),
@@ -310,6 +313,10 @@ const CustomerManager = () => {
                             {customer.address || "-"}
                           </span>
                         </div>
+
+                        <div className="mt-1 text-[10px] font-semibold text-slate-500">
+                          NTN: {customer.ntn || "-"}
+                        </div>
                       </td>
 
                       <td className="px-3 sm:px-5 py-3">
@@ -448,9 +455,9 @@ const CustomerManager = () => {
           </div>
 
           <div>
-            <h3 className="text-xs font-bold text-blue-600 uppercase tracking-wider mb-3 border-b border-slate-100 pb-1">
+            {/* <h3 className="text-xs font-bold text-blue-600 uppercase tracking-wider mb-3 border-b border-slate-100 pb-1">
               2. Contact & Address Information
-            </h3>
+            </h3> */}
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="space-y-1.5">
@@ -528,13 +535,34 @@ const CustomerManager = () => {
                   placeholder="City name"
                 />
               </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold text-slate-600">
+                  NTN Number
+                </label>
+
+                <input
+                  type="text"
+                  value={formData.ntn}
+                  onChange={(e) =>
+                    setFormData({
+                      ...formData,
+                      ntn: e.target.value.toUpperCase(),
+                    })
+                  }
+                  className="w-full bg-[#f8fafc] border border-slate-200 rounded-lg p-2.5 text-xs outline-none focus:border-blue-500 focus:bg-white font-medium"
+                  placeholder="Enter NTN number"
+                  maxLength={30}
+                  autoComplete="off"
+                />
+              </div>
             </div>
           </div>
 
           <div>
-            <h3 className="text-xs font-bold text-blue-600 uppercase tracking-wider mb-3 border-b border-slate-100 pb-1">
+            {/* <h3 className="text-xs font-bold text-blue-600 uppercase tracking-wider mb-3 border-b border-slate-100 pb-1">
               3. Financial Information
-            </h3>
+            </h3> */}
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="space-y-1.5">
@@ -579,9 +607,9 @@ const CustomerManager = () => {
           </div>
 
           <div>
-            <h3 className="text-xs font-bold text-blue-600 uppercase tracking-wider mb-3 border-b border-slate-100 pb-1">
+            {/* <h3 className="text-xs font-bold text-blue-600 uppercase tracking-wider mb-3 border-b border-slate-100 pb-1">
               4. Additional Notes
-            </h3>
+            </h3> */}
 
             <textarea
               rows="4"

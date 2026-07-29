@@ -24,6 +24,7 @@ const VendorManager = () => {
     email: '',
     address: '',
     city: '',
+    ntn: '',
     openingBalance: '',
     status: 'Active',
     notes: ''
@@ -56,6 +57,7 @@ const VendorManager = () => {
       email: vendor.email || '',
       address: vendor.address || '',
       city: vendor.city || '',
+      ntn: vendor.ntn || '',
       openingBalance: vendor.openingBalance || vendor.balance || '',
       status: vendor.status || 'Active',
       notes: vendor.notes || ''
@@ -79,6 +81,7 @@ const VendorManager = () => {
     alternatePhone: String(formData.alternatePhone || "").trim(),
     address: String(formData.address || "").trim(),
     city: String(formData.city || "").trim(),
+    ntn: String(formData.ntn || "").trim().toUpperCase(),
     openingBalance,
     status: formData.status || "Active",
     notes: String(formData.notes || "").trim(),
@@ -131,7 +134,7 @@ const VendorManager = () => {
   const closeForm = () => {
     setFormData({
       vendorName: '', phoneNumber: '', alternatePhone: '',
-      email: '', address: '', city: '', openingBalance: '', status: 'Active', notes: ''
+      email: '', address: '', city: '', ntn: '', openingBalance: '', status: 'Active', notes: ''
     });
     setEditId(null);
     setShowForm(false);
@@ -210,6 +213,12 @@ const VendorManager = () => {
                           {vendor.address}
                         </span>
                       </div>
+
+                      {vendor.ntn && (
+                        <div className="mt-1 text-[10px] font-semibold text-violet-600">
+                          NTN: {vendor.ntn}
+                        </div>
+                      )}
                     </td>
 
                     {/* CONTACT */}
@@ -386,6 +395,28 @@ const VendorManager = () => {
                   onChange={(e) => setFormData({ ...formData, city: e.target.value })}
                   className="w-full bg-[#f8fafc] border border-slate-200 rounded-lg p-2.5 text-xs outline-none focus:border-blue-500 focus:bg-white font-medium"
                   placeholder="City name"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold text-slate-600">
+                  NTN Number
+                </label>
+                <input
+                  type="text"
+                  value={formData.ntn}
+                  onChange={(e) =>
+                    setFormData({
+                      ...formData,
+                      ntn: e.target.value
+                        .toUpperCase()
+                        .replace(/\s+/g, ""),
+                    })
+                  }
+                  maxLength={30}
+                  className="w-full bg-[#f8fafc] border border-slate-200 rounded-lg p-2.5 text-xs outline-none focus:border-blue-500 focus:bg-white font-medium"
+                  placeholder="1234567-8"
+                  autoComplete="off"
                 />
               </div>
             </div>
