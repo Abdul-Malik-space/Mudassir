@@ -2,6 +2,47 @@ const mongoose = require("mongoose");
 
 const FINISHED_GOODS_GODOWN = "Finished Goods Godown";
 
+const ISSUING_COMPANIES = [
+  "TOPICAL PACKAGING.PVT.LTD",
+  "AL-KARAM-TRADERS",
+];
+
+const TAX_TYPES = [
+  "without-tax",
+  "with-tax",
+];
+
+const normalizeIssuingCompany = (
+  value,
+  taxType = "without-tax"
+) => {
+  const company = cleanText(
+    value
+  ).toUpperCase();
+
+  if (
+    ISSUING_COMPANIES.includes(
+      company
+    )
+  ) {
+    return company;
+  }
+
+  return taxType === "with-tax"
+    ? "TOPICAL PACKAGING.PVT.LTD"
+    : "AL-KARAM-TRADERS";
+};
+
+const taxTypeForCompany = (
+  company
+) =>
+  normalizeIssuingCompany(
+    company
+  ) ===
+  "TOPICAL PACKAGING.PVT.LTD"
+    ? "with-tax"
+    : "without-tax";
+
 const todayDate = () =>
   new Date().toISOString().slice(0, 10);
 
@@ -333,11 +374,42 @@ const deliveryChallanSchema = new mongoose.Schema(
     companyName: {
       type: String,
       trim: true,
-      default: "URWA PACKAGES",
+      uppercase: true,
+
+      enum: {
+        values:
+          ISSUING_COMPANIES,
+
+        message:
+          "Invalid issuing company",
+      },
+
+      default:
+        "AL-KARAM-TRADERS",
+
       maxlength: [
         150,
         "Company name cannot exceed 150 characters",
       ],
+
+      index: true,
+    },
+
+    taxType: {
+      type: String,
+
+      enum: {
+        values:
+          TAX_TYPES,
+
+        message:
+          "Invalid tax type",
+      },
+
+      default:
+        "without-tax",
+
+      index: true,
     },
 
     companyLogo: {
@@ -831,10 +903,16 @@ deliveryChallanSchema.pre("validate", function () {
     this.referenceNo
   );
 
-  this.companyName = cleanText(
-    this.companyName,
-    "URWA PACKAGES"
-  );
+  this.companyName =
+    normalizeIssuingCompany(
+      this.companyName,
+      this.taxType
+    );
+
+  this.taxType =
+    taxTypeForCompany(
+      this.companyName
+    );
 
   this.companyLogo = cleanText(
     this.companyLogo,

@@ -31,14 +31,28 @@ const normalizeProfileKey = (value) => {
   const normalized = String(value || "")
     .trim()
     .toLowerCase()
-    .replace(/[\s_-]/g, "");
+    .replace(/[^a-z0-9]/g, "");
 
-  if (normalized === "alkaram") {
+  if (
+    normalized === "alkaram" ||
+    normalized === "alkaramtraders" ||
+    normalized.includes("alkaram")
+  ) {
     return "alKaram";
   }
 
   return "topical";
 };
+
+const getTaxTypeForProfile = (profileKey) =>
+  normalizeProfileKey(profileKey) === "topical"
+    ? "with-tax"
+    : "without-tax";
+
+const getTaxRateForProfile = (profileKey) =>
+  getTaxTypeForProfile(profileKey) === "with-tax"
+    ? 18
+    : 0;
 
 const cleanText = (value, fallback = "") =>
   String(value ?? fallback).trim();
@@ -630,16 +644,14 @@ const normalizeInvoice = (invoice) => {
     );
 
   invoice.taxType =
-    invoice.taxType === "with-tax"
-      ? "with-tax"
-      : "without-tax";
+    getTaxTypeForProfile(
+      profile.key
+    );
 
   invoice.taxRate =
-    invoice.taxType === "with-tax"
-      ? cleanNumber(
-          invoice.taxRate
-        )
-      : 0;
+    getTaxRateForProfile(
+      profile.key
+    );
 
   invoice.salesTaxRegNo =
     cleanText(
@@ -948,5 +960,11 @@ Invoice.COMPANY_PROFILES =
 
 Invoice.normalizeProfileKey =
   normalizeProfileKey;
+
+Invoice.getTaxTypeForProfile =
+  getTaxTypeForProfile;
+
+Invoice.getTaxRateForProfile =
+  getTaxRateForProfile;
 
 module.exports = Invoice;

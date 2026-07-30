@@ -43,6 +43,63 @@ const SOURCE_TYPES = [
   "Production Output",
 ];
 
+const ISSUING_COMPANIES = [
+  "TOPICAL PACKAGING.PVT.LTD",
+  "AL-KARAM-TRADERS",
+];
+
+const normalizeIssuingCompany = (
+  value,
+  taxType = "without-tax"
+) => {
+  const company =
+    cleanText(
+      value
+    ).toUpperCase();
+
+  if (
+    ISSUING_COMPANIES.includes(
+      company
+    )
+  ) {
+    return company;
+  }
+
+  return taxType === "with-tax"
+    ? "TOPICAL PACKAGING.PVT.LTD"
+    : "AL-KARAM-TRADERS";
+};
+
+const taxTypeForCompany = (
+  company
+) =>
+  normalizeIssuingCompany(
+    company
+  ) ===
+  "TOPICAL PACKAGING.PVT.LTD"
+    ? "with-tax"
+    : "without-tax";
+
+const getSalesOrderCompanyDetails = (
+  salesOrder = {}
+) => {
+  const companyName =
+    normalizeIssuingCompany(
+      salesOrder.issuingCompany ||
+        salesOrder.companyName,
+      salesOrder.taxType
+    );
+
+  return {
+    companyName,
+
+    taxType:
+      taxTypeForCompany(
+        companyName
+      ),
+  };
+};
+
 const normalizeSourceType = (value) =>
   value === "Production Output"
     ? "Production Output"
@@ -124,7 +181,7 @@ const populateChallan = (query) =>
   query
     .populate(
       "salesOrder",
-      "salesOrderNo orderNo poNo customerName customerPhone customerEmail customerAddress deliveryAddress status items"
+      "salesOrderNo orderNo poNo issuingCompany taxType customerName customerPhone customerEmail customerAddress deliveryAddress status items"
     )
     .populate(
       productionOutputPopulate
@@ -611,7 +668,7 @@ const loadProductionOutput =
                 path:
                   "salesOrder",
                 select:
-                  "salesOrderNo poNo customer customerName customerPhone customerEmail customerAddress deliveryAddress contactPerson attentionTo status",
+                  "salesOrderNo poNo issuingCompany taxType customer customerName customerPhone customerEmail customerAddress deliveryAddress contactPerson attentionTo status",
                 populate: {
                   path:
                     "customer",
@@ -631,7 +688,7 @@ const loadProductionOutput =
             path:
               "salesOrder",
             select:
-              "salesOrderNo poNo customer customerName customerPhone customerEmail customerAddress deliveryAddress contactPerson attentionTo status",
+              "salesOrderNo poNo issuingCompany taxType customer customerName customerPhone customerEmail customerAddress deliveryAddress contactPerson attentionTo status",
             populate: {
               path:
                 "customer",
@@ -1500,6 +1557,11 @@ const prepareProductionOutputGroup =
           firstSalesOrder.salesOrderNo
       ).toUpperCase();
 
+    const companyDetails =
+      getSalesOrderCompanyDetails(
+        firstSalesOrder
+      );
+
     return {
       outputs,
       items:
@@ -1539,6 +1601,8 @@ const prepareProductionOutputGroup =
           null,
 
         salesOrderNo,
+
+        ...companyDetails,
       },
 
       poNo:
@@ -2130,6 +2194,15 @@ const getEligibleSalesOrders =
         status:
           order.status,
 
+        ...getSalesOrderCompanyDetails(
+          order
+        ),
+
+        issuingCompany:
+          getSalesOrderCompanyDetails(
+            order
+          ).companyName,
+
         customer:
           customer._id ||
           customer,
@@ -2213,7 +2286,7 @@ const getEligibleProductionOutputs =
                 path:
                   "salesOrder",
                 select:
-                  "salesOrderNo poNo customer customerName customerPhone customerEmail customerAddress deliveryAddress contactPerson attentionTo status",
+                  "salesOrderNo poNo issuingCompany taxType customer customerName customerPhone customerEmail customerAddress deliveryAddress contactPerson attentionTo status",
                 populate: {
                   path:
                     "customer",
@@ -2233,7 +2306,7 @@ const getEligibleProductionOutputs =
             path:
               "salesOrder",
             select:
-              "salesOrderNo poNo customer customerName customerPhone customerEmail customerAddress deliveryAddress contactPerson attentionTo status",
+              "salesOrderNo poNo issuingCompany taxType customer customerName customerPhone customerEmail customerAddress deliveryAddress contactPerson attentionTo status",
             populate: {
               path:
                 "customer",
@@ -2358,6 +2431,15 @@ const getEligibleProductionOutputs =
               job.customerPO ||
               salesOrder.poNo
           ),
+
+        ...getSalesOrderCompanyDetails(
+          salesOrder
+        ),
+
+        issuingCompany:
+          getSalesOrderCompanyDetails(
+            salesOrder
+          ).companyName,
 
         status:
           output.status,
@@ -2733,6 +2815,13 @@ const dispatchChallan =
           requireCurrentStock:
             true,
         });
+
+      Object.assign(
+        challan,
+        getSalesOrderCompanyDetails(
+          salesOrder
+        )
+      );
     }
 
     const requestedByItem =
@@ -3579,6 +3668,10 @@ router.post(
               salesOrder
             ),
 
+          ...getSalesOrderCompanyDetails(
+            salesOrder
+          ),
+
           productionOutput:
             null,
 
@@ -3612,15 +3705,15 @@ router.post(
 
           poNo,
 
-          referenceNo:
-            cleanText(
-              body.referenceNo
+          companyName:
+            normalizeIssuingCompany(
+              sourceFields.companyName,
+              sourceFields.taxType
             ),
 
-          companyName:
-            cleanText(
-              body.companyName,
-              "URWA PACKAGES"
+          taxType:
+            taxTypeForCompany(
+              sourceFields.companyName
             ),
 
           companyLogo:
@@ -3659,10 +3752,7 @@ router.post(
               todayDate()
             ),
 
-          dispatchDate:
-            cleanText(
-              body.dispatchDate
-            ),
+          dispatchDate: "",
 
           receivedDate: "",
 
@@ -3686,10 +3776,7 @@ router.post(
               body.preparedBy
             ),
 
-          dispatchedBy:
-            cleanText(
-              body.dispatchedBy
-            ),
+          dispatchedBy: "",
 
           receivedBy: "",
 
@@ -3920,6 +4007,10 @@ router.put(
               salesOrder
             ),
 
+          ...getSalesOrderCompanyDetails(
+            salesOrder
+          ),
+
           productionOutput:
             null,
 
@@ -3949,16 +4040,17 @@ router.put(
       challan.poNo =
         poNo;
 
-      challan.referenceNo =
-        cleanText(
-          body.referenceNo
+      challan.companyName =
+        normalizeIssuingCompany(
+          sourceFields.companyName ||
+            challan.companyName,
+          sourceFields.taxType ||
+            challan.taxType
         );
 
-      challan.companyName =
-        cleanText(
-          body.companyName,
-          challan.companyName ||
-            "URWA PACKAGES"
+      challan.taxType =
+        taxTypeForCompany(
+          challan.companyName
         );
 
       challan.companyLogo =
@@ -4002,11 +4094,6 @@ router.put(
           challan.challanDate
         );
 
-      challan.dispatchDate =
-        cleanText(
-          body.dispatchDate
-        );
-
       challan.vehicleNo =
         cleanText(
           body.vehicleNo
@@ -4025,11 +4112,6 @@ router.put(
       challan.preparedBy =
         cleanText(
           body.preparedBy
-        );
-
-      challan.dispatchedBy =
-        cleanText(
-          body.dispatchedBy
         );
 
       challan.warehouseId =
@@ -4116,24 +4198,6 @@ router.post(
             message:
               "Delivery challan not found",
           });
-      }
-
-      if (
-        req.body.dispatchDate
-      ) {
-        challan.dispatchDate =
-          cleanText(
-            req.body.dispatchDate
-          );
-      }
-
-      if (
-        req.body.dispatchedBy
-      ) {
-        challan.dispatchedBy =
-          cleanText(
-            req.body.dispatchedBy
-          );
       }
 
       if (

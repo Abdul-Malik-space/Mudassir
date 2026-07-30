@@ -121,6 +121,101 @@ const getProfile = (value) => {
   );
 };
 
+
+const getTaxTypeForProfile = (
+  profileKey
+) => {
+  if (
+    typeof Invoice.getTaxTypeForProfile ===
+    "function"
+  ) {
+    return Invoice.getTaxTypeForProfile(
+      profileKey
+    );
+  }
+
+  return normalizeProfileKey(
+    profileKey
+  ) === "topical"
+    ? "with-tax"
+    : "without-tax";
+};
+
+const getTaxRateForProfile = (
+  profileKey
+) => {
+  if (
+    typeof Invoice.getTaxRateForProfile ===
+    "function"
+  ) {
+    return Invoice.getTaxRateForProfile(
+      profileKey
+    );
+  }
+
+  return getTaxTypeForProfile(
+    profileKey
+  ) === "with-tax"
+    ? 18
+    : 0;
+};
+
+const resolveProfileFromSource = (
+  challan = {},
+  salesOrder = {}
+) => {
+  const companyCandidates = [
+    challan.companyProfile,
+    challan.companyName,
+    challan.issuingCompany,
+    salesOrder.companyProfile,
+    salesOrder.companyName,
+    salesOrder.issuingCompany,
+  ];
+
+  for (
+    const candidate of
+    companyCandidates
+  ) {
+    const normalized = String(
+      candidate || ""
+    )
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]/g, "");
+
+    if (!normalized) {
+      continue;
+    }
+
+    if (
+      normalized.includes(
+        "alkaram"
+      )
+    ) {
+      return COMPANY_PROFILES.alKaram;
+    }
+
+    if (
+      normalized.includes(
+        "topical"
+      )
+    ) {
+      return COMPANY_PROFILES.topical;
+    }
+  }
+
+  const sourceTaxType =
+    challan.taxType ||
+    salesOrder.taxType ||
+    "without-tax";
+
+  return sourceTaxType ===
+    "with-tax"
+    ? COMPANY_PROFILES.topical
+    : COMPANY_PROFILES.alKaram;
+};
+
 const cleanText = (
   value,
   fallback = ""
@@ -1054,6 +1149,8 @@ const populateInvoice = (
         "invoiceStatus",
         "companyProfile",
         "companyName",
+        "issuingCompany",
+        "taxType",
         "templateType",
         "totalCartons",
         "totalRolls",
@@ -1301,10 +1398,55 @@ router.get(
 
   async (req, res) => {
     try {
+      const deliveryChallanId =
+        cleanText(
+          req.query.deliveryChallan
+        );
+
+      if (!deliveryChallanId) {
+        return res
+          .status(400)
+          .json({
+            success: false,
+            message:
+              "Select a Delivery Challan first",
+          });
+      }
+
+      const challan =
+        await DeliveryChallan.findById(
+          deliveryChallanId
+        );
+
+      if (!challan) {
+        return res
+          .status(404)
+          .json({
+            success: false,
+            message:
+              "Delivery Challan not found",
+          });
+      }
+
+      const salesOrder =
+        await SalesOrder.findById(
+          challan.salesOrder
+        );
+
+      if (!salesOrder) {
+        return res
+          .status(404)
+          .json({
+            success: false,
+            message:
+              "Sales Order not found",
+          });
+      }
+
       const profile =
-        getProfile(
-          req.query
-            .companyProfile
+        resolveProfileFromSource(
+          challan,
+          salesOrder
         );
 
       const invoiceNo =
@@ -1317,15 +1459,20 @@ router.get(
         .json({
           success: true,
           invoiceNo,
-
           companyProfile:
             profile.key,
-
           companyName:
             profile.name,
-
           templateType:
             profile.templateType,
+          taxType:
+            getTaxTypeForProfile(
+              profile.key
+            ),
+          taxRate:
+            getTaxRateForProfile(
+              profile.key
+            ),
         });
     } catch (error) {
       console.error(
@@ -1337,10 +1484,8 @@ router.get(
         .status(500)
         .json({
           success: false,
-
           message:
             "Invoice number could not be generated",
-
           error:
             error.message,
         });
@@ -1734,9 +1879,19 @@ router.post(
       }
 
       const profile =
-        getProfile(
-          req.body.companyProfile ||
-            challan.companyProfile
+        resolveProfileFromSource(
+          challan,
+          salesOrder
+        );
+
+      const sourceTaxType =
+        getTaxTypeForProfile(
+          profile.key
+        );
+
+      const sourceTaxRate =
+        getTaxRateForProfile(
+          profile.key
         );
 
       const cleanItems =
@@ -1768,12 +1923,10 @@ router.post(
             cleanItems,
 
           taxType:
-            req.body.taxType ||
-            salesOrder.taxType ||
-            "without-tax",
+            sourceTaxType,
 
           taxRate:
-            req.body.taxRate,
+            sourceTaxRate,
 
           paidAmount:
             req.body
@@ -1892,16 +2045,12 @@ router.post(
 
           salesTaxRegNo:
             cleanText(
-              req.body
-                .salesTaxRegNo ||
-                profile.salesTaxRegNo
+              profile.salesTaxRegNo
             ),
 
           nationalTaxNo:
             cleanText(
-              req.body
-                .nationalTaxNo ||
-                profile.nationalTaxNo
+              profile.nationalTaxNo
             ),
 
           paymentTerms:
@@ -2203,10 +2352,19 @@ router.put(
       }
 
       const profile =
-        getProfile(
-          req.body.companyProfile ||
-            invoice.companyProfile ||
-            challan.companyProfile
+        resolveProfileFromSource(
+          challan,
+          salesOrder
+        );
+
+      const sourceTaxType =
+        getTaxTypeForProfile(
+          profile.key
+        );
+
+      const sourceTaxRate =
+        getTaxRateForProfile(
+          profile.key
         );
 
       const cleanItems =
@@ -2239,14 +2397,10 @@ router.put(
             cleanItems,
 
           taxType:
-            req.body.taxType ||
-            invoice.taxType,
+            sourceTaxType,
 
           taxRate:
-            req.body.taxRate !==
-            undefined
-              ? req.body.taxRate
-              : invoice.taxRate,
+            sourceTaxRate,
 
           paidAmount:
             req.body.paidAmount !==
@@ -2358,16 +2512,12 @@ router.put(
 
       invoice.salesTaxRegNo =
         cleanText(
-          req.body.salesTaxRegNo ??
-            invoice.salesTaxRegNo ??
-            profile.salesTaxRegNo
+          profile.salesTaxRegNo
         );
 
       invoice.nationalTaxNo =
         cleanText(
-          req.body.nationalTaxNo ??
-            invoice.nationalTaxNo ??
-            profile.nationalTaxNo
+          profile.nationalTaxNo
         );
 
       invoice.paymentTerms =

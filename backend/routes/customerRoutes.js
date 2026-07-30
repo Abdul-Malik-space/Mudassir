@@ -5,146 +5,133 @@ const router = express.Router();
 const Customer = require("../models/customer");
 const Counter = require("../models/Counter");
 
-const cleanPayload = (body = {}) => {
-  const email = body.email
-    ? String(body.email)
-        .trim()
-        .toLowerCase()
-    : undefined;
+const cleanPayload = (body = {}) => ({
+  customerCode: body.customerCode
+    ? String(body.customerCode).trim().toUpperCase()
+    : undefined,
 
-  return {
-    customerCode: body.customerCode
-      ? String(body.customerCode)
-          .trim()
-          .toUpperCase()
-      : undefined,
+  customerName: String(
+    body.customerName ||
+      body.name ||
+      ""
+  ).trim(),
 
-    customerName: String(
-      body.customerName ||
-        body.name ||
-        ""
-    ).trim(),
+  contactPerson: String(
+    body.contactPerson ||
+      ""
+  ).trim(),
 
-    contactPerson: String(
-      body.contactPerson || ""
-    ).trim(),
+  phoneNumber: String(
+    body.phoneNumber ||
+      body.phone ||
+      ""
+  ).trim(),
 
-    email,
+  alternatePhone: String(
+    body.alternatePhone ||
+      ""
+  ).trim(),
 
-    phoneNumber: String(
-      body.phoneNumber ||
-        body.phone ||
-        ""
-    ).trim(),
+  address: String(
+    body.address ||
+      ""
+  ).trim(),
 
-    alternatePhone: String(
-      body.alternatePhone || ""
-    ).trim(),
+  city: String(
+    body.city ||
+      ""
+  ).trim(),
 
-    address: String(
-      body.address || ""
-    ).trim(),
+  ntn: String(
+    body.ntn ||
+      ""
+  )
+    .trim()
+    .toUpperCase(),
 
-    city: String(
-      body.city || ""
-    ).trim(),
+  openingBalance: Number(
+    body.openingBalance ||
+      body.balance ||
+      0
+  ),
 
-    ntn: String(
-      body.ntn || ""
-    )
-      .trim()
-      .toUpperCase(),
+  creditLimit: Number(
+    body.creditLimit ||
+      0
+  ),
 
-    openingBalance: Number(
-      body.openingBalance ||
-        body.balance ||
-        0
-    ),
+  status: [
+    "Active",
+    "Inactive",
+  ].includes(body.status)
+    ? body.status
+    : "Active",
 
-    creditLimit: Number(
-      body.creditLimit || 0
-    ),
+  notes: String(
+    body.notes ||
+      ""
+  ).trim(),
+});
 
-    status: [
-      "Active",
-      "Inactive",
-    ].includes(body.status)
-      ? body.status
-      : "Active",
-
-    notes: String(
-      body.notes || ""
-    ).trim(),
-  };
-};
-
-const getNextCustomerCode =
-  async () => {
-    let customerCode = "";
-
-    for (
-      let attempt = 0;
-      attempt < 20;
-      attempt += 1
-    ) {
-      const counter =
-        await Counter.findOneAndUpdate(
-          {
-            name:
-              "customerCode",
-          },
-          {
-            $inc: {
-              seq: 1,
-            },
-          },
-          {
-            new: true,
-            upsert: true,
-            setDefaultsOnInsert:
-              true,
-          }
-        );
-
-      customerCode =
-        `CUS-${String(
-          counter.seq
-        ).padStart(4, "0")}`;
-
-      const exists =
-        await Customer.exists({
-          customerCode,
-        });
-
-      if (!exists) {
-        return customerCode;
-      }
-    }
-
-    throw new Error(
-      "Unable to generate unique customer code"
-    );
-  };
-
-const peekNextCustomerCode =
-  async () => {
+const getNextCustomerCode = async () => {
+  for (
+    let attempt = 0;
+    attempt < 20;
+    attempt += 1
+  ) {
     const counter =
-      await Counter.findOne({
-        name: "customerCode",
+      await Counter.findOneAndUpdate(
+        {
+          name: "customerCode",
+        },
+        {
+          $inc: {
+            seq: 1,
+          },
+        },
+        {
+          new: true,
+          upsert: true,
+          setDefaultsOnInsert: true,
+        }
+      );
+
+    const customerCode =
+      `CUS-${String(
+        counter.seq
+      ).padStart(4, "0")}`;
+
+    const exists =
+      await Customer.exists({
+        customerCode,
       });
 
-    const nextSeq =
-      Number(counter?.seq || 0) +
-      1;
+    if (!exists) {
+      return customerCode;
+    }
+  }
 
-    return `CUS-${String(
-      nextSeq
-    ).padStart(4, "0")}`;
-  };
+  throw new Error(
+    "Unable to generate unique customer code"
+  );
+};
 
-const duplicateMessage = (
-  error
-) => {
+const peekNextCustomerCode = async () => {
+  const counter =
+    await Counter.findOne({
+      name: "customerCode",
+    });
+
+  const nextSeq =
+    Number(counter?.seq || 0) +
+    1;
+
+  return `CUS-${String(
+    nextSeq
+  ).padStart(4, "0")}`;
+};
+
+const duplicateMessage = (error) => {
   if (error.code !== 11000) {
     return (
       error.message ||
@@ -156,12 +143,6 @@ const duplicateMessage = (
     Object.keys(
       error.keyPattern || {}
     )[0];
-
-  if (
-    duplicateField === "email"
-  ) {
-    return "This email is already used by another customer";
-  }
 
   if (
     duplicateField ===
@@ -196,12 +177,9 @@ router.get(
         .status(500)
         .json({
           success: false,
-
           message:
             "Customer code could not be generated",
-
-          error:
-            error.message,
+          error: error.message,
         });
     }
   }
@@ -221,16 +199,6 @@ router.post(
             success: false,
             message:
               "Customer name is required",
-          });
-      }
-
-      if (!payload.phoneNumber) {
-        return res
-          .status(400)
-          .json({
-            success: false,
-            message:
-              "Phone number is required",
           });
       }
 
@@ -270,10 +238,8 @@ router.post(
         .status(201)
         .json({
           success: true,
-
           message:
             "Customer added successfully",
-
           data: customer,
         });
     } catch (error) {
@@ -286,7 +252,6 @@ router.post(
         .status(400)
         .json({
           success: false,
-
           message:
             duplicateMessage(
               error
@@ -348,12 +313,6 @@ router.get(
             },
           },
           {
-            email: {
-              $regex: search,
-              $options: "i",
-            },
-          },
-          {
             address: {
               $regex: search,
               $options: "i",
@@ -375,11 +334,11 @@ router.get(
       }
 
       const customers =
-        await Customer.find(
-          query
-        ).sort({
-          createdAt: -1,
-        });
+        await Customer.find(query)
+          .select("-email")
+          .sort({
+            createdAt: -1,
+          });
 
       return res
         .status(200)
@@ -394,12 +353,9 @@ router.get(
         .status(500)
         .json({
           success: false,
-
           message:
             "Customers could not be loaded",
-
-          error:
-            error.message,
+          error: error.message,
         });
     }
   }
@@ -412,14 +368,13 @@ router.get(
       const customer =
         await Customer.findById(
           req.params.id
-        );
+        ).select("-email");
 
       if (!customer) {
         return res
           .status(404)
           .json({
             success: false,
-
             message:
               "Customer not found",
           });
@@ -441,12 +396,9 @@ router.get(
         .status(500)
         .json({
           success: false,
-
           message:
             "Customer could not be loaded",
-
-          error:
-            error.message,
+          error: error.message,
         });
     }
   }
@@ -464,20 +416,8 @@ router.put(
           .status(400)
           .json({
             success: false,
-
             message:
               "Customer name is required",
-          });
-      }
-
-      if (!payload.phoneNumber) {
-        return res
-          .status(400)
-          .json({
-            success: false,
-
-            message:
-              "Phone number is required",
           });
       }
 
@@ -486,7 +426,6 @@ router.put(
           .status(400)
           .json({
             success: false,
-
             message:
               "Address is required",
           });
@@ -499,7 +438,6 @@ router.put(
           .status(400)
           .json({
             success: false,
-
             message:
               "NTN number cannot exceed 30 characters",
           });
@@ -512,19 +450,23 @@ router.put(
       const updatedCustomer =
         await Customer.findByIdAndUpdate(
           req.params.id,
-          payload,
+          {
+            $set: payload,
+            $unset: {
+              email: 1,
+            },
+          },
           {
             new: true,
             runValidators: true,
           }
-        );
+        ).select("-email");
 
       if (!updatedCustomer) {
         return res
           .status(404)
           .json({
             success: false,
-
             message:
               "Customer not found",
           });
@@ -534,12 +476,9 @@ router.put(
         .status(200)
         .json({
           success: true,
-
           message:
             "Customer updated successfully",
-
-          data:
-            updatedCustomer,
+          data: updatedCustomer,
         });
     } catch (error) {
       console.error(
@@ -551,7 +490,6 @@ router.put(
         .status(400)
         .json({
           success: false,
-
           message:
             duplicateMessage(
               error
@@ -575,7 +513,6 @@ router.delete(
           .status(404)
           .json({
             success: false,
-
             message:
               "Customer not found",
           });
@@ -585,7 +522,6 @@ router.delete(
         .status(200)
         .json({
           success: true,
-
           message:
             "Customer deleted successfully",
         });
@@ -599,12 +535,9 @@ router.delete(
         .status(500)
         .json({
           success: false,
-
           message:
             "Customer could not be deleted",
-
-          error:
-            error.message,
+          error: error.message,
         });
     }
   }

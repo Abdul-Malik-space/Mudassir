@@ -3,7 +3,6 @@ import {
   AlertCircle,
   ArrowLeft,
   BadgeDollarSign,
-  Building2,
   CheckCircle2,
   CreditCard,
   Edit2,
@@ -46,7 +45,6 @@ const COMPANY_PROFILES = {
   },
 };
 
-const PROFILE_OPTIONS = Object.values(COMPANY_PROFILES);
 
 const emptyItem = {
   description: "",
@@ -191,10 +189,45 @@ const getTextTypeValue = (item) => {
 };
 
 const resolveCompanyProfileKey = (record) => {
-  if (COMPANY_PROFILES[record?.companyProfile]) return record.companyProfile;
+  if (COMPANY_PROFILES[record?.companyProfile]) {
+    return record.companyProfile;
+  }
 
-  const number = String(record?.invoiceNo || record?.challanNo || "").toUpperCase();
-  if (number.startsWith("AK-")) return "alKaram";
+  const companyText = String(
+    record?.companyName ||
+      record?.issuingCompany ||
+      ""
+  )
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "");
+
+  if (companyText.includes("alkaram")) {
+    return "alKaram";
+  }
+
+  if (companyText.includes("topical")) {
+    return "topical";
+  }
+
+  if (record?.taxType === "without-tax") {
+    return "alKaram";
+  }
+
+  if (record?.taxType === "with-tax") {
+    return "topical";
+  }
+
+  const number = String(
+    record?.invoiceNo ||
+      record?.challanNo ||
+      ""
+  ).toUpperCase();
+
+  if (number.startsWith("AK-")) {
+    return "alKaram";
+  }
+
   return "topical";
 };
 
@@ -358,14 +391,16 @@ const Invoices = () => {
     }
   };
 
-  const fetchNextNo = async (companyProfile) => {
-    if (!companyProfile) return "";
+  const fetchNextNo = async (deliveryChallanId) => {
+    if (!deliveryChallanId) {
+      return null;
+    }
 
-    const data = await apiRequest(
-      `${API_BASE_URL}/invoices/next-no?companyProfile=${encodeURIComponent(companyProfile)}`
+    return apiRequest(
+      `${API_BASE_URL}/invoices/next-no?deliveryChallan=${encodeURIComponent(
+        deliveryChallanId
+      )}`
     );
-
-    return data.invoiceNo || "";
   };
 
   useEffect(() => {
@@ -479,45 +514,6 @@ const Invoices = () => {
     setForm(getDefaultForm());
   };
 
-  const handleCompanyChange = async (companyProfile) => {
-    if (!companyProfile) {
-      setForm(getDefaultForm());
-      return;
-    }
-
-    const profile = COMPANY_PROFILES[companyProfile];
-
-    try {
-      setSaving(true);
-      const invoiceNo = await fetchNextNo(companyProfile);
-
-      setForm({
-        ...getDefaultForm(),
-        companyProfile,
-        companyName: profile.name,
-        companyAddress: profile.address,
-        companyPhone: profile.phone,
-        templateType: profile.templateType,
-        invoiceNo,
-        salesTaxRegNo: profile.salesTaxRegNo,
-        nationalTaxNo: profile.nationalTaxNo,
-      });
-    } catch (error) {
-      console.error("Invoice number loading error:", error);
-      setForm({
-        ...getDefaultForm(),
-        companyProfile,
-        companyName: profile.name,
-        companyAddress: profile.address,
-        companyPhone: profile.phone,
-        templateType: profile.templateType,
-        salesTaxRegNo: profile.salesTaxRegNo,
-        nationalTaxNo: profile.nationalTaxNo,
-      });
-    } finally {
-      setSaving(false);
-    }
-  };
 
   const getRateFromSalesOrder = (challanItem, index, order) => {
     if (!order?.items) return "";
@@ -537,30 +533,46 @@ const Invoices = () => {
     return exactItem?.unitPrice ?? order.items[index]?.unitPrice ?? "";
   };
 
-  const handleChallanChange = (challanId) => {
+  const handleChallanChange = async (challanId) => {
     const challan = challans.find(
       (item) => item._id === challanId
     );
 
     if (!challan) {
       setForm((previous) => ({
-        ...previous,
-        deliveryChallan: "",
-        poNo: "",
-        customerNTN: "",
-        customerSTRN: "",
-        items: [],
+        ...getDefaultForm(),
+        invoiceDate:
+          previous.invoiceDate ||
+          todayDate(),
+        dueDate:
+          previous.dueDate || "",
+        status:
+          previous.status || "Draft",
+        paymentTerms:
+          previous.paymentTerms ||
+          "Due on Receipt",
       }));
       return;
     }
 
-    const profileKey = form.companyProfile;
-    const profile = COMPANY_PROFILES[profileKey];
+    const profileKey =
+      resolveCompanyProfileKey(
+        challan
+      );
 
-    if (!profile) {
-      alert("Select company profile first.");
-      return;
-    }
+    const profile =
+      COMPANY_PROFILES[profileKey] ||
+      COMPANY_PROFILES.topical;
+
+    const taxType =
+      profileKey === "topical"
+        ? "with-tax"
+        : "without-tax";
+
+    const taxRate =
+      taxType === "with-tax"
+        ? 18
+        : 0;
 
     const salesOrderId =
       challan.salesOrder?._id ||
@@ -571,75 +583,114 @@ const Invoices = () => {
       (item) => item._id === salesOrderId
     );
 
-    setForm((previous) => ({
-      ...previous,
-      companyProfile: profileKey,
-      companyName: profile.name,
-      companyAddress: profile.address,
-      companyPhone: profile.phone,
-      templateType: profile.templateType,
-      deliveryChallan: challan._id,
-      poNo: challan.poNo || order?.poNo || "",
-      taxType:
-        order?.taxType ||
-        previous.taxType ||
-        "without-tax",
-      salesTaxRegNo:
-        previous.salesTaxRegNo ||
-        profile.salesTaxRegNo,
-      nationalTaxNo:
-        previous.nationalTaxNo ||
-        profile.nationalTaxNo,
-      customerNTN:
-        order?.customerNTN ||
-        order?.ntn ||
-        "",
-      customerSTRN:
-        order?.customerSTRN ||
-        order?.strn ||
-        "",
-      items:
-        challan.items?.length > 0
-          ? challan.items.map((item, index) => ({
-              item:
-                item.item?._id ||
-                item.item ||
-                null,
-              deliveryChallanItemId:
-                item._id || null,
-              salesOrderItemId:
-                item.salesOrderItemId ||
-                null,
-              description:
-                item.description || "",
-              size: item.size || "",
-              textType:
-                getTextTypeValue(item),
-              cartons: item.cartons || "",
-              rolls: item.rolls || "",
-              packing:
-                item.packing ||
-                item.cartons ||
-                "",
-              quantity:
-                item.quantity ||
-                item.netWeight ||
-                "",
-              unit: item.unit || "Rolls",
-              unitPrice:
-                getRateFromSalesOrder(
-                  item,
-                  index,
-                  order
-                ),
-              grossWeight:
-                item.grossWeight || "",
-              netWeight:
-                item.netWeight || "",
-              remarks: item.remarks || "",
-            }))
-          : [{ ...emptyItem }],
-    }));
+    try {
+      setSaving(true);
+
+      const numberData = editId
+        ? null
+        : await fetchNextNo(
+            challan._id
+          );
+
+      setForm((previous) => ({
+        ...previous,
+        companyProfile:
+          profile.key,
+        companyName:
+          profile.name,
+        companyAddress:
+          profile.address,
+        companyPhone:
+          profile.phone,
+        templateType:
+          profile.templateType,
+        invoiceNo:
+          editId
+            ? previous.invoiceNo
+            : numberData?.invoiceNo ||
+              "",
+        deliveryChallan:
+          challan._id,
+        poNo:
+          challan.poNo ||
+          order?.poNo ||
+          "",
+        taxType,
+        taxRate,
+        salesTaxRegNo:
+          profile.salesTaxRegNo,
+        nationalTaxNo:
+          profile.nationalTaxNo,
+        customerNTN:
+          order?.customerNTN ||
+          order?.ntn ||
+          "",
+        customerSTRN:
+          order?.customerSTRN ||
+          order?.strn ||
+          "",
+        items:
+          challan.items?.length > 0
+            ? challan.items.map(
+                (item, index) => ({
+                  item:
+                    item.item?._id ||
+                    item.item ||
+                    null,
+                  deliveryChallanItemId:
+                    item._id || null,
+                  salesOrderItemId:
+                    item.salesOrderItemId ||
+                    null,
+                  description:
+                    item.description || "",
+                  size:
+                    item.size || "",
+                  textType:
+                    getTextTypeValue(item),
+                  cartons:
+                    item.cartons || "",
+                  rolls:
+                    item.rolls || "",
+                  packing:
+                    item.packing ||
+                    item.cartons ||
+                    "",
+                  quantity:
+                    item.quantity ||
+                    item.netWeight ||
+                    "",
+                  unit:
+                    item.unit || "Rolls",
+                  unitPrice:
+                    getRateFromSalesOrder(
+                      item,
+                      index,
+                      order
+                    ),
+                  grossWeight:
+                    item.grossWeight || "",
+                  netWeight:
+                    item.netWeight || "",
+                  remarks:
+                    item.remarks || "",
+                })
+              )
+            : [{ ...emptyItem }],
+      }));
+    } catch (error) {
+      console.error(
+        "Delivery Challan selection error:",
+        error
+      );
+
+      alert(
+        error.message ||
+          "Unable to load Delivery Challan details."
+      );
+    } finally {
+      setSaving(false);
+    }
   };
 
   const updateItem = (index, field, value) => {
@@ -668,10 +719,6 @@ const Invoices = () => {
   };
 
   const validateForm = () => {
-    if (!form.companyProfile) {
-      alert("Select a company profile.");
-      return false;
-    }
     if (!form.invoiceNo.trim()) {
       alert("Invoice number is required.");
       return false;
@@ -682,10 +729,6 @@ const Invoices = () => {
     }
     if (!form.invoiceDate) {
       alert("Invoice date is required.");
-      return false;
-    }
-    if (form.taxType === "with-tax" && numberValue(form.taxRate) <= 0) {
-      alert("Enter a valid sales tax rate.");
       return false;
     }
 
@@ -731,15 +774,32 @@ const Invoices = () => {
       }));
 
     const payload = {
-      ...form,
-      items: validItems,
-      taxRate: form.taxType === "with-tax" ? numberValue(form.taxRate) : 0,
-      paidAmount: numberValue(form.paidAmount),
-      subtotal: totals.subtotal,
-      salesTax: totals.salesTax,
-      grandTotal: totals.grandTotal,
-      balance: totals.balance,
-      amountInWords: amountToWords(totals.grandTotal),
+      deliveryChallan:
+        form.deliveryChallan,
+      invoiceDate:
+        form.invoiceDate,
+      dueDate:
+        form.dueDate,
+      poNo:
+        form.poNo,
+      customerNTN:
+        form.customerNTN,
+      customerSTRN:
+        form.customerSTRN,
+      paymentTerms:
+        form.paymentTerms,
+      paidAmount:
+        numberValue(
+          form.paidAmount
+        ),
+      status:
+        form.status,
+      remarks:
+        form.remarks,
+      preparedBy:
+        form.preparedBy,
+      items:
+        validItems,
     };
 
     try {
@@ -1186,7 +1246,7 @@ const Invoices = () => {
                 {editId ? "Edit Invoice" : "New Invoice"}
               </h1>
               <p className="mt-1 text-sm text-slate-500">
-                Create a professional commercial or sales tax invoice from a delivery challan.
+                Create an invoice from a Delivery Challan. Company and tax treatment are inherited automatically.
               </p>
             </div>
 
@@ -1203,42 +1263,24 @@ const Invoices = () => {
           <div className="space-y-7 pt-6">
             <section>
               <div className="mb-4">
-                <h2 className="font-bold text-slate-900">Company and Invoice Details</h2>
+                <h2 className="font-bold text-slate-900">Invoice Details</h2>
                 <p className="text-xs text-slate-500">
-                  Select the issuing company, delivery challan, tax type, and invoice status.
+                  Select a Delivery Challan. The issuing company and tax type will load automatically.
                 </p>
               </div>
 
               <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
-                <div>
-                  <RequiredLabel>Company Profile</RequiredLabel>
-                  <select
-                    value={form.companyProfile}
-                    onChange={(event) => handleCompanyChange(event.target.value)}
-                    disabled={!!editId || !!form.deliveryChallan}
-                    className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 outline-none focus:border-blue-500 disabled:cursor-not-allowed disabled:bg-slate-100"
-                  >
-                    <option value="">Select Company Profile</option>
-                    {PROFILE_OPTIONS.map((profile) => (
-                      <option key={profile.key} value={profile.key}>
-                        {profile.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
 
                 <div>
                   <RequiredLabel>Delivery Challan</RequiredLabel>
                   <select
                     value={form.deliveryChallan}
                     onChange={(event) => handleChallanChange(event.target.value)}
-                    disabled={!form.companyProfile || !!editId}
+                    disabled={!!editId || saving}
                     className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 outline-none focus:border-blue-500 disabled:cursor-not-allowed disabled:bg-slate-100"
                   >
                     <option value="">
-                      {!form.companyProfile
-                        ? "Select Company First"
-                        : "Select Delivery Challan"}
+                      Select Delivery Challan
                     </option>
                     {availableChallans.map((challan) => (
                       <option key={challan._id} value={challan._id}>
@@ -1303,22 +1345,6 @@ const Invoices = () => {
                   />
                 </div>
 
-                <div>
-                  <RequiredLabel>Invoice Type</RequiredLabel>
-                  <select
-                    value={form.taxType}
-                    onChange={(event) =>
-                      setForm((previous) => ({
-                        ...previous,
-                        taxType: event.target.value,
-                      }))
-                    }
-                    className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 outline-none focus:border-blue-500"
-                  >
-                    <option value="without-tax">Commercial Invoice - Without Tax</option>
-                    <option value="with-tax">Sales Tax Invoice</option>
-                  </select>
-                </div>
 
                 <div>
                   <RequiredLabel>Status</RequiredLabel>
@@ -1388,13 +1414,8 @@ const Invoices = () => {
                         min="0"
                         step="0.01"
                         value={form.taxRate}
-                        onChange={(event) =>
-                          setForm((previous) => ({
-                            ...previous,
-                            taxRate: event.target.value,
-                          }))
-                        }
-                        className="w-full rounded-lg border border-slate-200 px-3 py-2.5 pr-9 outline-none focus:border-blue-500"
+                        readOnly
+                        className="w-full cursor-not-allowed rounded-lg border border-slate-200 bg-slate-100 px-3 py-2.5 pr-9 text-slate-700 outline-none"
                       />
                       <span className="absolute right-3 top-2.5 text-sm text-slate-500">%</span>
                     </div>
@@ -1404,13 +1425,8 @@ const Invoices = () => {
                     <NormalLabel>Seller Sales Tax Reg #</NormalLabel>
                     <input
                       value={form.salesTaxRegNo}
-                      onChange={(event) =>
-                        setForm((previous) => ({
-                          ...previous,
-                          salesTaxRegNo: event.target.value,
-                        }))
-                      }
-                      className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2.5 outline-none focus:border-blue-500"
+                      readOnly
+                      className="mt-1 w-full cursor-not-allowed rounded-lg border border-slate-200 bg-slate-100 px-3 py-2.5 text-slate-700 outline-none"
                     />
                   </div>
 
@@ -1418,13 +1434,8 @@ const Invoices = () => {
                     <NormalLabel>Seller National Tax #</NormalLabel>
                     <input
                       value={form.nationalTaxNo}
-                      onChange={(event) =>
-                        setForm((previous) => ({
-                          ...previous,
-                          nationalTaxNo: event.target.value,
-                        }))
-                      }
-                      className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2.5 outline-none focus:border-blue-500"
+                      readOnly
+                      className="mt-1 w-full cursor-not-allowed rounded-lg border border-slate-200 bg-slate-100 px-3 py-2.5 text-slate-700 outline-none"
                     />
                   </div>
 

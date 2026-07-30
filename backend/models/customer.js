@@ -22,18 +22,10 @@ const customerSchema = new mongoose.Schema(
       default: "",
     },
 
-    email: {
-      type: String,
-      trim: true,
-      lowercase: true,
-      unique: true,
-      sparse: true,
-    },
-
     phoneNumber: {
       type: String,
-      required: [true, "Phone number is required"],
       trim: true,
+      default: "",
     },
 
     alternatePhone: {
@@ -93,71 +85,48 @@ const customerSchema = new mongoose.Schema(
 );
 
 customerSchema.pre("save", function () {
-  if (!this.email || this.email === "") {
-    this.email = undefined;
-  }
+  this.phoneNumber = String(this.phoneNumber || "").trim();
+  this.alternatePhone = String(this.alternatePhone || "").trim();
 
   this.ntn = String(this.ntn || "")
     .trim()
     .toUpperCase();
 
-  this.openingBalance = Number(
-    this.openingBalance || 0
-  );
-
-  this.creditLimit = Number(
-    this.creditLimit || 0
-  );
+  this.openingBalance = Number(this.openingBalance || 0);
+  this.creditLimit = Number(this.creditLimit || 0);
 });
 
-customerSchema.pre(
-  "findOneAndUpdate",
-  function () {
-    const update =
-      this.getUpdate() || {};
+customerSchema.pre("findOneAndUpdate", function () {
+  const update = this.getUpdate() || {};
+  const values = update.$set || update;
 
-    const values =
-      update.$set || update;
-
-    if (values.email === "") {
-      values.email = undefined;
-    }
-
-    if (values.ntn !== undefined) {
-      values.ntn = String(
-        values.ntn || ""
-      )
-        .trim()
-        .toUpperCase();
-    }
-
-    if (
-      values.openingBalance !==
-      undefined
-    ) {
-      values.openingBalance = Number(
-        values.openingBalance || 0
-      );
-    }
-
-    if (
-      values.creditLimit !==
-      undefined
-    ) {
-      values.creditLimit = Number(
-        values.creditLimit || 0
-      );
-    }
-
-    if (update.$set) {
-      update.$set = values;
-    }
-
-    this.setUpdate(update);
+  if (values.phoneNumber !== undefined) {
+    values.phoneNumber = String(values.phoneNumber || "").trim();
   }
-);
 
-module.exports = mongoose.model(
-  "Customer",
-  customerSchema
-);
+  if (values.alternatePhone !== undefined) {
+    values.alternatePhone = String(values.alternatePhone || "").trim();
+  }
+
+  if (values.ntn !== undefined) {
+    values.ntn = String(values.ntn || "")
+      .trim()
+      .toUpperCase();
+  }
+
+  if (values.openingBalance !== undefined) {
+    values.openingBalance = Number(values.openingBalance || 0);
+  }
+
+  if (values.creditLimit !== undefined) {
+    values.creditLimit = Number(values.creditLimit || 0);
+  }
+
+  if (update.$set) {
+    update.$set = values;
+  }
+
+  this.setUpdate(update);
+});
+
+module.exports = mongoose.model("Customer", customerSchema);

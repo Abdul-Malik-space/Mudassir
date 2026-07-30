@@ -19,6 +19,16 @@ const TAX_TYPES = [
   "with-tax",
 ];
 
+const ISSUING_COMPANIES = [
+  "TOPICAL PACKAGING.PVT.LTD",
+  "AL-KARAM-TRADERS",
+];
+
+const COMPANY_TAX_TYPES = {
+  "TOPICAL PACKAGING.PVT.LTD": "with-tax",
+  "AL-KARAM-TRADERS": "without-tax",
+};
+
 const TEXT_TYPES = [
   "",
   "with-text",
@@ -247,6 +257,31 @@ const salesOrderSchema =
         uppercase: true,
       },
 
+      issuingCompany: {
+        type: String,
+
+        enum: {
+          values:
+            ISSUING_COMPANIES,
+
+          message:
+            "Invalid issuing company",
+        },
+
+        required: [
+          true,
+          "Issuing company is required",
+        ],
+
+        trim: true,
+        uppercase: true,
+
+        default:
+          "AL-KARAM-TRADERS",
+
+        index: true,
+      },
+
       customer: {
         type:
           mongoose.Schema.Types
@@ -355,12 +390,6 @@ const salesOrderSchema =
       },
 
       poNo: {
-        type: String,
-        trim: true,
-        default: "",
-      },
-
-      referenceNo: {
         type: String,
         trim: true,
         default: "",
@@ -524,6 +553,23 @@ salesOrderSchema.pre(
         this.salesOrderNo
       ).toUpperCase();
 
+    this.issuingCompany =
+      cleanText(
+        this.issuingCompany,
+        "AL-KARAM-TRADERS"
+      ).toUpperCase();
+
+    if (
+      !ISSUING_COMPANIES.includes(
+        this.issuingCompany
+      )
+    ) {
+      this.invalidate(
+        "issuingCompany",
+        "Invalid issuing company"
+      );
+    }
+
     this.customerName =
       cleanText(
         this.customerName
@@ -570,17 +616,11 @@ salesOrderSchema.pre(
         this.poNo
       );
 
-    this.referenceNo =
-      cleanText(
-        this.referenceNo
-      );
-
     this.taxType =
-      TAX_TYPES.includes(
-        this.taxType
-      )
-        ? this.taxType
-        : "without-tax";
+      COMPANY_TAX_TYPES[
+        this.issuingCompany
+      ] ||
+      "without-tax";
 
     this.remarks =
       cleanText(

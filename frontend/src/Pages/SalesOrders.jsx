@@ -30,6 +30,16 @@ const API_SALES =
 const FINISHED_GOODS_WAREHOUSE =
   "Finished Goods Warehouse";
 
+const ISSUING_COMPANIES = [
+  "TOPICAL PACKAGING.PVT.LTD",
+  "AL-KARAM-TRADERS",
+];
+
+const COMPANY_TAX_TYPES = {
+  "TOPICAL PACKAGING.PVT.LTD": "with-tax",
+  "AL-KARAM-TRADERS": "without-tax",
+};
+
 const todayDate = () =>
   new Date()
     .toISOString()
@@ -215,13 +225,14 @@ const emptyForm = (
   salesOrderNo = ""
 ) => ({
   salesOrderNo,
+  issuingCompany:
+    "AL-KARAM-TRADERS",
   customer: "",
   customerNTN: "",
   orderDate:
     todayDate(),
   deliveryDate: "",
   poNo: "",
-  referenceNo: "",
   taxType:
     "without-tax",
   advance: "",
@@ -563,7 +574,7 @@ const SalesOrders =
                   order.customerPhone,
                   order.customerNTN,
                   order.poNo,
-                  order.referenceNo,
+                  order.issuingCompany,
 
                   ...(
                     order.items ||
@@ -671,6 +682,24 @@ const SalesOrders =
 
           [field]:
             value,
+        })
+      );
+    };
+
+    const selectIssuingCompany = (
+      issuingCompany
+    ) => {
+      setForm(
+        (current) => ({
+          ...current,
+
+          issuingCompany,
+
+          taxType:
+            COMPANY_TAX_TYPES[
+              issuingCompany
+            ] ||
+            "without-tax",
         })
       );
     };
@@ -854,6 +883,18 @@ const SalesOrders =
     const validateForm =
       () => {
         if (
+          !ISSUING_COMPANIES.includes(
+            form.issuingCompany
+          )
+        ) {
+          alert(
+            "Please select an issuing company."
+          );
+
+          return false;
+        }
+
+        if (
           !form.customer
         ) {
           alert(
@@ -926,6 +967,9 @@ const SalesOrders =
 
     const buildPayload =
       () => ({
+        issuingCompany:
+          form.issuingCompany,
+
         customer:
           form.customer,
 
@@ -940,9 +984,6 @@ const SalesOrders =
 
         poNo:
           form.poNo.trim(),
-
-        referenceNo:
-          form.referenceNo.trim(),
 
         taxType:
           form.taxType,
@@ -1080,6 +1121,15 @@ const SalesOrders =
               order.salesOrderNo ||
               "",
 
+            issuingCompany:
+              order.issuingCompany ||
+              (
+                order.taxType ===
+                "with-tax"
+                  ? "TOPICAL PACKAGING.PVT.LTD"
+                  : "AL-KARAM-TRADERS"
+              ),
+
             customer:
               idOf(
                 order.customer
@@ -1103,12 +1153,16 @@ const SalesOrders =
               order.poNo ||
               "",
 
-            referenceNo:
-              order.referenceNo ||
-              "",
-
             taxType:
-              order.taxType ||
+              COMPANY_TAX_TYPES[
+                order.issuingCompany ||
+                (
+                  order.taxType ===
+                  "with-tax"
+                    ? ISSUING_COMPANIES[0]
+                    : ISSUING_COMPANIES[1]
+                )
+              ] ||
               "without-tax",
 
             advance:
@@ -1499,7 +1553,10 @@ const SalesOrders =
             <body>
               <div class="header">
                 <div>
-                  <h1>Muddasir Packages</h1>
+                  <h1>${escapeHtml(
+                    order.issuingCompany ||
+                      "Issuing Company"
+                  )}</h1>
                   <b>Sales Order</b>
                 </div>
 
@@ -1507,6 +1564,12 @@ const SalesOrders =
                   <b>Sales Order:</b>
                   ${escapeHtml(
                     order.salesOrderNo
+                  )}<br/>
+
+                  <b>Company:</b>
+                  ${escapeHtml(
+                    order.issuingCompany ||
+                      "-"
                   )}<br/>
 
                   <b>Order Date:</b>
@@ -1712,6 +1775,37 @@ const SalesOrders =
                 </Field>
 
                 <Field
+                  label="Issuing Company"
+                  required
+                >
+                  <select
+                    value={
+                      form.issuingCompany
+                    }
+                    onChange={(
+                      event
+                    ) =>
+                      selectIssuingCompany(
+                        event
+                          .target
+                          .value
+                      )
+                    }
+                    className={
+                      inputClass
+                    }
+                  >
+                    <option value="TOPICAL PACKAGING.PVT.LTD">
+                      TOPICAL PACKAGING.PVT.LTD
+                    </option>
+
+                    <option value="AL-KARAM-TRADERS">
+                      AL-KARAM-TRADERS
+                    </option>
+                  </select>
+                </Field>
+
+                <Field
                   label="Customer"
                   required
                 >
@@ -1846,27 +1940,6 @@ const SalesOrders =
                   />
                 </Field>
 
-                <Field label="Reference Number">
-                  <input
-                    value={
-                      form.referenceNo
-                    }
-                    onChange={(
-                      event
-                    ) =>
-                      updateField(
-                        "referenceNo",
-                        event
-                          .target
-                          .value
-                      )
-                    }
-                    className={
-                      inputClass
-                    }
-                  />
-                </Field>
-
                 <Field
                   label="Tax Type"
                   required
@@ -1875,16 +1948,7 @@ const SalesOrders =
                     value={
                       form.taxType
                     }
-                    onChange={(
-                      event
-                    ) =>
-                      updateField(
-                        "taxType",
-                        event
-                          .target
-                          .value
-                      )
-                    }
+                    disabled
                     className={
                       inputClass
                     }
@@ -2749,6 +2813,11 @@ const SalesOrders =
                               {
                                 order.salesOrderNo
                               }
+                            </div>
+
+                            <div className="text-[10px] font-semibold text-violet-600">
+                              {order.issuingCompany ||
+                                "-"}
                             </div>
 
                             <div className="text-[10px] text-slate-500">

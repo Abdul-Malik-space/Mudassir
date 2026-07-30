@@ -12,11 +12,17 @@ import {
 } from "lucide-react";
 import { API_BASE_URL } from "../config/api";
 
+const noSuggestionProps = {
+  autoComplete: "off",
+  spellCheck: false,
+  "data-lpignore": "true",
+  "data-form-type": "other",
+};
+
 const getDefaultForm = () => ({
   customerName: "",
   phoneNumber: "",
   alternatePhone: "",
-  email: "",
   address: "",
   city: "",
   ntn: "",
@@ -102,7 +108,6 @@ const CustomerManager = () => {
       customerName: customer.customerName || customer.name || "",
       phoneNumber: customer.phoneNumber || customer.phone || "",
       alternatePhone: customer.alternatePhone || "",
-      email: customer.email || "",
       address: customer.address || "",
       city: customer.city || "",
       ntn: customer.ntn || "",
@@ -117,11 +122,6 @@ const CustomerManager = () => {
   const validateForm = () => {
     if (!formData.customerName.trim()) {
       alert("Customer name required hai");
-      return false;
-    }
-
-    if (!formData.phoneNumber.trim()) {
-      alert("Phone number required hai");
       return false;
     }
 
@@ -150,18 +150,11 @@ const CustomerManager = () => {
       notes: String(formData.notes || "").trim(),
 
       // Old backend compatibility
-      // Agar deployed backend abhi bhi req.body.name / req.body.phone use kar raha ho
-      // to charAt undefined error nahi aaye ga.
+      // Compatibility with older backend field names.
       name: customerName,
       phone: phoneNumber,
       balance: openingBalance,
     };
-
-    const email = String(formData.email || "").trim().toLowerCase();
-
-    if (email) {
-      payload.email = email;
-    }
 
     return payload;
   };
@@ -324,12 +317,6 @@ const CustomerManager = () => {
                           <Phone size={11} className="flex-shrink-0" />
                           <span>{customer.phoneNumber || customer.phone || "-"}</span>
                         </div>
-
-                        {customer.email && (
-                          <div className="text-[10px] text-blue-600 mt-0.5 hidden sm:block">
-                            {customer.email}
-                          </div>
-                        )}
                       </td>
 
                       <td className="px-3 sm:px-5 py-3 font-medium hidden sm:table-cell">
@@ -420,6 +407,7 @@ const CustomerManager = () => {
                 </label>
 
                 <input
+                  {...noSuggestionProps}
                   type="text"
                   value={formData.customerName}
                   onChange={(e) =>
@@ -435,10 +423,11 @@ const CustomerManager = () => {
 
               <div className="space-y-1.5">
                 <label className="text-xs font-semibold text-slate-600">
-                  Phone Number <span className="text-red-600">*</span>
+                  Phone Number
                 </label>
 
                 <input
+                  {...noSuggestionProps}
                   type="text"
                   value={formData.phoneNumber}
                   onChange={(e) =>
@@ -448,16 +437,16 @@ const CustomerManager = () => {
                     })
                   }
                   className="w-full bg-[#f8fafc] border border-slate-200 rounded-lg p-2.5 text-xs outline-none focus:border-blue-500 focus:bg-white font-medium"
-                  placeholder="03xx-xxxxxxx"
+                  placeholder="Optional phone number"
                 />
               </div>
             </div>
           </div>
 
           <div>
-            {/* <h3 className="text-xs font-bold text-blue-600 uppercase tracking-wider mb-3 border-b border-slate-100 pb-1">
+            <h3 className="text-xs font-bold text-blue-600 uppercase tracking-wider mb-3 border-b border-slate-100 pb-1">
               2. Contact & Address Information
-            </h3> */}
+            </h3>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="space-y-1.5">
@@ -466,6 +455,7 @@ const CustomerManager = () => {
                 </label>
 
                 <input
+                  {...noSuggestionProps}
                   type="text"
                   value={formData.alternatePhone}
                   onChange={(e) =>
@@ -479,31 +469,13 @@ const CustomerManager = () => {
                 />
               </div>
 
-              <div className="space-y-1.5">
-                <label className="text-xs font-semibold text-slate-600">
-                  Email Address
-                </label>
-
-                <input
-                  type="email"
-                  value={formData.email}
-                  onChange={(e) =>
-                    setFormData({
-                      ...formData,
-                      email: e.target.value,
-                    })
-                  }
-                  className="w-full bg-[#f8fafc] border border-slate-200 rounded-lg p-2.5 text-xs outline-none focus:border-blue-500 focus:bg-white font-medium"
-                  placeholder="example@email.com"
-                />
-              </div>
-
               <div className="space-y-1.5 sm:col-span-2">
                 <label className="text-xs font-semibold text-slate-600">
                   Customer Address <span className="text-red-600">*</span>
                 </label>
 
                 <textarea
+                  {...noSuggestionProps}
                   rows="3"
                   value={formData.address}
                   onChange={(e) =>
@@ -523,6 +495,7 @@ const CustomerManager = () => {
                 </label>
 
                 <input
+                  {...noSuggestionProps}
                   type="text"
                   value={formData.city}
                   onChange={(e) =>
@@ -542,6 +515,7 @@ const CustomerManager = () => {
                 </label>
 
                 <input
+                  {...noSuggestionProps}
                   type="text"
                   value={formData.ntn}
                   onChange={(e) =>
@@ -553,16 +527,15 @@ const CustomerManager = () => {
                   className="w-full bg-[#f8fafc] border border-slate-200 rounded-lg p-2.5 text-xs outline-none focus:border-blue-500 focus:bg-white font-medium"
                   placeholder="Enter NTN number"
                   maxLength={30}
-                  autoComplete="off"
                 />
               </div>
             </div>
           </div>
 
           <div>
-            {/* <h3 className="text-xs font-bold text-blue-600 uppercase tracking-wider mb-3 border-b border-slate-100 pb-1">
+            <h3 className="text-xs font-bold text-blue-600 uppercase tracking-wider mb-3 border-b border-slate-100 pb-1">
               3. Financial Information
-            </h3> */}
+            </h3>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="space-y-1.5">
@@ -571,6 +544,7 @@ const CustomerManager = () => {
                 </label>
 
                 <input
+                  {...noSuggestionProps}
                   type="number"
                   value={formData.openingBalance}
                   onChange={(e) =>
@@ -590,6 +564,7 @@ const CustomerManager = () => {
                 </label>
 
                 <select
+                  autoComplete="off"
                   value={formData.status}
                   onChange={(e) =>
                     setFormData({
@@ -607,11 +582,12 @@ const CustomerManager = () => {
           </div>
 
           <div>
-            {/* <h3 className="text-xs font-bold text-blue-600 uppercase tracking-wider mb-3 border-b border-slate-100 pb-1">
+            <h3 className="text-xs font-bold text-blue-600 uppercase tracking-wider mb-3 border-b border-slate-100 pb-1">
               4. Additional Notes
-            </h3> */}
+            </h3>
 
             <textarea
+                  {...noSuggestionProps}
               rows="4"
               value={formData.notes}
               onChange={(e) =>

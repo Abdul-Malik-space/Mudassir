@@ -29,6 +29,45 @@ import {
 const API_DELIVERY =
   `${API_BASE_URL}/delivery-challans`;
 
+const TOPICAL_COMPANY =
+  "TOPICAL PACKAGING.PVT.LTD";
+
+const AL_KARAM_COMPANY =
+  "AL-KARAM-TRADERS";
+
+const normalizeIssuingCompany = (
+  value,
+  taxType = "without-tax"
+) => {
+  const company =
+    String(value || "")
+      .trim()
+      .toUpperCase();
+
+  if (
+    [
+      TOPICAL_COMPANY,
+      AL_KARAM_COMPANY,
+    ].includes(company)
+  ) {
+    return company;
+  }
+
+  return taxType === "with-tax"
+    ? TOPICAL_COMPANY
+    : AL_KARAM_COMPANY;
+};
+
+const taxTypeForCompany = (
+  company
+) =>
+  normalizeIssuingCompany(
+    company
+  ) ===
+  TOPICAL_COMPANY
+    ? "with-tax"
+    : "without-tax";
+
 const todayDate = () =>
   new Date()
     .toISOString()
@@ -418,7 +457,9 @@ const emptyForm = (
   deliveryAddress: "",
   attentionTo: "",
   companyName:
-    "URWA PACKAGES",
+    AL_KARAM_COMPANY,
+  taxType:
+    "without-tax",
   companyLogo:
     "/logo.png",
   documentNo:
@@ -1192,6 +1233,22 @@ const DeliveryChallans =
             order.attentionTo ||
             "",
 
+          companyName:
+            normalizeIssuingCompany(
+              order.issuingCompany ||
+                order.companyName,
+              order.taxType
+            ),
+
+          taxType:
+            taxTypeForCompany(
+              normalizeIssuingCompany(
+                order.issuingCompany ||
+                  order.companyName,
+                order.taxType
+              )
+            ),
+
           items,
         })
       );
@@ -1214,9 +1271,6 @@ const DeliveryChallans =
 
             dispatchDate:
               current.dispatchDate,
-
-            companyName:
-              current.companyName,
 
             companyLogo:
               current.companyLogo,
@@ -1369,6 +1423,22 @@ const DeliveryChallans =
           attentionTo:
             first?.attentionTo ||
             "",
+
+          companyName:
+            normalizeIssuingCompany(
+              first?.issuingCompany ||
+                first?.companyName,
+              first?.taxType
+            ),
+
+          taxType:
+            taxTypeForCompany(
+              normalizeIssuingCompany(
+                first?.issuingCompany ||
+                  first?.companyName,
+                first?.taxType
+              )
+            ),
 
           items,
         };
@@ -1663,8 +1733,25 @@ const DeliveryChallans =
           "",
 
         companyName:
-          challan.companyName ||
-          "URWA PACKAGES",
+          normalizeIssuingCompany(
+            challan.salesOrder
+              ?.issuingCompany ||
+              challan.issuingCompany ||
+              challan.companyName,
+            challan.salesOrder
+              ?.taxType ||
+              challan.taxType
+          ),
+
+        taxType:
+          challan.salesOrder
+            ?.taxType ||
+          challan.taxType ||
+          taxTypeForCompany(
+            challan.salesOrder
+              ?.issuingCompany ||
+              challan.companyName
+          ),
 
         companyLogo:
           challan.companyLogo ||
@@ -2015,17 +2102,19 @@ const DeliveryChallans =
         challanDate:
           form.challanDate,
 
-        dispatchDate:
-          form.dispatchDate,
-
         poNo:
           form.poNo.trim(),
 
-        referenceNo:
-          form.referenceNo.trim(),
-
         companyName:
-          form.companyName.trim(),
+          normalizeIssuingCompany(
+            form.companyName,
+            form.taxType
+          ),
+
+        taxType:
+          taxTypeForCompany(
+            form.companyName
+          ),
 
         companyLogo:
           form.companyLogo.trim(),
@@ -2045,20 +2134,11 @@ const DeliveryChallans =
         customerName:
           form.customerName.trim(),
 
-        customerPhone:
-          form.customerPhone.trim(),
-
         customerEmail:
           form.customerEmail.trim(),
 
         customerAddress:
           form.customerAddress.trim(),
-
-        deliveryAddress:
-          form.deliveryAddress.trim(),
-
-        attentionTo:
-          form.attentionTo.trim(),
 
         vehicleNo:
           form.vehicleNo.trim(),
@@ -2071,9 +2151,6 @@ const DeliveryChallans =
 
         preparedBy:
           form.preparedBy.trim(),
-
-        dispatchedBy:
-          form.dispatchedBy.trim(),
 
         remarks:
           form.remarks.trim(),
@@ -2415,10 +2492,25 @@ const DeliveryChallans =
         }
 
         const companyName =
-          String(
-            challan.companyName ||
-              "URWA PACKAGES"
-          ).trim();
+          normalizeIssuingCompany(
+            challan.salesOrder
+              ?.issuingCompany ||
+              challan.issuingCompany ||
+              challan.companyName,
+            challan.salesOrder
+              ?.taxType ||
+              challan.taxType
+          );
+
+        const taxType =
+          taxTypeForCompany(
+            companyName
+          );
+
+        const salesTaxNote =
+          taxType === "with-tax"
+            ? "With Sales Tax"
+            : "";
 
         const rawLogo =
           String(
@@ -2687,9 +2779,16 @@ const DeliveryChallans =
                 }
 
                 .document-title {
-                  margin-top: 14px;
+                  margin-top: 10px;
                   font-size: 16px;
                   font-weight: 800;
+                }
+
+                .sales-tax-note {
+                  margin-top: 6px;
+                  font-size: 10px;
+                  font-weight: 800;
+                  text-transform: uppercase;
                 }
 
                 .document-cell {
@@ -2896,6 +2995,14 @@ const DeliveryChallans =
                       <div class="document-title">
                         DELIVERY CHALLAN
                       </div>
+
+                      ${
+                        salesTaxNote
+                          ? `<div class="sales-tax-note">${safeText(
+                              salesTaxNote
+                            )}</div>`
+                          : ""
+                      }
                     </td>
 
                     <td class="document-cell">
@@ -2998,19 +3105,11 @@ const DeliveryChallans =
 
                   <div class="attention-block">
                     <div>
-                      ATTN:
+                      CUSTOMER:
                       <span class="value-line">${safeText(
-                        challan.attentionTo ||
-                          challan.customerName ||
-                          ""
-                      )}</span>
-                    </div>
-
-                    <div>
-                      ${safeText(
                         challan.customerName ||
                           ""
-                      )}
+                      )}</span>
                     </div>
                   </div>
                 </div>
@@ -3098,31 +3197,6 @@ const DeliveryChallans =
                         formatDate(
                           challan.challanDate
                         )
-                      )}
-                    </div>
-                  </div>
-
-                  <div class="signature-row">
-                    <div>DISPATCH BY:</div>
-
-                    <div class="signature-line">
-                      ${safeText(
-                        challan.dispatchedBy ||
-                          ""
-                      )}
-                    </div>
-
-                    <div class="signature-date">
-                      DATE:
-                    </div>
-
-                    <div class="signature-line">
-                      ${safeText(
-                        challan.dispatchDate
-                          ? formatDate(
-                              challan.dispatchDate
-                            )
-                          : ""
                       )}
                     </div>
                   </div>
@@ -3248,19 +3322,27 @@ const DeliveryChallans =
           <div className="space-y-7 rounded-b-xl border-x border-b bg-white p-5 md:p-7">
             <Section title="Print Header">
               <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
-                <Field label="Company Name">
+                <Field label="Issuing Company">
                   <input
                     value={
                       form.companyName
                     }
-                    onChange={(
-                      event
-                    ) =>
-                      updateField(
-                        "companyName",
-                        event.target.value
-                      )
+                    readOnly
+                    className={
+                      inputClass
                     }
+                  />
+                </Field>
+
+                <Field label="Tax Mode">
+                  <input
+                    value={
+                      form.taxType ===
+                      "with-tax"
+                        ? "With Sales Tax"
+                        : "Without Tax"
+                    }
+                    readOnly
                     className={
                       inputClass
                     }
@@ -3744,26 +3826,6 @@ const DeliveryChallans =
                   />
                 </Field>
 
-                <Field label="Dispatch Date">
-                  <input
-                    type="date"
-                    value={
-                      form.dispatchDate
-                    }
-                    onChange={(
-                      event
-                    ) =>
-                      updateField(
-                        "dispatchDate",
-                        event.target.value
-                      )
-                    }
-                    className={
-                      inputClass
-                    }
-                  />
-                </Field>
-
                 <Field
                   label="Customer"
                   required
@@ -3803,99 +3865,6 @@ const DeliveryChallans =
                         event.target.value
                       )
                     }
-                    className={
-                      inputClass
-                    }
-                  />
-                </Field>
-
-                <Field label="Attention To">
-                  <input
-                    value={
-                      form.attentionTo
-                    }
-                    onChange={(
-                      event
-                    ) =>
-                      updateField(
-                        "attentionTo",
-                        event.target.value
-                      )
-                    }
-                    className={
-                      inputClass
-                    }
-                  />
-                </Field>
-
-                <Field label="Reference Number">
-                  <input
-                    value={
-                      form.referenceNo
-                    }
-                    onChange={(
-                      event
-                    ) =>
-                      updateField(
-                        "referenceNo",
-                        event.target.value
-                      )
-                    }
-                    className={
-                      inputClass
-                    }
-                  />
-                </Field>
-
-                <Field
-                  label="Delivery Address"
-                  wide
-                >
-                  <input
-                    value={
-                      form.deliveryAddress
-                    }
-                    onChange={(
-                      event
-                    ) =>
-                      updateField(
-                        "deliveryAddress",
-                        event.target.value
-                      )
-                    }
-                    className={
-                      inputClass
-                    }
-                  />
-                </Field>
-
-                <Field label="Customer Phone">
-                  <input
-                    value={
-                      form.customerPhone
-                    }
-                    onChange={(
-                      event
-                    ) =>
-                      updateField(
-                        "customerPhone",
-                        event.target.value
-                      )
-                    }
-                    readOnly={
-                      form.sourceType ===
-                      "Sales Order"
-                    }
-                    className={
-                      inputClass
-                    }
-                  />
-                </Field>
-
-                <Field label="Warehouse">
-                  <input
-                    value="Finished Goods Warehouse"
-                    readOnly
                     className={
                       inputClass
                     }
@@ -4318,25 +4287,6 @@ const DeliveryChallans =
                     ) =>
                       updateField(
                         "preparedBy",
-                        event.target.value
-                      )
-                    }
-                    className={
-                      inputClass
-                    }
-                  />
-                </Field>
-
-                <Field label="Dispatched By">
-                  <input
-                    value={
-                      form.dispatchedBy
-                    }
-                    onChange={(
-                      event
-                    ) =>
-                      updateField(
-                        "dispatchedBy",
                         event.target.value
                       )
                     }

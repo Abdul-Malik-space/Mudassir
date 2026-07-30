@@ -44,6 +44,16 @@ const {
 const FINISHED_GOODS_GODOWN =
   "Finished Goods Godown";
 
+const ISSUING_COMPANIES = [
+  "TOPICAL PACKAGING.PVT.LTD",
+  "AL-KARAM-TRADERS",
+];
+
+const COMPANY_TAX_TYPES = {
+  "TOPICAL PACKAGING.PVT.LTD": "with-tax",
+  "AL-KARAM-TRADERS": "without-tax",
+};
+
 const FINISHED_GOODS_ALIASES = [
   "Finished Goods Godown",
   "Finished Goods Warehouse",
@@ -109,6 +119,43 @@ const cleanText = (
 
   return text || fallback;
 };
+
+const normalizeIssuingCompany = (
+  value,
+  fallbackTaxType = "without-tax"
+) => {
+  const requested =
+    cleanText(
+      value
+    ).toUpperCase();
+
+  if (requested) {
+    if (
+      !ISSUING_COMPANIES.includes(
+        requested
+      )
+    ) {
+      throw new Error(
+        "Invalid issuing company"
+      );
+    }
+
+    return requested;
+  }
+
+  return fallbackTaxType ===
+    "with-tax"
+    ? "TOPICAL PACKAGING.PVT.LTD"
+    : "AL-KARAM-TRADERS";
+};
+
+const taxTypeForCompany = (
+  issuingCompany
+) =>
+  COMPANY_TAX_TYPES[
+    issuingCompany
+  ] ||
+  "without-tax";
 
 const cleanNumber = (
   value
@@ -1199,6 +1246,12 @@ const buildProductionSalesOrderView = (
           customer?.ntn
       ).toUpperCase(),
 
+    issuingCompany:
+      normalizeIssuingCompany(
+        order.issuingCompany,
+        order.taxType
+      ),
+
     orderDate:
       cleanText(
         order.orderDate
@@ -1212,11 +1265,6 @@ const buildProductionSalesOrderView = (
     poNo:
       cleanText(
         order.poNo
-      ),
-
-    referenceNo:
-      cleanText(
-        order.referenceNo
       ),
 
     totalCartons:
@@ -1537,7 +1585,7 @@ router.get(
           },
 
           {
-            referenceNo: {
+            issuingCompany: {
               $regex:
                 search,
 
@@ -1847,6 +1895,12 @@ router.post(
           body.items
         );
 
+      const issuingCompany =
+        normalizeIssuingCompany(
+          body.issuingCompany,
+          body.taxType
+        );
+
       const salesOrderNo =
         await getNextSalesOrderNo();
 
@@ -1863,6 +1917,8 @@ router.post(
       const order =
         new SalesOrder({
           salesOrderNo,
+
+          issuingCompany,
 
           ...buildCustomerSnapshot(
             customer,
@@ -1885,16 +1941,10 @@ router.post(
               body.poNo
             ),
 
-          referenceNo:
-            cleanText(
-              body.referenceNo
-            ),
-
           taxType:
-            body.taxType ===
-            "with-tax"
-              ? "with-tax"
-              : "without-tax",
+            taxTypeForCompany(
+              issuingCompany
+            ),
 
           items,
 
@@ -2040,6 +2090,13 @@ router.put(
           order
         );
 
+      const issuingCompany =
+        normalizeIssuingCompany(
+          body.issuingCompany ||
+            order.issuingCompany,
+          order.taxType
+        );
+
       Object.assign(
         order,
         buildCustomerSnapshot(
@@ -2048,6 +2105,9 @@ router.put(
             order.customerNTN
         )
       );
+
+      order.issuingCompany =
+        issuingCompany;
 
       order.orderDate =
         cleanText(
@@ -2065,16 +2125,10 @@ router.put(
           body.poNo
         );
 
-      order.referenceNo =
-        cleanText(
-          body.referenceNo
-        );
-
       order.taxType =
-        body.taxType ===
-        "with-tax"
-          ? "with-tax"
-          : "without-tax";
+        taxTypeForCompany(
+          issuingCompany
+        );
 
       order.items =
         items;
