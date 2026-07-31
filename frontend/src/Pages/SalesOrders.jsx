@@ -40,6 +40,29 @@ const COMPANY_TAX_TYPES = {
   "AL-KARAM-TRADERS": "without-tax",
 };
 
+const UNIT_OPTIONS = [
+  "Pcs",
+  "Kg",
+  "Gram",
+  "Ton",
+  "Rolls",
+  "Sheets",
+  "Reams",
+  "Meter",
+  "Square Meter",
+  "Feet",
+  "Square Feet",
+  "Yards",
+  "Liter",
+  "Cartons",
+  "Boxes",
+  "Packs",
+  "Dozen",
+  "Sets",
+  "Bundles",
+  "Bags",
+];
+
 const todayDate = () =>
   new Date()
     .toISOString()
@@ -2359,16 +2382,57 @@ const SalesOrders =
                                 />
                               </td>
 
-                              <td className="min-w-[90px] p-3">
-                                <input
+                              <td className="min-w-[125px] p-3">
+                                <select
                                   value={
-                                    item.unit
+                                    item.unit ||
+                                    "Pcs"
                                   }
-                                  readOnly
+                                  onChange={(
+                                    event
+                                  ) =>
+                                    updateItem(
+                                      index,
+                                      "unit",
+                                      event
+                                        .target
+                                        .value
+                                    )
+                                  }
                                   className={
                                     inputClass
                                   }
-                                />
+                                >
+                                  {item.unit &&
+                                    !UNIT_OPTIONS.includes(
+                                      item.unit
+                                    ) && (
+                                      <option
+                                        value={
+                                          item.unit
+                                        }
+                                      >
+                                        {
+                                          item.unit
+                                        }
+                                      </option>
+                                    )}
+
+                                  {UNIT_OPTIONS.map(
+                                    (unit) => (
+                                      <option
+                                        key={
+                                          unit
+                                        }
+                                        value={
+                                          unit
+                                        }
+                                      >
+                                        {unit}
+                                      </option>
+                                    )
+                                  )}
+                                </select>
                               </td>
 
                               <td className="min-w-[125px] p-3">

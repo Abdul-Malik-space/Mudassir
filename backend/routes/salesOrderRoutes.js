@@ -54,6 +54,63 @@ const COMPANY_TAX_TYPES = {
   "AL-KARAM-TRADERS": "without-tax",
 };
 
+const UNIT_ALIASES = {
+  pc: "Pcs",
+  pcs: "Pcs",
+  piece: "Pcs",
+  pieces: "Pcs",
+  no: "Pcs",
+  nos: "Pcs",
+  kg: "Kg",
+  kgs: "Kg",
+  kilogram: "Kg",
+  kilograms: "Kg",
+  g: "Gram",
+  gm: "Gram",
+  gram: "Gram",
+  grams: "Gram",
+  ton: "Ton",
+  tons: "Ton",
+  roll: "Rolls",
+  rolls: "Rolls",
+  sheet: "Sheets",
+  sheets: "Sheets",
+  ream: "Reams",
+  reams: "Reams",
+  meter: "Meter",
+  meters: "Meter",
+  metre: "Meter",
+  metres: "Meter",
+  "square meter": "Square Meter",
+  "square meters": "Square Meter",
+  sqm: "Square Meter",
+  feet: "Feet",
+  foot: "Feet",
+  ft: "Feet",
+  "square feet": "Square Feet",
+  sqft: "Square Feet",
+  yard: "Yards",
+  yards: "Yards",
+  liter: "Liter",
+  liters: "Liter",
+  litre: "Liter",
+  litres: "Liter",
+  carton: "Cartons",
+  cartons: "Cartons",
+  box: "Boxes",
+  boxes: "Boxes",
+  pack: "Packs",
+  packs: "Packs",
+  dozen: "Dozen",
+  dozens: "Dozen",
+  set: "Sets",
+  sets: "Sets",
+  bundle: "Bundles",
+  bundles: "Bundles",
+  bag: "Bags",
+  bags: "Bags",
+};
+
 const FINISHED_GOODS_ALIASES = [
   "Finished Goods Godown",
   "Finished Goods Warehouse",
@@ -165,6 +222,23 @@ const cleanNumber = (
   return Number.isFinite(number)
     ? Math.max(number, 0)
     : 0;
+};
+
+const normalizeUnit = (
+  value,
+  fallback = "Pcs"
+) => {
+  const unit = cleanText(
+    value,
+    fallback
+  );
+
+  return (
+    UNIT_ALIASES[
+      unit.toLowerCase()
+    ] ||
+    unit
+  );
 };
 
 const idOf = (
@@ -927,7 +1001,7 @@ const prepareSalesOrderItems =
             ),
 
           unit:
-            cleanText(
+            normalizeUnit(
               row.unit,
               item.unit ||
                 "Pcs"

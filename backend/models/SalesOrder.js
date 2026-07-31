@@ -35,6 +35,63 @@ const TEXT_TYPES = [
   "without-text",
 ];
 
+const UNIT_ALIASES = {
+  pc: "Pcs",
+  pcs: "Pcs",
+  piece: "Pcs",
+  pieces: "Pcs",
+  no: "Pcs",
+  nos: "Pcs",
+  kg: "Kg",
+  kgs: "Kg",
+  kilogram: "Kg",
+  kilograms: "Kg",
+  g: "Gram",
+  gm: "Gram",
+  gram: "Gram",
+  grams: "Gram",
+  ton: "Ton",
+  tons: "Ton",
+  roll: "Rolls",
+  rolls: "Rolls",
+  sheet: "Sheets",
+  sheets: "Sheets",
+  ream: "Reams",
+  reams: "Reams",
+  meter: "Meter",
+  meters: "Meter",
+  metre: "Meter",
+  metres: "Meter",
+  "square meter": "Square Meter",
+  "square meters": "Square Meter",
+  sqm: "Square Meter",
+  feet: "Feet",
+  foot: "Feet",
+  ft: "Feet",
+  "square feet": "Square Feet",
+  sqft: "Square Feet",
+  yard: "Yards",
+  yards: "Yards",
+  liter: "Liter",
+  liters: "Liter",
+  litre: "Liter",
+  litres: "Liter",
+  carton: "Cartons",
+  cartons: "Cartons",
+  box: "Boxes",
+  boxes: "Boxes",
+  pack: "Packs",
+  packs: "Packs",
+  dozen: "Dozen",
+  dozens: "Dozen",
+  set: "Sets",
+  sets: "Sets",
+  bundle: "Bundles",
+  bundles: "Bundles",
+  bag: "Bags",
+  bags: "Bags",
+};
+
 const todayDate = () =>
   new Date()
     .toISOString()
@@ -59,6 +116,23 @@ const cleanNumber = (
   return Number.isFinite(number)
     ? Math.max(number, 0)
     : 0;
+};
+
+const normalizeUnit = (
+  value,
+  fallback = "Pcs"
+) => {
+  const unit = cleanText(
+    value,
+    fallback
+  );
+
+  return (
+    UNIT_ALIASES[
+      unit.toLowerCase()
+    ] ||
+    unit
+  );
 };
 
 const salesOrderItemSchema =
@@ -198,6 +272,10 @@ const salesOrderItemSchema =
         type: String,
         trim: true,
         default: "Pcs",
+        maxlength: [
+          30,
+          "Unit cannot exceed 30 characters",
+        ],
       },
 
       unitPrice: {
@@ -704,7 +782,7 @@ salesOrderSchema.pre(
           );
 
         item.unit =
-          cleanText(
+          normalizeUnit(
             item.unit,
             "Pcs"
           );
