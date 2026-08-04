@@ -359,6 +359,45 @@ const getVendorSnapshot = (
   };
 };
 
+const getPurchaseOrderSnapshot = (
+  purchaseOrder
+) => {
+  const taxType =
+    purchaseOrder.taxType ===
+    "with-tax"
+      ? "with-tax"
+      : "without-tax";
+
+  return {
+    purchaseOrderDate:
+      cleanText(
+        purchaseOrder.orderDate
+      ),
+
+    expectedDate:
+      cleanText(
+        purchaseOrder.expectedDate ||
+          purchaseOrder.deliveryDate
+      ),
+
+    referenceNo:
+      cleanText(
+        purchaseOrder.referenceNo
+      ),
+
+    taxType,
+
+    taxRate:
+      taxType ===
+      "with-tax"
+        ? cleanNumber(
+            purchaseOrder.taxRate ||
+              18
+          )
+        : 0,
+  };
+};
+
 const getHighestExistingSequence =
   async () => {
     const rows =
@@ -618,6 +657,11 @@ const getPOItemsMap = (
       size:
         cleanText(
           row.size
+        ),
+
+      cartons:
+        cleanNumber(
+          row.cartons
         ),
 
       orderedQty:
@@ -1052,10 +1096,11 @@ const cleanGRNItems =
           warehouses
         );
 
+      // Financial values are controlled by the Purchase Order.
+      // The GRN client sends quantities only and cannot override rates.
       const unitPrice =
         cleanNumber(
-          incoming.unitPrice ??
-            poItem.unitPrice
+          poItem.unitPrice
         );
 
       cleanItems.push({
@@ -1096,6 +1141,11 @@ const cleanGRNItems =
           cleanText(
             incoming.size ||
               poItem.size
+          ),
+
+        cartons:
+          cleanNumber(
+            poItem.cartons
           ),
 
         orderedQty,
@@ -1156,6 +1206,11 @@ const calculateTotals = (
       totals,
       item
     ) => {
+      totals.totalCartons +=
+        cleanNumber(
+          item.cartons
+        );
+
       totals.totalOrderedQty +=
         cleanNumber(
           item.orderedQty
@@ -1189,6 +1244,7 @@ const calculateTotals = (
       return totals;
     },
     {
+      totalCartons: 0,
       totalOrderedQty: 0,
       totalReceivedQty: 0,
       totalRejectedQty: 0,
@@ -1794,9 +1850,12 @@ const populateGRN = (
   query
 ) =>
   query
+    .select(
+      "-items.unitPrice -items.amount -subtotal"
+    )
     .populate(
       "purchaseOrder",
-      "purchaseOrderNo orderNo status orderDate deliveryDate"
+      "purchaseOrderNo orderNo status orderDate expectedDate deliveryDate referenceNo taxType taxRate"
     )
     .populate(
       "vendor",
@@ -1804,7 +1863,7 @@ const populateGRN = (
     )
     .populate(
       "items.item",
-      "code name itemType unit status stockManaged purchasePrice salePrice"
+      "code name itemType unit status stockManaged"
     )
     .populate(
       "items.warehouseId",
@@ -1945,6 +2004,11 @@ const getEligiblePurchaseOrders =
               row.size
             ),
 
+          cartons:
+            cleanNumber(
+              row.cartons
+            ),
+
           orderedQty,
 
           previousReceivedQty,
@@ -1962,12 +2026,6 @@ const getEligiblePurchaseOrders =
               row.unit,
               item.unit ||
                 "Pcs"
-            ),
-
-          unitPrice:
-            cleanNumber(
-              row.unitPrice ??
-                item.purchasePrice
             ),
 
           remarks:
@@ -1998,6 +2056,10 @@ const getEligiblePurchaseOrders =
 
         status:
           order.status,
+
+        ...getPurchaseOrderSnapshot(
+          order
+        ),
 
         vendor:
           vendor._id ||
@@ -2366,6 +2428,10 @@ router.post(
                 purchaseOrder.orderNo
             ).toUpperCase(),
 
+          ...getPurchaseOrderSnapshot(
+            purchaseOrder
+          ),
+
           ...vendorSnapshot,
 
           receivedDate:
@@ -2631,6 +2697,10 @@ router.put(
               purchaseOrder.purchaseOrderNo ||
                 purchaseOrder.orderNo
             ).toUpperCase(),
+
+          ...getPurchaseOrderSnapshot(
+            purchaseOrder
+          ),
 
           ...vendorSnapshot,
 

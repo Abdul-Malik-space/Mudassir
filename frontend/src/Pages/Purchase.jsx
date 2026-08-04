@@ -1,319 +1,277 @@
 import React, { useEffect, useMemo, useState } from "react";
 import {
-  Plus,
-  Trash2,
-  Printer,
-  Loader2,
-  FileText,
-  Edit2,
-  X,
-  Save,
   ArrowLeft,
+  Ban,
+  CheckCircle2,
+  CreditCard,
+  Edit2,
+  FileText,
+  Loader2,
+  PackageCheck,
+  Printer,
+  RefreshCcw,
+  Save,
   Search,
-  RotateCcw,
+  Send,
+  Trash2,
+  X,
 } from "lucide-react";
 import { API_BASE_URL } from "../config/api";
 
-const emptyItem = {
-  item: "",
-  description: "",
-  size: "",
-  cartons: "",
-  quantity: "",
-  unit: "Rolls",
-  unitPrice: "",
-  remarks: "",
-};
+const API_PURCHASES = `${API_BASE_URL}/purchases`;
 
 const todayDate = () => new Date().toISOString().slice(0, 10);
 
-const money = (value) => `Rs. ${Number(value || 0).toLocaleString()}`;
+const numberValue = (value) => {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : 0;
+};
 
-const RequiredLabel = ({ children }) => (
-  <label className="text-xs font-bold text-slate-600">
-    {children} <span className="text-red-600">*</span>
-  </label>
-);
+const quantity = (value) =>
+  numberValue(value).toLocaleString(undefined, {
+    maximumFractionDigits: 3,
+  });
 
-const NormalLabel = ({ children }) => (
-  <label className="text-xs font-bold text-slate-600">{children}</label>
-);
+const money = (value) =>
+  `Rs. ${numberValue(value).toLocaleString("en-PK", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
+
+const idOf = (value) => {
+  if (!value) return "";
+  return typeof value === "object"
+    ? String(value._id || value.id || "")
+    : String(value);
+};
 
 const normalizeArray = (data, keys = []) => {
   if (Array.isArray(data)) return data;
-
   for (const key of keys) {
     if (Array.isArray(data?.[key])) return data[key];
   }
-
-  if (Array.isArray(data?.data)) return data.data;
-
-  return [];
+  return Array.isArray(data?.data) ? data.data : [];
 };
 
-const apiRequest = async (url, options = {}) => {
-  const { headers = {}, ...requestOptions } = options;
+const escapeHtml = (value) =>
+  String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
 
+const apiRequest = async (url, options = {}) => {
   const response = await fetch(url, {
-    ...requestOptions,
+    ...options,
     headers: {
-      Accept: "application/json",
-      ...(requestOptions.body ? { "Content-Type": "application/json" } : {}),
-      ...headers,
+      "Content-Type": "application/json",
+      ...(options.headers || {}),
     },
   });
 
   const data = await response.json().catch(() => ({}));
 
   if (!response.ok || data?.success === false) {
-    throw new Error(
-      data?.error ||
-        data?.message ||
-        `Request failed with status ${response.status}`
-    );
+    throw new Error(data.message || data.error || "Request failed");
   }
 
   return data;
 };
 
-const getItemId = (item) =>
-  String(item?._id || item?.id || "");
-
-const getItemCode = (item) =>
-  String(
-    item?.code ||
-      item?.itemCode ||
-      item?.sku ||
-      item?.productCode ||
-      ""
-  ).trim();
-
-const getItemName = (item) =>
-  String(
-    item?.name ||
-      item?.itemName ||
-      item?.description ||
-      item?.title ||
-      ""
-  ).trim();
-
-const getItemUnit = (item) =>
-  String(
-    item?.unit ||
-      item?.uom ||
-      item?.measurementUnit ||
-      "Pcs"
-  ).trim();
-
-const getItemPurchasePrice = (item) => {
-  const value =
-    item?.purchasePrice ??
-    item?.purchaseRate ??
-    item?.costPrice ??
-    item?.rate ??
-    0;
-
-  const number = Number(value);
-
-  return Number.isFinite(number)
-    ? Math.max(number, 0)
-    : 0;
-};
-
-const getItemLabel = (item) => {
-  const code = getItemCode(item);
-  const name = getItemName(item);
-
-  if (code && name) {
-    return `${code} — ${name}`;
-  }
-
-  if (code || name) {
-    return code || name;
-  }
-
-  const id = getItemId(item);
-
-  return id
-    ? `Item ${id.slice(-6)}`
-    : "Unnamed Item";
-};
-
-const normalizeItemMaster = (item) => ({
-  ...item,
-  _id: getItemId(item),
-  code: getItemCode(item),
-  name: getItemName(item),
-  unit: getItemUnit(item),
-  purchasePrice: getItemPurchasePrice(item),
-  notes: String(item?.notes || item?.remarks || "").trim(),
-});
-
-const getDefaultForm = (purchaseOrderNo = "") => ({
-  purchaseOrderNo,
+const emptyForm = (purchaseNo = "") => ({
+  purchaseNo,
+  grn: "",
+  grnNo: "",
+  purchaseOrder: "",
+  purchaseOrderNo: "",
+  purchaseOrderReferenceNo: "",
   vendor: "",
-  orderDate: todayDate(),
-  expectedDate: "",
-  referenceNo: "",
+  vendorName: "",
+  vendorPhone: "",
+  vendorEmail: "",
+  vendorAddress: "",
+  purchaseDate: todayDate(),
+  dueDate: "",
+  vendorInvoiceNo: "",
+  supplierBillNo: "",
+  challanNo: "",
+  warehouse: "",
   taxType: "without-tax",
-  advance: "",
+  taxRate: 0,
+  overallDiscount: "",
+  freightCharges: "",
+  otherCharges: "",
+  paidAmount: "",
+  paymentMethod: "Credit",
+  postingStatus: "Draft",
   status: "Draft",
   remarks: "",
-  items: [{ ...emptyItem }],
+  items: [],
 });
 
-const PurchaseOrders = () => {
-  const [vendors, setVendors] = useState([]);
-  const [itemsMaster, setItemsMaster] = useState([]);
-  const [orders, setOrders] = useState([]);
+const inputClass =
+  "w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none transition focus:border-blue-600 focus:ring-2 focus:ring-blue-100 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500";
 
-  const [loading, setLoading] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [vendorLoading, setVendorLoading] = useState(false);
-  const [itemLoading, setItemLoading] = useState(false);
+const Label = ({ children, required = false }) => (
+  <label className="mb-1 block text-xs font-bold text-slate-600">
+    {children}
+    {required ? <span className="ml-1 text-red-600">*</span> : null}
+  </label>
+);
 
+const statusClass = (status) =>
+  ({
+    Draft: "bg-slate-100 text-slate-700",
+    Posted: "bg-purple-100 text-purple-700",
+    Completed: "bg-emerald-100 text-emerald-700",
+    Cancelled: "bg-red-100 text-red-700",
+    Unpaid: "bg-red-100 text-red-700",
+    "Partially Paid": "bg-amber-100 text-amber-700",
+    Paid: "bg-emerald-100 text-emerald-700",
+  })[status] || "bg-slate-100 text-slate-700";
+
+const Purchases = () => {
+  const [eligibleGrns, setEligibleGrns] = useState([]);
+  const [purchases, setPurchases] = useState([]);
+  const [form, setForm] = useState(emptyForm());
   const [showForm, setShowForm] = useState(false);
   const [editId, setEditId] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [actionId, setActionId] = useState("");
+  const [search, setSearch] = useState("");
+  const [postingFilter, setPostingFilter] = useState("All");
+  const [paymentFilter, setPaymentFilter] = useState("All");
 
-  const [searchTerm, setSearchTerm] = useState("");
-  const [statusFilter, setStatusFilter] = useState("All");
-
-  const [form, setForm] = useState(getDefaultForm());
-
-  const fetchVendors = async () => {
-    try {
-      setVendorLoading(true);
-
-      const data = await apiRequest(`${API_BASE_URL}/vendors/all`);
-      setVendors(normalizeArray(data, ["vendors"]));
-    } catch (error) {
-      console.error("Vendor loading error:", error);
-      alert(error.message || "Vendors load nahi huay");
-      setVendors([]);
-    } finally {
-      setVendorLoading(false);
-    }
+  const fetchEligibleGrns = async () => {
+    const data = await apiRequest(`${API_PURCHASES}/eligible-grns`);
+    setEligibleGrns(normalizeArray(data, ["grns"]));
   };
 
-  const fetchItems = async () => {
-    try {
-      setItemLoading(true);
-
-      const data = await apiRequest(`${API_BASE_URL}/items/all`);
-
-      const list = normalizeArray(data, [
-        "items",
-        "products",
-        "records",
-      ])
-        .map(normalizeItemMaster)
-        .filter(
-          (item) =>
-            item._id &&
-            item.status !== "Inactive"
-        )
-        .sort((a, b) =>
-          getItemLabel(a).localeCompare(
-            getItemLabel(b)
-          )
-        );
-
-      setItemsMaster(list);
-    } catch (error) {
-      console.error("Items loading error:", error);
-      alert(error.message || "Items load nahi huay");
-      setItemsMaster([]);
-    } finally {
-      setItemLoading(false);
-    }
+  const fetchPurchases = async () => {
+    const data = await apiRequest(`${API_PURCHASES}/all`);
+    setPurchases(normalizeArray(data, ["purchases"]));
   };
 
-  const fetchOrders = async () => {
+  const refresh = async () => {
     try {
       setLoading(true);
-
-      const data = await apiRequest(`${API_BASE_URL}/purchase-orders/all`);
-      setOrders(normalizeArray(data, ["purchaseOrders", "orders"]));
+      await Promise.all([fetchEligibleGrns(), fetchPurchases()]);
     } catch (error) {
-      console.error("Purchase order loading error:", error);
-      alert(error.message || "Purchase orders load nahi huay");
-      setOrders([]);
+      console.error("Purchase load error:", error);
+      alert(error.message || "Unable to load Purchases");
     } finally {
       setLoading(false);
     }
   };
 
-  const fetchNextNo = async () => {
-    const data = await apiRequest(`${API_BASE_URL}/purchase-orders/next-no`);
-    return data.purchaseOrderNo || "";
-  };
-
   useEffect(() => {
-    fetchVendors();
-    fetchItems();
-    fetchOrders();
+    refresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const totals = useMemo(() => {
-    const subtotal = form.items.reduce((sum, item) => {
-      return sum + Number(item.quantity || 0) * Number(item.unitPrice || 0);
-    }, 0);
+    const subtotal = form.items.reduce(
+      (sum, item) =>
+        sum + numberValue(item.purchaseQty) * numberValue(item.unitPrice),
+      0
+    );
 
-    const salesTax = form.taxType === "with-tax" ? subtotal * 0.18 : 0;
-    const grandTotal = subtotal + salesTax;
-    const balance = grandTotal - Number(form.advance || 0);
+    const itemDiscount = form.items.reduce(
+      (sum, item) => sum + numberValue(item.discount),
+      0
+    );
+
+    const overallDiscount = numberValue(form.overallDiscount);
+    const totalDiscount = itemDiscount + overallDiscount;
+    const taxableAmount = Math.max(subtotal - totalDiscount, 0);
+    const salesTax =
+      form.taxType === "with-tax"
+        ? taxableAmount * (numberValue(form.taxRate || 18) / 100)
+        : 0;
+    const grandTotal =
+      taxableAmount +
+      salesTax +
+      numberValue(form.freightCharges) +
+      numberValue(form.otherCharges);
+    const paidAmount = numberValue(form.paidAmount);
+    const balance = Math.max(grandTotal - paidAmount, 0);
 
     return {
       subtotal,
+      itemDiscount,
+      overallDiscount,
+      totalDiscount,
+      taxableAmount,
       salesTax,
       grandTotal,
+      paidAmount,
       balance,
     };
-  }, [form.items, form.taxType, form.advance]);
+  }, [form]);
 
-  const stats = useMemo(() => {
-    return {
-      totalOrders: orders.length,
-      totalValue: orders.reduce((s, o) => s + Number(o.grandTotal || 0), 0),
-      taxValue: orders.reduce((s, o) => s + Number(o.salesTax || 0), 0),
-      balance: orders.reduce((s, o) => s + Number(o.balance || 0), 0),
-    };
-  }, [orders]);
+  const filteredPurchases = useMemo(() => {
+    const keyword = search.trim().toLowerCase();
 
-  const filteredOrders = useMemo(() => {
-    const keyword = searchTerm.trim().toLowerCase();
+    return purchases.filter((purchase) => {
+      const text = [
+        purchase.purchaseNo,
+        purchase.grnNo,
+        purchase.purchaseOrderNo,
+        purchase.vendorName,
+        purchase.vendorInvoiceNo,
+        purchase.supplierBillNo,
+        purchase.challanNo,
+        ...(purchase.items || []).flatMap((item) => [
+          item.itemCode,
+          item.itemName,
+          item.description,
+        ]),
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
 
-    return orders.filter((order) => {
-      const matchesSearch =
-        !keyword ||
-        order.purchaseOrderNo?.toLowerCase().includes(keyword) ||
-        order.vendorName?.toLowerCase().includes(keyword) ||
-        order.vendorPhone?.toLowerCase().includes(keyword) ||
-        order.referenceNo?.toLowerCase().includes(keyword) ||
-        order.items?.some((item) =>
-          item.description?.toLowerCase().includes(keyword)
-        );
-
-      const matchesStatus =
-        statusFilter === "All" || order.status === statusFilter;
-
-      return matchesSearch && matchesStatus;
+      return (
+        (!keyword || text.includes(keyword)) &&
+        (postingFilter === "All" ||
+          purchase.postingStatus === postingFilter) &&
+        (paymentFilter === "All" ||
+          purchase.paymentStatus === paymentFilter)
+      );
     });
-  }, [orders, searchTerm, statusFilter]);
+  }, [purchases, search, postingFilter, paymentFilter]);
 
-  const openNewForm = async () => {
+  const stats = useMemo(
+    () => ({
+      total: purchases.length,
+      posted: purchases.filter((row) => row.postingStatus === "Posted").length,
+      payable: purchases.reduce(
+        (sum, row) => sum + numberValue(row.balance),
+        0
+      ),
+      value: purchases.reduce(
+        (sum, row) => sum + numberValue(row.grandTotal),
+        0
+      ),
+    }),
+    [purchases]
+  );
+
+  const openNew = async () => {
     try {
       setSaving(true);
-
-      await Promise.all([fetchVendors(), fetchItems()]);
-
-      const nextNo = await fetchNextNo();
+      const [numberData] = await Promise.all([
+        apiRequest(`${API_PURCHASES}/next-no`),
+        fetchEligibleGrns(),
+      ]);
 
       setEditId(null);
-      setForm(getDefaultForm(nextNo));
+      setForm(emptyForm(numberData.purchaseNo || ""));
       setShowForm(true);
     } catch (error) {
-      alert(error.message || "Purchase Order No load nahi hua");
+      alert(error.message || "Unable to open a new Purchase");
     } finally {
       setSaving(false);
     }
@@ -322,729 +280,895 @@ const PurchaseOrders = () => {
   const closeForm = () => {
     setShowForm(false);
     setEditId(null);
-    setForm(getDefaultForm());
+    setForm(emptyForm());
   };
 
-  const updateItem = (index, field, value) => {
-    const updatedItems = [...form.items];
-
-    updatedItems[index] = {
-      ...updatedItems[index],
-      [field]: value,
-    };
-
-    setForm({
-      ...form,
-      items: updatedItems,
-    });
+  const updateField = (field, value) => {
+    setForm((current) => ({ ...current, [field]: value }));
   };
 
-  const handleItemSelect = (index, itemId) => {
-    const selectedItem = itemsMaster.find(
-      (item) =>
-        getItemId(item) ===
-        String(itemId)
+  const selectGRN = (grnId) => {
+    const grn = eligibleGrns.find(
+      (row) => String(row._id) === String(grnId)
     );
 
-    const updatedItems = [...form.items];
-
-    if (!selectedItem) {
-      updatedItems[index] = {
-        ...updatedItems[index],
-        item: "",
-        description: "",
-        unit: "Pcs",
-        unitPrice: "",
-        remarks: "",
-      };
-
-      setForm({
-        ...form,
-        items: updatedItems,
-      });
-
+    if (!grn) {
+      setForm((current) => emptyForm(current.purchaseNo));
       return;
     }
 
-    updatedItems[index] = {
-      ...updatedItems[index],
-      item: getItemId(selectedItem),
-      description: getItemName(selectedItem),
-      unit: getItemUnit(selectedItem),
-      unitPrice: getItemPurchasePrice(selectedItem),
-      remarks: selectedItem.notes || "",
-    };
+    setForm((current) => ({
+      ...current,
+      grn: grn._id,
+      grnNo: grn.grnNo || "",
+      purchaseOrder: idOf(grn.purchaseOrder),
+      purchaseOrderNo: grn.purchaseOrderNo || "",
+      purchaseOrderReferenceNo: grn.purchaseOrderReferenceNo || "",
+      vendor: idOf(grn.vendor),
+      vendorName: grn.vendorName || "",
+      vendorPhone: grn.vendorPhone || "",
+      vendorEmail: grn.vendorEmail || "",
+      vendorAddress: grn.vendorAddress || "",
+      purchaseDate: grn.receivedDate || current.purchaseDate || todayDate(),
+      challanNo: grn.challanNo || "",
+      warehouse: grn.warehouse || "Main Warehouse",
+      taxType: grn.taxType || "without-tax",
+      taxRate: numberValue(grn.taxRate),
+      items: (grn.items || []).map((item) => ({
+        grnItemId: idOf(item.grnItemId),
+        purchaseOrderItemId: idOf(item.purchaseOrderItemId),
+        item: idOf(item.item),
+        itemCode: item.itemCode || "",
+        itemName: item.itemName || item.description || "",
+        description: item.description || item.itemName || "",
+        size: item.size || "",
+        cartons: numberValue(item.cartons),
+        grnAcceptedQty: numberValue(item.grnAcceptedQty),
+        purchaseQty: numberValue(item.grnAcceptedQty),
+        unit: item.unit || "Pcs",
+        unitPrice: numberValue(item.unitPrice),
+        discount: 0,
+        remarks: item.remarks || "",
+      })),
+    }));
+  };
 
-    setForm({
-      ...form,
-      items: updatedItems,
+  const updateItem = (index, field, value) => {
+    setForm((current) => {
+      const items = [...current.items];
+      items[index] = { ...items[index], [field]: value };
+      return { ...current, items };
     });
   };
 
-  const addItemRow = () => {
-    setForm({
-      ...form,
-      items: [...form.items, { ...emptyItem }],
-    });
-  };
-
-  const removeItemRow = (index) => {
-    if (form.items.length === 1) return;
-
-    setForm({
-      ...form,
-      items: form.items.filter((_, i) => i !== index),
-    });
-  };
-
-  const validateForm = () => {
-    if (!form.purchaseOrderNo.trim()) {
-      alert("Purchase Order No required hai");
+  const validate = () => {
+    if (!form.purchaseNo.trim()) {
+      alert("Purchase number is required");
+      return false;
+    }
+    if (!form.grn) {
+      alert("Select an eligible GRN");
+      return false;
+    }
+    if (!form.vendorInvoiceNo.trim()) {
+      alert("Vendor invoice number is required");
+      return false;
+    }
+    if (!form.purchaseDate) {
+      alert("Purchase date is required");
+      return false;
+    }
+    if (form.dueDate && form.dueDate < form.purchaseDate) {
+      alert("Due date cannot be earlier than purchase date");
+      return false;
+    }
+    if (!form.items.length) {
+      alert("Selected GRN has no accepted items");
       return false;
     }
 
-    if (!form.vendor) {
-      alert("Vendor select karein");
-      return false;
+    for (const item of form.items) {
+      const gross =
+        numberValue(item.purchaseQty) * numberValue(item.unitPrice);
+      if (numberValue(item.unitPrice) < 0) {
+        alert(`${item.itemName}: unit price cannot be negative`);
+        return false;
+      }
+      if (numberValue(item.discount) > gross) {
+        alert(`${item.itemName}: discount cannot exceed gross amount`);
+        return false;
+      }
     }
 
-    if (!form.orderDate) {
-      alert("Order Date required hai");
+    if (
+      numberValue(form.overallDiscount) >
+      totals.subtotal - totals.itemDiscount
+    ) {
+      alert("Overall discount is greater than the remaining item amount");
       return false;
     }
-
-    if (Number(form.advance || 0) > totals.grandTotal) {
-      alert("Advance grand total se zyada nahi ho sakta");
-      return false;
-    }
-
-    const validItems = form.items.filter(
-      (item) =>
-        item.item &&
-        item.description?.trim() &&
-        Number(item.quantity || 0) > 0 &&
-        Number(item.unitPrice || 0) >= 0
-    );
-
-    if (validItems.length === 0) {
-      alert("Select at least one Item Master record and enter valid quantity and unit price.");
+    if (numberValue(form.paidAmount) > totals.grandTotal) {
+      alert("Paid amount cannot exceed grand total");
       return false;
     }
 
     return true;
   };
 
-  const buildPayload = () => {
-    const validItems = form.items
-      .filter(
-        (item) =>
-          item.item &&
-          item.description?.trim() &&
-          Number(item.quantity || 0) > 0 &&
-          Number(item.unitPrice || 0) >= 0
-      )
-      .map((item) => ({
-        _id: item._id || undefined,
-        item: item.item,
-        description: String(item.description || "").trim(),
-        size: String(item.size || "").trim(),
-        cartons: Number(item.cartons || 0),
-        quantity: Number(item.quantity || 0),
-        unit: String(item.unit || "Pcs").trim(),
-        unitPrice: Number(item.unitPrice || 0),
-        receivedQty: Number(item.receivedQty || 0),
-        pendingQty: Number(item.pendingQty || 0),
-        remarks: String(item.remarks || "").trim(),
-      }));
+  const buildPayload = (postingStatus = "Draft") => ({
+    purchaseNo: form.purchaseNo.trim(),
+    grn: form.grn,
+    purchaseDate: form.purchaseDate,
+    dueDate: form.dueDate,
+    vendorInvoiceNo: form.vendorInvoiceNo.trim(),
+    supplierBillNo: form.supplierBillNo.trim(),
+    challanNo: form.challanNo.trim(),
+    warehouse: form.warehouse.trim(),
+    overallDiscount: numberValue(form.overallDiscount),
+    freightCharges: numberValue(form.freightCharges),
+    otherCharges: numberValue(form.otherCharges),
+    paidAmount: numberValue(form.paidAmount),
+    paymentMethod: form.paymentMethod,
+    postingStatus,
+    remarks: form.remarks.trim(),
+    items: form.items.map((item) => ({
+      grnItemId: item.grnItemId,
+      purchaseOrderItemId: item.purchaseOrderItemId,
+      item: item.item,
+      description: item.description,
+      size: item.size,
+      unit: item.unit,
+      unitPrice: numberValue(item.unitPrice),
+      discount: numberValue(item.discount),
+      remarks: String(item.remarks || "").trim(),
+    })),
+  });
 
-    return {
-      purchaseOrderNo: form.purchaseOrderNo,
-      vendor: form.vendor,
-      orderDate: form.orderDate,
-      expectedDate: form.expectedDate,
-      referenceNo: form.referenceNo,
-      taxType: form.taxType,
-      advance: Number(form.advance || 0),
-      status: form.status,
-      remarks: form.remarks,
-      items: validItems,
-    };
-  };
+  const save = async (postingStatus = "Draft") => {
+    if (!validate()) return;
 
-  const handleSubmit = async () => {
-    if (!validateForm()) return;
+    const postingMessage =
+      postingStatus === "Posted"
+        ? "Post this Purchase? Posted records cannot be edited."
+        : "";
+
+    if (postingMessage && !window.confirm(postingMessage)) return;
 
     try {
       setSaving(true);
+      await apiRequest(
+        editId
+          ? `${API_PURCHASES}/update/${editId}`
+          : `${API_PURCHASES}/add`,
+        {
+          method: editId ? "PUT" : "POST",
+          body: JSON.stringify(buildPayload(postingStatus)),
+        }
+      );
 
-      const payload = buildPayload();
-
-      const url = editId
-        ? `${API_BASE_URL}/purchase-orders/update/${editId}`
-        : `${API_BASE_URL}/purchase-orders/add`;
-
-      const method = editId ? "PUT" : "POST";
-
-      await apiRequest(url, {
-        method,
-        body: JSON.stringify(payload),
-      });
-
-      await fetchOrders();
+      await refresh();
       closeForm();
     } catch (error) {
-      alert(error.message || "Purchase order save nahi hua");
+      alert(error.message || "Purchase could not be saved");
     } finally {
       setSaving(false);
     }
   };
 
-  const handleEdit = async (order) => {
-    await Promise.all([fetchVendors(), fetchItems()]);
+  const handleEdit = async (purchaseId) => {
+    try {
+      setActionId(purchaseId);
+      const response = await apiRequest(`${API_PURCHASES}/${purchaseId}`);
+      const purchase = response.data;
 
-    setEditId(order._id);
+      if (purchase.postingStatus === "Posted") {
+        alert("Posted Purchase cannot be edited");
+        return;
+      }
+      if (purchase.status === "Cancelled") {
+        alert("Cancelled Purchase cannot be edited");
+        return;
+      }
 
-    setForm({
-      purchaseOrderNo: order.purchaseOrderNo || "",
-      vendor: order.vendor?._id || order.vendor || "",
-      orderDate: order.orderDate || todayDate(),
-      expectedDate: order.expectedDate || "",
-      referenceNo: order.referenceNo || "",
-      taxType: order.taxType || "without-tax",
-      advance: order.advance || "",
-      status: order.status || "Draft",
-      remarks: order.remarks || "",
-      items: order.items?.length
-        ? order.items.map((row) => ({
-            _id: row._id || "",
-            item: row.item?._id || row.item || "",
-            description:
-              row.description ||
-              getItemName(row.item) ||
-              "",
-            size: row.size || "",
-            cartons: row.cartons || "",
-            quantity: row.quantity || "",
-            unit:
-              row.unit ||
-              getItemUnit(row.item) ||
-              "Pcs",
-            unitPrice:
-              row.unitPrice ??
-              getItemPurchasePrice(row.item) ??
-              "",
-            receivedQty: row.receivedQty || 0,
-            pendingQty: row.pendingQty || 0,
-            remarks: row.remarks || "",
-          }))
-        : [{ ...emptyItem }],
-    });
-
-    setShowForm(true);
+      setEditId(purchase._id);
+      setForm({
+        purchaseNo: purchase.purchaseNo || "",
+        grn: idOf(purchase.grn),
+        grnNo: purchase.grnNo || purchase.grn?.grnNo || "",
+        purchaseOrder: idOf(purchase.purchaseOrder),
+        purchaseOrderNo:
+          purchase.purchaseOrderNo ||
+          purchase.purchaseOrder?.purchaseOrderNo ||
+          "",
+        purchaseOrderReferenceNo:
+          purchase.purchaseOrder?.referenceNo || "",
+        vendor: idOf(purchase.vendor),
+        vendorName: purchase.vendorName || "",
+        vendorPhone: purchase.vendorPhone || "",
+        vendorEmail: purchase.vendorEmail || "",
+        vendorAddress: purchase.vendorAddress || "",
+        purchaseDate: purchase.purchaseDate || todayDate(),
+        dueDate: purchase.dueDate || "",
+        vendorInvoiceNo: purchase.vendorInvoiceNo || "",
+        supplierBillNo: purchase.supplierBillNo || "",
+        challanNo: purchase.challanNo || "",
+        warehouse: purchase.warehouse || "Main Warehouse",
+        taxType: purchase.taxType || "without-tax",
+        taxRate: numberValue(purchase.taxRate),
+        overallDiscount: purchase.overallDiscount || "",
+        freightCharges: purchase.freightCharges || "",
+        otherCharges: purchase.otherCharges || "",
+        paidAmount: purchase.paidAmount || "",
+        paymentMethod: purchase.paymentMethod || "Credit",
+        postingStatus: purchase.postingStatus || "Draft",
+        status: purchase.status || "Draft",
+        remarks: purchase.remarks || "",
+        items: (purchase.items || []).map((item) => ({
+          grnItemId: idOf(item.grnItemId),
+          purchaseOrderItemId: idOf(item.purchaseOrderItemId),
+          item: idOf(item.item),
+          itemCode: item.itemCode || item.item?.code || "",
+          itemName:
+            item.itemName || item.item?.name || item.description || "",
+          description: item.description || "",
+          size: item.size || "",
+          cartons: numberValue(item.cartons),
+          grnAcceptedQty: numberValue(item.grnAcceptedQty),
+          purchaseQty: numberValue(item.purchaseQty),
+          unit: item.unit || "Pcs",
+          unitPrice: numberValue(item.unitPrice),
+          discount: numberValue(item.discount),
+          remarks: item.remarks || "",
+        })),
+      });
+      setShowForm(true);
+    } catch (error) {
+      alert(error.message || "Purchase could not be opened");
+    } finally {
+      setActionId("");
+    }
   };
 
-  const handleDelete = async (id) => {
-    if (!window.confirm("Are you sure you want to delete this purchase order?")) {
+  const postPurchase = async (purchase) => {
+    if (!window.confirm(`Post ${purchase.purchaseNo}? This action locks editing.`)) {
       return;
     }
 
     try {
-      await apiRequest(`${API_BASE_URL}/purchase-orders/delete/${id}`, {
-        method: "DELETE",
+      setActionId(purchase._id);
+      await apiRequest(`${API_PURCHASES}/post/${purchase._id}`, {
+        method: "PUT",
       });
-
-      await fetchOrders();
+      await refresh();
     } catch (error) {
-      alert(error.message || "Purchase order delete nahi hua");
+      alert(error.message || "Purchase could not be posted");
+    } finally {
+      setActionId("");
     }
   };
 
-  const getVendorName = (order) => {
-    return (
-      order.vendorName ||
-      order.vendor?.vendorName ||
-      order.vendor?.name ||
-      "N/A"
+  const updatePayment = async (purchase) => {
+    const entered = window.prompt(
+      `Enter total paid amount for ${purchase.purchaseNo}. Grand total: ${money(
+        purchase.grandTotal
+      )}`,
+      String(purchase.paidAmount || 0)
     );
+
+    if (entered === null) return;
+    const paidAmount = Number(entered);
+
+    if (!Number.isFinite(paidAmount) || paidAmount < 0) {
+      alert("Enter a valid paid amount");
+      return;
+    }
+
+    try {
+      setActionId(purchase._id);
+      await apiRequest(`${API_PURCHASES}/payment/${purchase._id}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          paidAmount,
+          paymentMethod: purchase.paymentMethod || "Credit",
+        }),
+      });
+      await refresh();
+    } catch (error) {
+      alert(error.message || "Payment could not be updated");
+    } finally {
+      setActionId("");
+    }
   };
 
-  const getVendorPhone = (order) => {
-    return (
-      order.vendorPhone ||
-      order.vendor?.phoneNumber ||
-      order.vendor?.phone ||
+  const cancelPurchase = async (purchase) => {
+    const reason = window.prompt(
+      `Reason for cancelling ${purchase.purchaseNo}:`,
       ""
     );
+    if (reason === null) return;
+
+    try {
+      setActionId(purchase._id);
+      await apiRequest(`${API_PURCHASES}/cancel/${purchase._id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ cancelReason: reason }),
+      });
+      await refresh();
+    } catch (error) {
+      alert(error.message || "Purchase could not be cancelled");
+    } finally {
+      setActionId("");
+    }
   };
 
-  const printOrder = (order) => {
-    const taxLabel =
-      order.taxType === "with-tax" ? "With Sales Tax 18%" : "Without Sales Tax";
+  const deletePurchase = async (purchase) => {
+    if (!window.confirm(`Delete draft Purchase ${purchase.purchaseNo}?`)) return;
 
-    const rows = order.items
+    try {
+      setActionId(purchase._id);
+      await apiRequest(`${API_PURCHASES}/delete/${purchase._id}`, {
+        method: "DELETE",
+      });
+      await refresh();
+    } catch (error) {
+      alert(error.message || "Purchase could not be deleted");
+    } finally {
+      setActionId("");
+    }
+  };
+
+  const printPurchase = (purchase) => {
+    const rows = (purchase.items || [])
       .map(
         (item, index) => `
           <tr>
             <td>${index + 1}</td>
-            <td>${item.description || ""}</td>
-            <td>${item.size || ""}</td>
-            <td>${item.cartons || ""}</td>
-            <td>${item.quantity || ""}</td>
-            <td>${item.unit || ""}</td>
-            <td>${Number(item.unitPrice || 0).toLocaleString()}</td>
-            <td>${Number(
-              item.amount ||
-                Number(item.quantity || 0) * Number(item.unitPrice || 0)
-            ).toLocaleString()}</td>
-          </tr>
-        `
+            <td>${escapeHtml(item.itemCode || "")}</td>
+            <td>${escapeHtml(item.description || item.itemName || "")}</td>
+            <td>${escapeHtml(item.size || "-")}</td>
+            <td class="number">${quantity(item.purchaseQty)}</td>
+            <td>${escapeHtml(item.unit || "")}</td>
+            <td class="number">${money(item.unitPrice)}</td>
+            <td class="number">${money(item.discount)}</td>
+            <td class="number">${money(item.amount)}</td>
+          </tr>`
       )
       .join("");
 
+    const taxLabel =
+      purchase.taxType === "with-tax"
+        ? `With Sales Tax ${numberValue(purchase.taxRate)}%`
+        : "Without Sales Tax";
+
     const printWindow = window.open("", "_blank");
+    if (!printWindow) {
+      alert("Please allow pop-ups to print this Purchase");
+      return;
+    }
 
     printWindow.document.write(`
+      <!doctype html>
       <html>
         <head>
-          <title>${order.purchaseOrderNo}</title>
+          <title>${escapeHtml(purchase.purchaseNo)}</title>
           <style>
-            body { font-family: Arial, sans-serif; padding: 30px; color: #111827; }
-            .top { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid #111827; padding-bottom: 12px; }
-            h1 { margin: 0; font-size: 30px; }
-            h2 { text-align: center; margin: 24px 0 18px; text-decoration: underline; }
-            .small { font-size: 12px; color: #374151; line-height: 1.7; }
-            .box { border: 1px solid #111827; padding: 10px; margin: 12px 0; line-height: 1.7; font-size: 13px; }
-            table { width: 100%; border-collapse: collapse; margin-top: 12px; }
-            th, td { border: 1px solid #111827; padding: 7px; font-size: 12px; text-align: left; }
-            th { background: #f3f4f6; }
-            .totals { width: 320px; margin-left: auto; margin-top: 14px; }
-            .totals div { display: flex; justify-content: space-between; border-bottom: 1px solid #d1d5db; padding: 6px 0; }
-            .sign { margin-top: 70px; display: flex; justify-content: space-between; }
+            * { box-sizing: border-box; }
+            body { font-family: Arial, sans-serif; padding: 28px; color: #111827; }
+            h1 { text-align: center; margin: 0; font-size: 25px; letter-spacing: 1px; }
+            .sub { text-align: center; color: #475569; margin: 5px 0 22px; font-size: 12px; }
+            .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+            .box { border: 1px solid #cbd5e1; border-radius: 6px; padding: 10px; font-size: 12px; line-height: 1.7; }
+            table { width: 100%; border-collapse: collapse; margin-top: 16px; }
+            th, td { border: 1px solid #94a3b8; padding: 7px; font-size: 11px; text-align: left; }
+            th { background: #f1f5f9; }
+            .number { text-align: right; white-space: nowrap; }
+            .totals { width: 380px; margin: 14px 0 0 auto; }
+            .totals div { display: flex; justify-content: space-between; border-bottom: 1px solid #cbd5e1; padding: 6px 2px; font-size: 12px; }
+            .total { font-size: 14px !important; font-weight: bold; border-top: 2px solid #111827; }
+            .sign { margin-top: 65px; display: flex; justify-content: space-between; font-size: 12px; }
+            .remarks { margin-top: 18px; font-size: 12px; }
           </style>
         </head>
-
         <body>
-          <div class="top">
-            <div>
-              <h1>Urwa Packages</h1>
-              <div class="small">Purchase Order</div>
+          <h1>PURCHASE VOUCHER</h1>
+          <div class="sub">Generated from an approved GRN</div>
+
+          <div class="grid">
+            <div class="box">
+              <b>Purchase No:</b> ${escapeHtml(purchase.purchaseNo)}<br/>
+              <b>GRN No:</b> ${escapeHtml(purchase.grnNo)}<br/>
+              <b>Purchase Order:</b> ${escapeHtml(purchase.purchaseOrderNo)}<br/>
+              <b>Purchase Date:</b> ${escapeHtml(purchase.purchaseDate)}<br/>
+              <b>Due Date:</b> ${escapeHtml(purchase.dueDate || "-")}
             </div>
-
-            <div class="small">
-              <b>Purchase Order No:</b> ${order.purchaseOrderNo || ""}<br/>
-              <b>Date:</b> ${order.orderDate || ""}<br/>
-              <b>Expected Date:</b> ${order.expectedDate || ""}<br/>
-              <b>Tax:</b> ${taxLabel}<br/>
-              <b>Status:</b> ${order.status || ""}
+            <div class="box">
+              <b>Vendor:</b> ${escapeHtml(purchase.vendorName)}<br/>
+              <b>Vendor Invoice:</b> ${escapeHtml(purchase.vendorInvoiceNo)}<br/>
+              <b>Supplier Bill:</b> ${escapeHtml(purchase.supplierBillNo || "-")}<br/>
+              <b>Challan:</b> ${escapeHtml(purchase.challanNo || "-")}<br/>
+              <b>Tax:</b> ${escapeHtml(taxLabel)}
             </div>
-          </div>
-
-          <h2>PURCHASE ORDER</h2>
-
-          <div class="box">
-            <b>Vendor Name:</b> ${getVendorName(order)}<br/>
-            <b>Phone:</b> ${getVendorPhone(order)}<br/>
-            <b>Reference No:</b> ${order.referenceNo || ""}
           </div>
 
           <table>
             <thead>
               <tr>
-                <th>Sr</th>
-                <th>Description</th>
-                <th>Size</th>
-                <th>Cartons</th>
-                <th>Qty</th>
-                <th>Unit</th>
-                <th>Unit Price</th>
-                <th>Amount</th>
+                <th>Sr</th><th>Code</th><th>Item</th><th>Size</th>
+                <th>Qty</th><th>Unit</th><th>Rate</th><th>Discount</th><th>Amount</th>
               </tr>
             </thead>
             <tbody>${rows}</tbody>
           </table>
 
           <div class="totals">
-            <div><span>Subtotal</span><b>${money(order.subtotal)}</b></div>
-            <div><span>Sales Tax ${order.taxRate || 0}%</span><b>${money(
-      order.salesTax
-    )}</b></div>
-            <div><span>Grand Total</span><b>${money(order.grandTotal)}</b></div>
-            <div><span>Advance</span><b>${money(order.advance)}</b></div>
-            <div><span>Balance</span><b>${money(order.balance)}</b></div>
+            <div><span>Subtotal</span><b>${money(purchase.subtotal)}</b></div>
+            <div><span>Item Discount</span><b>${money(purchase.itemDiscount)}</b></div>
+            <div><span>Overall Discount</span><b>${money(purchase.overallDiscount)}</b></div>
+            <div><span>Taxable Amount</span><b>${money(purchase.taxableAmount)}</b></div>
+            <div><span>Sales Tax</span><b>${money(purchase.salesTax)}</b></div>
+            <div><span>Freight + Other Charges</span><b>${money(
+              numberValue(purchase.freightCharges) +
+                numberValue(purchase.otherCharges)
+            )}</b></div>
+            <div class="total"><span>Grand Total</span><b>${money(
+              purchase.grandTotal
+            )}</b></div>
+            <div><span>Paid</span><b>${money(purchase.paidAmount)}</b></div>
+            <div><span>Balance</span><b>${money(purchase.balance)}</b></div>
           </div>
 
-          <p><b>Remarks:</b> ${order.remarks || ""}</p>
-
+          <div class="remarks"><b>Remarks:</b> ${escapeHtml(
+            purchase.remarks || "-"
+          )}</div>
           <div class="sign">
-            <div>Prepared By: __________________</div>
-            <div>Approved By: __________________</div>
+            <span>Prepared By: __________________</span>
+            <span>Checked By: __________________</span>
+            <span>Approved By: __________________</span>
           </div>
-
           <script>window.print();</script>
         </body>
       </html>
     `);
-
     printWindow.document.close();
   };
 
   if (showForm) {
     return (
-      <div className="w-full space-y-6">
-        <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-5">
-          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 border-b border-slate-200 pb-4">
+      <div className="w-full space-y-5">
+        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="flex flex-col gap-4 border-b border-slate-200 pb-4 md:flex-row md:items-center md:justify-between">
             <div>
               <button
+                type="button"
                 onClick={closeForm}
-                className="inline-flex items-center gap-2 text-sm text-slate-600 hover:text-slate-900 mb-3"
+                className="mb-3 inline-flex items-center gap-2 text-sm text-slate-600 hover:text-slate-900"
               >
-                <ArrowLeft size={17} />
-                Back to Purchase Orders
+                <ArrowLeft size={17} /> Back to Purchases
               </button>
-
               <h1 className="text-2xl font-bold text-slate-900">
-                {editId ? "Edit Purchase Order" : "New Purchase Order"}
+                {editId ? "Edit Purchase" : "New Purchase from GRN"}
               </h1>
-
-              {/* <p className="text-sm text-slate-500 mt-1">
-                Vendor select karein aur Item Master se purchase items choose karein.
-              </p> */}
+              <p className="mt-1 text-sm text-slate-500">
+                Select a posted GRN. Vendor, Purchase Order, tax and accepted quantities will fill automatically.
+              </p>
             </div>
 
             <button
+              type="button"
               onClick={closeForm}
-              className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-xl border border-slate-200 hover:bg-slate-50"
+              className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 px-4 py-2 hover:bg-slate-50"
             >
-              <X size={18} />
-              Cancel
+              <X size={18} /> Cancel
             </button>
           </div>
 
-          <div className="pt-5 space-y-6">
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+          <div className="space-y-6 pt-5">
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
               <div>
-                <RequiredLabel>Purchase Order No</RequiredLabel>
+                <Label required>Purchase No</Label>
                 <input
-                  value={form.purchaseOrderNo}
-                  onChange={(e) =>
-                    setForm({ ...form, purchaseOrderNo: e.target.value })
+                  value={form.purchaseNo}
+                  onChange={(event) =>
+                    updateField("purchaseNo", event.target.value.toUpperCase())
                   }
-                  className="w-full border rounded-lg px-3 py-2 mt-1"
-                  placeholder="PO-0001"
+                  className={inputClass}
+                  placeholder="PUR-0001"
                 />
               </div>
 
-              <div>
-                <RequiredLabel>Vendor</RequiredLabel>
-                <select
-                  value={form.vendor}
-                  onChange={(e) => setForm({ ...form, vendor: e.target.value })}
-                  className="w-full border rounded-lg px-3 py-2 mt-1"
-                >
-                  <option value="">
-                    {vendorLoading ? "Loading vendors..." : "Select Vendor"}
-                  </option>
-
-                  {vendors.map((vendor) => (
-                    <option key={vendor._id} value={vendor._id}>
-                      {vendor.vendorName || vendor.name}
-                    </option>
-                  ))}
-                </select>
+              <div className="md:col-span-2">
+                <Label required>GRN</Label>
+                {editId ? (
+                  <input
+                    value={`${form.grnNo} — ${form.purchaseOrderNo}`}
+                    disabled
+                    className={inputClass}
+                  />
+                ) : (
+                  <select
+                    value={form.grn}
+                    onChange={(event) => selectGRN(event.target.value)}
+                    className={inputClass}
+                  >
+                    <option value="">Select Posted GRN</option>
+                    {eligibleGrns.map((grn) => (
+                      <option key={grn._id} value={grn._id}>
+                        {grn.grnNo} — {grn.purchaseOrderNo} — {grn.vendorName}
+                      </option>
+                    ))}
+                  </select>
+                )}
               </div>
 
               <div>
-                <RequiredLabel>Order Date</RequiredLabel>
-                <input
-                  type="date"
-                  value={form.orderDate}
-                  onChange={(e) =>
-                    setForm({ ...form, orderDate: e.target.value })
-                  }
-                  className="w-full border rounded-lg px-3 py-2 mt-1"
-                />
-              </div>
-
-              <div>
-                <NormalLabel>Expected Date</NormalLabel>
+                <Label required>Purchase Date</Label>
                 <input
                   type="date"
-                  value={form.expectedDate}
-                  onChange={(e) =>
-                    setForm({ ...form, expectedDate: e.target.value })
+                  value={form.purchaseDate}
+                  onChange={(event) =>
+                    updateField("purchaseDate", event.target.value)
                   }
-                  className="w-full border rounded-lg px-3 py-2 mt-1"
+                  className={inputClass}
                 />
               </div>
 
               <div>
-                <NormalLabel>Reference No</NormalLabel>
+                <Label>Purchase Order</Label>
+                <input value={form.purchaseOrderNo} disabled className={inputClass} />
+              </div>
+
+              <div>
+                <Label>PO Reference</Label>
                 <input
-                  value={form.referenceNo}
-                  onChange={(e) =>
-                    setForm({ ...form, referenceNo: e.target.value })
-                  }
-                  className="w-full border rounded-lg px-3 py-2 mt-1"
-                  placeholder="Vendor quotation / reference no"
+                  value={form.purchaseOrderReferenceNo}
+                  disabled
+                  className={inputClass}
                 />
               </div>
 
               <div>
-                <RequiredLabel>Tax Type</RequiredLabel>
-                <select
-                  value={form.taxType}
-                  onChange={(e) =>
-                    setForm({ ...form, taxType: e.target.value })
-                  }
-                  className="w-full border rounded-lg px-3 py-2 mt-1"
-                >
-                  <option value="without-tax">Without Tax</option>
-                  <option value="with-tax">With Sales Tax 18%</option>
-                </select>
-              </div>
-
-              <div>
-                <NormalLabel>Advance</NormalLabel>
+                <Label required>Vendor Invoice No</Label>
                 <input
-                  type="number"
-                  value={form.advance}
-                  onChange={(e) =>
-                    setForm({ ...form, advance: e.target.value })
+                  value={form.vendorInvoiceNo}
+                  onChange={(event) =>
+                    updateField("vendorInvoiceNo", event.target.value)
                   }
-                  className="w-full border rounded-lg px-3 py-2 mt-1"
-                  placeholder="0"
+                  className={inputClass}
+                  placeholder="Supplier invoice number"
                 />
               </div>
 
               <div>
-                <RequiredLabel>Status</RequiredLabel>
-                <select
-                  value={form.status}
-                  onChange={(e) => setForm({ ...form, status: e.target.value })}
-                  className="w-full border rounded-lg px-3 py-2 mt-1"
-                >
-                  <option>Draft</option>
-                  <option>Ordered</option>
-                  <option>Partially Received</option>
-                  <option>Received</option>
-                  <option>Cancelled</option>
-                </select>
+                <Label>Due Date</Label>
+                <input
+                  type="date"
+                  value={form.dueDate}
+                  onChange={(event) => updateField("dueDate", event.target.value)}
+                  className={inputClass}
+                />
+              </div>
+
+              <div>
+                <Label>Supplier Bill No</Label>
+                <input
+                  value={form.supplierBillNo}
+                  onChange={(event) =>
+                    updateField("supplierBillNo", event.target.value)
+                  }
+                  className={inputClass}
+                />
+              </div>
+
+              <div>
+                <Label>Challan No</Label>
+                <input
+                  value={form.challanNo}
+                  onChange={(event) =>
+                    updateField("challanNo", event.target.value)
+                  }
+                  className={inputClass}
+                />
+              </div>
+
+              <div>
+                <Label>Warehouse</Label>
+                <input value={form.warehouse} disabled className={inputClass} />
+              </div>
+
+              <div>
+                <Label>Tax from Purchase Order</Label>
+                <input
+                  value={
+                    form.taxType === "with-tax"
+                      ? `With Sales Tax ${numberValue(form.taxRate)}%`
+                      : "Without Sales Tax"
+                  }
+                  disabled
+                  className={inputClass}
+                />
               </div>
             </div>
 
-            <div className="border rounded-xl overflow-hidden">
-              <div className="bg-slate-50 px-4 py-3 flex justify-between items-center">
+            {form.grn ? (
+              <div className="grid grid-cols-1 gap-4 rounded-xl border border-blue-200 bg-blue-50 p-4 text-sm md:grid-cols-2">
                 <div>
-                  <h3 className="font-bold">Purchase Items</h3>
-                  {/* <p className="text-xs text-slate-500">
-                    Item Master se item select karein. Quantity aur price required hain.
-                  </p> */}
+                  <div className="font-bold text-slate-800">Vendor</div>
+                  <div className="mt-1 text-slate-700">{form.vendorName}</div>
+                  <div className="text-slate-600">{form.vendorPhone || "No phone"}</div>
+                  <div className="text-slate-600">{form.vendorEmail || "No email"}</div>
                 </div>
+                <div>
+                  <div className="font-bold text-slate-800">Address</div>
+                  <div className="mt-1 text-slate-600">
+                    {form.vendorAddress || "No vendor address available"}
+                  </div>
+                  <div className="mt-2 text-xs font-semibold text-blue-700">
+                    Quantity is locked to GRN accepted quantity. Tax is inherited from the Purchase Order.
+                  </div>
+                </div>
+              </div>
+            ) : null}
 
-                <button
-                  onClick={addItemRow}
-                  className="text-sm bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg"
-                >
-                  Add Row
-                </button>
+            <div className="overflow-hidden rounded-xl border border-slate-200">
+              <div className="flex flex-col gap-2 bg-slate-50 px-4 py-3 md:flex-row md:items-center md:justify-between">
+                <div>
+                  <h3 className="font-bold text-slate-900">Accepted GRN Items</h3>
+                  <p className="text-xs text-slate-500">
+                    Item and quantity are controlled by GRN. Enter invoice rate and discount only.
+                  </p>
+                </div>
+                <div className="rounded-lg bg-white px-3 py-2 text-xs font-semibold text-slate-600 shadow-sm">
+                  {form.items.length} item(s) · {quantity(
+                    form.items.reduce(
+                      (sum, row) => sum + numberValue(row.purchaseQty),
+                      0
+                    )
+                  )} total qty
+                </div>
               </div>
 
               <div className="overflow-x-auto">
-                <table className="w-full text-sm">
+                <table className="w-full min-w-[1200px] text-sm">
                   <thead>
-                    <tr className="bg-white border-b text-slate-600">
-                      <th className="p-2 text-left">
-                        Item <span className="text-red-600">*</span>
-                      </th>
-                      <th className="p-2 text-left">Description</th>
-                      <th className="p-2 text-left">Size</th>
-                      <th className="p-2 text-left">Cartons</th>
-                      <th className="p-2 text-left">
-                        Qty <span className="text-red-600">*</span>
-                      </th>
-                      <th className="p-2 text-left">Unit</th>
-                      <th className="p-2 text-left">
-                        Unit Price <span className="text-red-600">*</span>
-                      </th>
-                      <th className="p-2 text-right">Amount</th>
-                      <th className="p-2"></th>
+                    <tr className="border-b bg-white text-slate-600">
+                      <th className="p-3 text-left">Item</th>
+                      <th className="p-3 text-left">Description</th>
+                      <th className="p-3 text-left">Size</th>
+                      <th className="p-3 text-right">GRN Accepted</th>
+                      <th className="p-3 text-left">Unit</th>
+                      <th className="p-3 text-right">Unit Price</th>
+                      <th className="p-3 text-right">Gross</th>
+                      <th className="p-3 text-right">Discount</th>
+                      <th className="p-3 text-right">Net Amount</th>
                     </tr>
                   </thead>
-
                   <tbody>
-                    {form.items.map((item, index) => (
-                      <tr key={index} className="border-b">
-                        <td className="p-2 min-w-[240px]">
-                          <select
-                            value={item.item || ""}
-                            onChange={(e) =>
-                              handleItemSelect(index, e.target.value)
-                            }
-                            className="w-full border rounded px-2 py-1.5"
-                          >
-                            <option value="">
-                              {itemLoading ? "Loading items..." : "Select Item"}
-                            </option>
-
-                            {itemsMaster.map((masterItem) => (
-                              <option
-                                key={getItemId(masterItem)}
-                                value={getItemId(masterItem)}
-                              >
-                                {getItemLabel(masterItem)}
-                              </option>
-                            ))}
-                          </select>
-                        </td>
-
-                        <td className="p-2 min-w-[220px]">
-                          <input
-                            value={item.description}
-                            onChange={(e) =>
-                              updateItem(index, "description", e.target.value)
-                            }
-                            className="w-full border rounded px-2 py-1.5"
-                            placeholder="Raw material / item name"
-                          />
-                        </td>
-
-                        <td className="p-2 min-w-[140px]">
-                          <input
-                            value={item.size}
-                            onChange={(e) =>
-                              updateItem(index, "size", e.target.value)
-                            }
-                            className="w-full border rounded px-2 py-1.5"
-                            placeholder='2" x 72 Yards'
-                          />
-                        </td>
-
-                        <td className="p-2 min-w-[100px]">
-                          <input
-                            type="number"
-                            value={item.cartons}
-                            onChange={(e) =>
-                              updateItem(index, "cartons", e.target.value)
-                            }
-                            className="w-full border rounded px-2 py-1.5"
-                            placeholder="5"
-                          />
-                        </td>
-
-                        <td className="p-2 min-w-[100px]">
-                          <input
-                            type="number"
-                            value={item.quantity}
-                            onChange={(e) =>
-                              updateItem(index, "quantity", e.target.value)
-                            }
-                            className="w-full border rounded px-2 py-1.5"
-                            placeholder="450"
-                          />
-                        </td>
-
-                        <td className="p-2 min-w-[100px]">
-                          <input
-                            value={item.unit}
-                            onChange={(e) =>
-                              updateItem(index, "unit", e.target.value)
-                            }
-                            className="w-full border rounded px-2 py-1.5"
-                            placeholder="Pcs"
-                          />
-                        </td>
-
-                        <td className="p-2 min-w-[120px]">
-                          <input
-                            type="number"
-                            value={item.unitPrice}
-                            onChange={(e) =>
-                              updateItem(index, "unitPrice", e.target.value)
-                            }
-                            className="w-full border rounded px-2 py-1.5"
-                            placeholder="190"
-                          />
-                        </td>
-
-                        <td className="p-2 text-right font-bold">
-                          {money(
-                            Number(item.quantity || 0) *
-                              Number(item.unitPrice || 0)
-                          )}
-                        </td>
-
-                        <td className="p-2 text-center">
-                          <button
-                            onClick={() => removeItemRow(index)}
-                            className="p-2 bg-red-50 text-red-600 rounded-lg"
-                          >
-                            <Trash2 size={15} />
-                          </button>
+                    {!form.items.length ? (
+                      <tr>
+                        <td colSpan={9} className="p-10 text-center text-slate-500">
+                          Select a GRN to load accepted items.
                         </td>
                       </tr>
-                    ))}
+                    ) : (
+                      form.items.map((item, index) => {
+                        const gross =
+                          numberValue(item.purchaseQty) *
+                          numberValue(item.unitPrice);
+                        const net = Math.max(
+                          gross - numberValue(item.discount),
+                          0
+                        );
+
+                        return (
+                          <tr key={item.grnItemId || index} className="border-b last:border-0">
+                            <td className="p-3">
+                              <div className="font-semibold text-slate-900">
+                                {item.itemCode || "—"}
+                              </div>
+                              <div className="text-xs text-slate-500">
+                                {item.itemName}
+                              </div>
+                            </td>
+                            <td className="p-3 text-slate-700">
+                              {item.description}
+                            </td>
+                            <td className="p-3 text-slate-600">
+                              {item.size || "—"}
+                            </td>
+                            <td className="p-3 text-right font-bold text-blue-700">
+                              {quantity(item.purchaseQty)}
+                            </td>
+                            <td className="p-3 text-slate-600">{item.unit}</td>
+                            <td className="p-3">
+                              <input
+                                type="number"
+                                min="0"
+                                step="0.01"
+                                value={item.unitPrice}
+                                onChange={(event) =>
+                                  updateItem(index, "unitPrice", event.target.value)
+                                }
+                                className={`${inputClass} min-w-[130px] text-right`}
+                              />
+                            </td>
+                            <td className="p-3 text-right font-medium text-slate-700">
+                              {money(gross)}
+                            </td>
+                            <td className="p-3">
+                              <input
+                                type="number"
+                                min="0"
+                                step="0.01"
+                                value={item.discount}
+                                onChange={(event) =>
+                                  updateItem(index, "discount", event.target.value)
+                                }
+                                className={`${inputClass} min-w-[120px] text-right`}
+                              />
+                            </td>
+                            <td className="p-3 text-right font-bold text-slate-900">
+                              {money(net)}
+                            </td>
+                          </tr>
+                        );
+                      })
+                    )}
                   </tbody>
                 </table>
               </div>
             </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-              <div>
-                <NormalLabel>Remarks</NormalLabel>
-                <textarea
-                  value={form.remarks}
-                  onChange={(e) => setForm({ ...form, remarks: e.target.value })}
-                  className="w-full border rounded-lg px-3 py-2 mt-1 min-h-[150px]"
-                  placeholder="Any purchase instruction..."
-                />
+            <div className="grid grid-cols-1 gap-5 xl:grid-cols-3">
+              <div className="space-y-4 rounded-xl border border-slate-200 p-4 xl:col-span-2">
+                <h3 className="font-bold text-slate-900">Charges and Payment</h3>
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+                  <div>
+                    <Label>Overall Discount</Label>
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={form.overallDiscount}
+                      onChange={(event) =>
+                        updateField("overallDiscount", event.target.value)
+                      }
+                      className={inputClass}
+                    />
+                  </div>
+                  <div>
+                    <Label>Freight Charges</Label>
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={form.freightCharges}
+                      onChange={(event) =>
+                        updateField("freightCharges", event.target.value)
+                      }
+                      className={inputClass}
+                    />
+                  </div>
+                  <div>
+                    <Label>Other Charges</Label>
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={form.otherCharges}
+                      onChange={(event) =>
+                        updateField("otherCharges", event.target.value)
+                      }
+                      className={inputClass}
+                    />
+                  </div>
+                  <div>
+                    <Label>Paid Amount</Label>
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={form.paidAmount}
+                      onChange={(event) =>
+                        updateField("paidAmount", event.target.value)
+                      }
+                      className={inputClass}
+                    />
+                  </div>
+                  <div>
+                    <Label>Payment Method</Label>
+                    <select
+                      value={form.paymentMethod}
+                      onChange={(event) =>
+                        updateField("paymentMethod", event.target.value)
+                      }
+                      className={inputClass}
+                    >
+                      {[
+                        "Cash",
+                        "Bank",
+                        "Cheque",
+                        "Credit",
+                        "Other",
+                      ].map((method) => (
+                        <option key={method}>{method}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="md:col-span-3">
+                    <Label>Remarks</Label>
+                    <textarea
+                      value={form.remarks}
+                      onChange={(event) =>
+                        updateField("remarks", event.target.value)
+                      }
+                      className={`${inputClass} min-h-[90px]`}
+                      placeholder="Optional purchase notes"
+                    />
+                  </div>
+                </div>
               </div>
 
-              <div className="bg-slate-50 rounded-xl p-5 space-y-3">
-                <div className="flex justify-between">
-                  <span>Subtotal</span>
-                  <b>{money(totals.subtotal)}</b>
-                </div>
-
-                <div className="flex justify-between">
-                  <span>
-                    Sales Tax {form.taxType === "with-tax" ? "18%" : "0%"}
-                  </span>
-                  <b>{money(totals.salesTax)}</b>
-                </div>
-
-                <div className="flex justify-between text-lg border-t pt-3">
-                  <span>Grand Total</span>
-                  <b>{money(totals.grandTotal)}</b>
-                </div>
-
-                <div className="flex justify-between">
-                  <span>Advance</span>
-                  <b>{money(form.advance)}</b>
-                </div>
-
-                <div className="flex justify-between text-red-600">
-                  <span>Balance</span>
-                  <b>{money(totals.balance)}</b>
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                <h3 className="mb-3 font-bold text-slate-900">Purchase Summary</h3>
+                <div className="space-y-2 text-sm">
+                  {[
+                    ["Subtotal", totals.subtotal],
+                    ["Item Discount", totals.itemDiscount],
+                    ["Overall Discount", totals.overallDiscount],
+                    ["Taxable Amount", totals.taxableAmount],
+                    [
+                      `Sales Tax ${form.taxType === "with-tax" ? `${numberValue(form.taxRate)}%` : ""}`,
+                      totals.salesTax,
+                    ],
+                    ["Freight Charges", form.freightCharges],
+                    ["Other Charges", form.otherCharges],
+                  ].map(([label, value]) => (
+                    <div key={label} className="flex justify-between border-b border-slate-200 py-1.5">
+                      <span className="text-slate-600">{label}</span>
+                      <b>{money(value)}</b>
+                    </div>
+                  ))}
+                  <div className="flex justify-between border-t-2 border-slate-900 pt-3 text-base">
+                    <span className="font-bold">Grand Total</span>
+                    <b>{money(totals.grandTotal)}</b>
+                  </div>
+                  <div className="flex justify-between pt-1">
+                    <span className="text-slate-600">Paid</span>
+                    <b className="text-emerald-700">{money(totals.paidAmount)}</b>
+                  </div>
+                  <div className="flex justify-between text-base">
+                    <span className="font-bold">Balance</span>
+                    <b className="text-red-700">{money(totals.balance)}</b>
+                  </div>
                 </div>
               </div>
             </div>
 
-            <div className="border-t pt-5 flex justify-end gap-3">
-              <button onClick={closeForm} className="px-5 py-2.5 rounded-xl border">
+            <div className="flex flex-col-reverse gap-3 border-t border-slate-200 pt-5 sm:flex-row sm:justify-end">
+              <button
+                type="button"
+                onClick={closeForm}
+                className="rounded-xl border border-slate-300 px-5 py-2.5 font-semibold hover:bg-slate-50"
+              >
                 Cancel
               </button>
-
               <button
-                onClick={handleSubmit}
+                type="button"
                 disabled={saving}
-                className="px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-semibold flex items-center gap-2 disabled:opacity-60"
+                onClick={() => save("Draft")}
+                className="inline-flex items-center justify-center gap-2 rounded-xl bg-slate-800 px-5 py-2.5 font-semibold text-white hover:bg-slate-900 disabled:opacity-60"
               >
-                {saving ? (
-                  <Loader2 className="animate-spin" size={18} />
-                ) : (
-                  <Save size={18} />
-                )}
-                {saving ? "Saving..." : "Save Purchase Order"}
+                {saving ? <Loader2 className="animate-spin" size={18} /> : <Save size={18} />}
+                Save Draft
+              </button>
+              <button
+                type="button"
+                disabled={saving}
+                onClick={() => save("Posted")}
+                className="inline-flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-5 py-2.5 font-semibold text-white hover:bg-blue-700 disabled:opacity-60"
+              >
+                {saving ? <Loader2 className="animate-spin" size={18} /> : <Send size={18} />}
+                Save and Post
               </button>
             </div>
           </div>
@@ -1054,190 +1178,224 @@ const PurchaseOrders = () => {
   }
 
   return (
-    <div className="w-full space-y-6">
-      <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-5 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+    <div className="w-full space-y-5">
+      <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900 flex items-center gap-2">
-            <FileText className="text-blue-600" size={26} />
-            Purchase Orders
-          </h1>
-
-          <p className="text-sm text-slate-500 mt-1">
-            Vendor purchase booking, item master selection, tax and balance tracking
+          <h1 className="text-2xl font-bold text-slate-900">Purchases</h1>
+          <p className="mt-1 text-sm text-slate-500">
+            Convert posted GRNs into controlled supplier purchases and payable records.
           </p>
         </div>
-
-        <button
-          onClick={openNewForm}
-          disabled={saving}
-          className="inline-flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-xl font-semibold shadow-sm disabled:opacity-60"
-        >
-          {saving ? <Loader2 className="animate-spin" size={18} /> : <Plus size={18} />}
-          New Purchase Order
-        </button>
-      </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <div className="bg-white rounded-xl border p-4">
-          <p className="text-xs text-slate-500">Total Orders</p>
-          <h3 className="text-2xl font-bold">{stats.totalOrders}</h3>
-        </div>
-
-        <div className="bg-white rounded-xl border p-4">
-          <p className="text-xs text-slate-500">Total Value</p>
-          <h3 className="text-2xl font-bold">{money(stats.totalValue)}</h3>
-        </div>
-
-        <div className="bg-white rounded-xl border p-4">
-          <p className="text-xs text-slate-500">Tax Value</p>
-          <h3 className="text-2xl font-bold">{money(stats.taxValue)}</h3>
-        </div>
-
-        <div className="bg-white rounded-xl border p-4">
-          <p className="text-xs text-slate-500">Balance</p>
-          <h3 className="text-2xl font-bold">{money(stats.balance)}</h3>
+        <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={refresh}
+            disabled={loading}
+            className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 font-semibold hover:bg-slate-50 disabled:opacity-60"
+          >
+            <RefreshCcw size={18} className={loading ? "animate-spin" : ""} /> Refresh
+          </button>
+          <button
+            type="button"
+            onClick={openNew}
+            disabled={saving}
+            className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 font-semibold text-white hover:bg-blue-700 disabled:opacity-60"
+          >
+            {saving ? <Loader2 className="animate-spin" size={18} /> : <PackageCheck size={18} />}
+            New Purchase
+          </button>
         </div>
       </div>
 
-      <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
-        <div className="p-4 border-b border-slate-100 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
-          <div>
-            <h3 className="font-bold text-slate-900">Purchase Order List</h3>
-            {/* <p className="text-xs text-slate-500">
-              All purchase orders from MongoDB
-            </p> */}
-          </div>
-
-          <div className="flex flex-col sm:flex-row gap-2">
-            <div className="relative">
-              <Search
-                size={16}
-                className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
-              />
-              <input
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="pl-9 pr-3 py-2 border rounded-lg text-sm w-full sm:w-72"
-                placeholder="Search order, vendor, item..."
-              />
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
+        {[
+          ["Total Purchases", stats.total, FileText],
+          ["Posted", stats.posted, CheckCircle2],
+          ["Purchase Value", money(stats.value), PackageCheck],
+          ["Outstanding Payable", money(stats.payable), CreditCard],
+        ].map(([label, value, Icon]) => (
+          <div key={label} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  {label}
+                </div>
+                <div className="mt-2 text-xl font-bold text-slate-900">{value}</div>
+              </div>
+              <div className="rounded-xl bg-slate-100 p-3 text-slate-700">
+                <Icon size={21} />
+              </div>
             </div>
-
-            <select
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value)}
-              className="px-3 py-2 border rounded-lg text-sm"
-            >
-              <option>All</option>
-              <option>Draft</option>
-              <option>Ordered</option>
-              <option>Partially Received</option>
-              <option>Received</option>
-              <option>Cancelled</option>
-            </select>
-
-            <button
-              onClick={fetchOrders}
-              className="inline-flex items-center justify-center gap-2 text-sm px-3 py-2 rounded-lg border hover:bg-slate-50"
-            >
-              <RotateCcw size={15} />
-              Refresh
-            </button>
           </div>
-        </div>
+        ))}
+      </div>
 
+      <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
+          <div className="relative md:col-span-2">
+            <Search className="absolute left-3 top-2.5 text-slate-400" size={18} />
+            <input
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              className={`${inputClass} pl-10`}
+              placeholder="Search purchase, GRN, PO, vendor or invoice..."
+            />
+          </div>
+          <select
+            value={postingFilter}
+            onChange={(event) => setPostingFilter(event.target.value)}
+            className={inputClass}
+          >
+            <option>All</option>
+            <option>Draft</option>
+            <option>Posted</option>
+          </select>
+          <select
+            value={paymentFilter}
+            onChange={(event) => setPaymentFilter(event.target.value)}
+            className={inputClass}
+          >
+            <option>All</option>
+            <option>Unpaid</option>
+            <option>Partially Paid</option>
+            <option>Paid</option>
+          </select>
+        </div>
+      </div>
+
+      <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
         <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead className="bg-slate-50 text-slate-600">
-              <tr>
-                <th className="p-3 text-left">Order No</th>
-                <th className="p-3 text-left">Vendor</th>
-                <th className="p-3 text-left">Date</th>
-                <th className="p-3 text-left">Tax</th>
-                <th className="p-3 text-right">Grand Total</th>
+          <table className="w-full min-w-[1150px] text-sm">
+            <thead>
+              <tr className="border-b bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
+                <th className="p-3">Purchase</th>
+                <th className="p-3">GRN / PO</th>
+                <th className="p-3">Vendor</th>
+                <th className="p-3">Invoice</th>
+                <th className="p-3 text-right">Total</th>
                 <th className="p-3 text-right">Balance</th>
-                <th className="p-3 text-center">Status</th>
-                <th className="p-3 text-center">Actions</th>
+                <th className="p-3">Posting</th>
+                <th className="p-3">Payment</th>
+                <th className="p-3 text-right">Actions</th>
               </tr>
             </thead>
-
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan="8" className="p-10 text-center">
-                    <Loader2 className="animate-spin mx-auto text-blue-600" />
+                  <td colSpan={9} className="p-10 text-center text-slate-500">
+                    <Loader2 className="mx-auto mb-2 animate-spin" /> Loading Purchases...
                   </td>
                 </tr>
-              ) : filteredOrders.length === 0 ? (
+              ) : !filteredPurchases.length ? (
                 <tr>
-                  <td colSpan="8" className="p-10 text-center text-slate-500">
-                    No purchase order found
+                  <td colSpan={9} className="p-10 text-center text-slate-500">
+                    No Purchase records found.
                   </td>
                 </tr>
               ) : (
-                filteredOrders.map((order) => (
-                  <tr key={order._id} className="border-t hover:bg-slate-50">
-                    <td className="p-3 font-bold text-blue-700">
-                      {order.purchaseOrderNo}
-                    </td>
+                filteredPurchases.map((purchase) => {
+                  const busy = actionId === purchase._id;
+                  return (
+                    <tr key={purchase._id} className="border-b last:border-0 hover:bg-slate-50">
+                      <td className="p-3">
+                        <div className="font-bold text-slate-900">{purchase.purchaseNo}</div>
+                        <div className="text-xs text-slate-500">{purchase.purchaseDate}</div>
+                      </td>
+                      <td className="p-3">
+                        <div className="font-medium text-slate-800">{purchase.grnNo}</div>
+                        <div className="text-xs text-slate-500">{purchase.purchaseOrderNo}</div>
+                      </td>
+                      <td className="p-3">
+                        <div className="font-medium text-slate-800">{purchase.vendorName}</div>
+                        <div className="text-xs text-slate-500">{purchase.vendorPhone || "—"}</div>
+                      </td>
+                      <td className="p-3">
+                        <div className="font-medium text-slate-800">{purchase.vendorInvoiceNo}</div>
+                        <div className="text-xs text-slate-500">{purchase.supplierBillNo || "—"}</div>
+                      </td>
+                      <td className="p-3 text-right font-bold">{money(purchase.grandTotal)}</td>
+                      <td className="p-3 text-right font-bold text-red-700">{money(purchase.balance)}</td>
+                      <td className="p-3">
+                        <span className={`rounded-full px-2.5 py-1 text-xs font-bold ${statusClass(purchase.postingStatus)}`}>
+                          {purchase.postingStatus}
+                        </span>
+                      </td>
+                      <td className="p-3">
+                        <span className={`rounded-full px-2.5 py-1 text-xs font-bold ${statusClass(purchase.paymentStatus)}`}>
+                          {purchase.paymentStatus}
+                        </span>
+                      </td>
+                      <td className="p-3">
+                        <div className="flex justify-end gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => printPurchase(purchase)}
+                            className="rounded-lg bg-slate-100 p-2 text-slate-700 hover:bg-slate-200"
+                            title="Print"
+                          >
+                            <Printer size={16} />
+                          </button>
 
-                    <td className="p-3">
-                      <div className="font-semibold">{getVendorName(order)}</div>
-                      <div className="text-xs text-slate-500">
-                        {getVendorPhone(order)}
-                      </div>
-                    </td>
+                          {purchase.postingStatus !== "Posted" && purchase.status !== "Cancelled" ? (
+                            <>
+                              <button
+                                type="button"
+                                disabled={busy}
+                                onClick={() => handleEdit(purchase._id)}
+                                className="rounded-lg bg-blue-50 p-2 text-blue-700 hover:bg-blue-100 disabled:opacity-50"
+                                title="Edit"
+                              >
+                                {busy ? <Loader2 size={16} className="animate-spin" /> : <Edit2 size={16} />}
+                              </button>
+                              <button
+                                type="button"
+                                disabled={busy}
+                                onClick={() => postPurchase(purchase)}
+                                className="rounded-lg bg-purple-50 p-2 text-purple-700 hover:bg-purple-100 disabled:opacity-50"
+                                title="Post"
+                              >
+                                <Send size={16} />
+                              </button>
+                              <button
+                                type="button"
+                                disabled={busy}
+                                onClick={() => deletePurchase(purchase)}
+                                className="rounded-lg bg-red-50 p-2 text-red-700 hover:bg-red-100 disabled:opacity-50"
+                                title="Delete Draft"
+                              >
+                                <Trash2 size={16} />
+                              </button>
+                            </>
+                          ) : null}
 
-                    <td className="p-3">{order.orderDate}</td>
+                          {purchase.status !== "Cancelled" ? (
+                            <button
+                              type="button"
+                              disabled={busy}
+                              onClick={() => updatePayment(purchase)}
+                              className="rounded-lg bg-emerald-50 p-2 text-emerald-700 hover:bg-emerald-100 disabled:opacity-50"
+                              title="Update Payment"
+                            >
+                              <CreditCard size={16} />
+                            </button>
+                          ) : null}
 
-                    <td className="p-3">
-                      {order.taxType === "with-tax"
-                        ? "18% Sales Tax"
-                        : "Without Tax"}
-                    </td>
-
-                    <td className="p-3 text-right font-bold">
-                      {money(order.grandTotal)}
-                    </td>
-
-                    <td className="p-3 text-right font-bold text-red-600">
-                      {money(order.balance)}
-                    </td>
-
-                    <td className="p-3 text-center">
-                      <span className="px-3 py-1 rounded-full text-xs font-semibold bg-blue-50 text-blue-700">
-                        {order.status}
-                      </span>
-                    </td>
-
-                    <td className="p-3">
-                      <div className="flex justify-center gap-2">
-                        <button
-                          onClick={() => printOrder(order)}
-                          className="p-2 rounded-lg bg-slate-100 hover:bg-slate-200"
-                          title="Print"
-                        >
-                          <Printer size={16} />
-                        </button>
-
-                        <button
-                          onClick={() => handleEdit(order)}
-                          className="p-2 rounded-lg bg-blue-50 text-blue-700 hover:bg-blue-100"
-                          title="Edit"
-                        >
-                          <Edit2 size={16} />
-                        </button>
-
-                        <button
-                          onClick={() => handleDelete(order._id)}
-                          className="p-2 rounded-lg bg-red-50 text-red-700 hover:bg-red-100"
-                          title="Delete"
-                        >
-                          <Trash2 size={16} />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))
+                          {purchase.status !== "Cancelled" ? (
+                            <button
+                              type="button"
+                              disabled={busy}
+                              onClick={() => cancelPurchase(purchase)}
+                              className="rounded-lg bg-amber-50 p-2 text-amber-700 hover:bg-amber-100 disabled:opacity-50"
+                              title="Cancel Purchase"
+                            >
+                              <Ban size={16} />
+                            </button>
+                          ) : null}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
               )}
             </tbody>
           </table>
@@ -1247,4 +1405,4 @@ const PurchaseOrders = () => {
   );
 };
 
-export default PurchaseOrders;
+export default Purchases;

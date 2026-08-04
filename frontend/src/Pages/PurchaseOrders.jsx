@@ -492,8 +492,7 @@ const PurchaseOrders = () => {
           <title>${order.purchaseOrderNo}</title>
           <style>
             body { font-family: Arial, sans-serif; padding: 30px; color: #111827; }
-            .top { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid #111827; padding-bottom: 12px; }
-            h1 { margin: 0; font-size: 30px; }
+            .top { display: flex; justify-content: flex-end; align-items: flex-start; border-bottom: 2px solid #111827; padding-bottom: 12px; }
             h2 { text-align: center; margin: 24px 0 18px; text-decoration: underline; }
             .small { font-size: 12px; color: #374151; line-height: 1.7; }
             .box { border: 1px solid #111827; padding: 10px; margin: 12px 0; line-height: 1.7; font-size: 13px; }
@@ -508,11 +507,6 @@ const PurchaseOrders = () => {
 
         <body>
           <div class="top">
-            <div>
-              <h1>Urwa Packages</h1>
-              <div class="small">Purchase Order</div>
-            </div>
-
             <div class="small">
               <b>Purchase Order No:</b> ${order.purchaseOrderNo || ""}<br/>
               <b>Date:</b> ${order.orderDate || ""}<br/>

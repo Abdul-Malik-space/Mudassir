@@ -189,6 +189,16 @@ const grnItemSchema = new mongoose.Schema(
       ],
     },
 
+    cartons: {
+      type: Number,
+      default: 0,
+
+      min: [
+        0,
+        "Cartons cannot be negative",
+      ],
+    },
+
     orderedQty: {
       type: Number,
       default: 0,
@@ -264,6 +274,8 @@ const grnItemSchema = new mongoose.Schema(
       ],
     },
 
+    // Internal inventory valuation only.
+    // This field is never returned to the GRN client UI.
     unitPrice: {
       type: Number,
       default: 0,
@@ -274,6 +286,8 @@ const grnItemSchema = new mongoose.Schema(
       ],
     },
 
+    // Internal inventory valuation only.
+    // Quantity screens and GRN printouts do not expose this value.
     amount: {
       type: Number,
       default: 0,
@@ -327,6 +341,10 @@ grnItemSchema.pre("validate", function () {
 
   this.size = cleanText(
     this.size
+  );
+
+  this.cartons = cleanNumber(
+    this.cartons
   );
 
   this.unit = cleanText(
@@ -438,6 +456,40 @@ const grnSchema = new mongoose.Schema(
 
       trim: true,
       uppercase: true,
+    },
+
+    purchaseOrderDate: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+
+    expectedDate: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+
+    referenceNo: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+
+    taxType: {
+      type: String,
+      enum: [
+        "without-tax",
+        "with-tax",
+      ],
+      default: "without-tax",
+    },
+
+    taxRate: {
+      type: Number,
+      default: 0,
+      min: 0,
+      max: 100,
     },
 
     vendor: {
@@ -610,6 +662,12 @@ const grnSchema = new mongoose.Schema(
       },
     },
 
+    totalCartons: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+
     totalOrderedQty: {
       type: Number,
       default: 0,
@@ -640,6 +698,7 @@ const grnSchema = new mongoose.Schema(
       min: 0,
     },
 
+    // Internal inventory valuation only.
     subtotal: {
       type: Number,
       default: 0,
@@ -722,6 +781,32 @@ grnSchema.pre("validate", function () {
   this.purchaseOrderNo = cleanText(
     this.purchaseOrderNo
   ).toUpperCase();
+
+  this.purchaseOrderDate = cleanText(
+    this.purchaseOrderDate
+  );
+
+  this.expectedDate = cleanText(
+    this.expectedDate
+  );
+
+  this.referenceNo = cleanText(
+    this.referenceNo
+  );
+
+  this.taxType =
+    this.taxType ===
+    "with-tax"
+      ? "with-tax"
+      : "without-tax";
+
+  this.taxRate =
+    this.taxType ===
+    "with-tax"
+      ? cleanNumber(
+          this.taxRate || 18
+        )
+      : 0;
 
   this.vendorName = cleanText(
     this.vendorName
@@ -849,6 +934,16 @@ grnSchema.pre("validate", function () {
     warehouseIds.length === 1
       ? warehouseIds[0]
       : null;
+
+  this.totalCartons =
+    rows.reduce(
+      (sum, item) =>
+        sum +
+        cleanNumber(
+          item.cartons
+        ),
+      0
+    );
 
   this.totalOrderedQty =
     rows.reduce(

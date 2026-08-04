@@ -1,2341 +1,995 @@
-const express =
-  require("express");
+const express = require("express");
+const mongoose = require("mongoose");
 
-const router =
-  express.Router();
+const router = express.Router();
 
-const Purchase =
-  require(
-    "../models/Purchase"
-  );
+const Purchase = require("../models/Purchase");
+const GRN = require("../models/GRN");
+const PurchaseOrder = require("../models/PurchaseOrder");
+const Counter = require("../models/Counter");
 
-const GRN =
-  require(
-    "../models/GRN"
-  );
+const PURCHASE_COUNTER_NAME = "purchaseNoSequentialV3";
+const STANDARD_PURCHASE_NO_PATTERN = /^PUR-(\d+)$/i;
+const PURCHASE_NO_PATTERN = /^[A-Z0-9][A-Z0-9/_-]*$/;
 
-const PurchaseOrder =
-  require(
-    "../models/PurchaseOrder"
-  );
-
-const Counter =
-  require(
-    "../models/Counter"
-  );
-
-const allowedTaxTypes = [
-  "without-tax",
-  "with-tax",
-];
-
-const allowedPaymentMethods = [
-  "Cash",
-  "Bank",
-  "Cheque",
-  "Credit",
-  "Other",
-];
-
-const allowedPostingStatuses = [
-  "Draft",
+const PAYMENT_METHODS = ["Cash", "Bank", "Cheque", "Credit", "Other"];
+const POSTABLE_GRN_STATUSES = [
+  "Received",
+  "Partially Received",
+  "Completed",
   "Posted",
 ];
 
-const allowedStatuses = [
-  "Draft",
-  "Completed",
-  "Cancelled",
-];
-
-/*
- * نئی counter key استعمال کی گئی ہے تاکہ
- * پرانی random counter value اثر نہ ڈالے۔
- */
-const PURCHASE_COUNTER_NAME =
-  "purchaseNoSequentialV2";
-
-const STANDARD_PURCHASE_NO_PATTERN =
-  /^PUR-(\d+)$/i;
-
-const PURCHASE_NO_PATTERN =
-  /^[A-Z0-9][A-Z0-9/_-]*$/;
-
-const normalizePurchaseNo = (
-  value
-) =>
-  String(value ?? "")
-    .trim()
-    .toUpperCase()
-    .replace(/\s+/g, "");
-
-const formatPurchaseNo = (
-  sequence
-) =>
-  `PUR-${String(
-    sequence
-  ).padStart(4, "0")}`;
-
-const getPurchaseSequence = (
-  purchaseNo
-) => {
-  const match =
-    normalizePurchaseNo(
-      purchaseNo
-    ).match(
-      STANDARD_PURCHASE_NO_PATTERN
-    );
-
-  if (!match) {
-    return 0;
-  }
-
-  const sequence =
-    Number(match[1]);
-
-  return Number.isFinite(
-    sequence
-  )
-    ? sequence
-    : 0;
+const cleanText = (value, fallback = "") => {
+  const text = String(value ?? "").trim();
+  return text || fallback;
 };
 
-const validatePurchaseNo = (
-  purchaseNo
-) => {
-  if (!purchaseNo) {
-    throw new Error(
-      "Purchase Number is required"
-    );
-  }
+const cleanNumber = (value) => {
+  const number = Number(value);
+  return Number.isFinite(number) ? Math.max(number, 0) : 0;
+};
 
-  if (
-    purchaseNo.length > 50
-  ) {
-    throw new Error(
-      "Purchase Number cannot exceed 50 characters"
-    );
-  }
+const roundMoney = (value) =>
+  Math.round((cleanNumber(value) + Number.EPSILON) * 100) / 100;
 
-  if (
-    !PURCHASE_NO_PATTERN.test(
-      purchaseNo
-    )
-  ) {
+const escapeRegex = (value) =>
+  String(value ?? "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+const idOf = (value) => {
+  if (!value) return "";
+  if (typeof value === "object") {
+    return String(value._id || value.id || "");
+  }
+  return String(value);
+};
+
+const isValidId = (value) => mongoose.isValidObjectId(idOf(value));
+
+const normalizePurchaseNo = (value) =>
+  cleanText(value).toUpperCase().replace(/\s+/g, "");
+
+const formatPurchaseNo = (sequence) =>
+  `PUR-${String(sequence).padStart(4, "0")}`;
+
+const getPurchaseSequence = (purchaseNo) => {
+  const match = normalizePurchaseNo(purchaseNo).match(
+    STANDARD_PURCHASE_NO_PATTERN
+  );
+  return match ? Number(match[1]) || 0 : 0;
+};
+
+const validatePurchaseNo = (purchaseNo) => {
+  if (!purchaseNo) throw new Error("Purchase number is required");
+  if (purchaseNo.length > 50) {
+    throw new Error("Purchase number cannot exceed 50 characters");
+  }
+  if (!PURCHASE_NO_PATTERN.test(purchaseNo)) {
     throw new Error(
-      "Purchase Number can contain letters, numbers, hyphen, slash or underscore only"
+      "Purchase number can contain letters, numbers, hyphen, slash or underscore only"
     );
   }
 };
 
-const getPurchaseCounter =
-  async () =>
-    Counter.findOneAndUpdate(
-      {
-        name:
-          PURCHASE_COUNTER_NAME,
-      },
-      {
-        $setOnInsert: {
-          seq: 0,
-        },
-      },
-      {
-        new: true,
-        upsert: true,
-
-        setDefaultsOnInsert:
-          true,
-      }
-    );
-
-const findNextAvailablePurchaseNo =
-  async (
-    startSequence = 1
-  ) => {
-    let sequence =
-      Math.max(
-        Number(
-          startSequence
-        ) || 1,
-        1
-      );
-
-    for (
-      let attempt = 0;
-      attempt < 10000;
-      attempt += 1
-    ) {
-      const purchaseNo =
-        formatPurchaseNo(
-          sequence
-        );
-
-      const exists =
-        await Purchase.exists({
-          purchaseNo,
-        });
-
-      if (!exists) {
-        return {
-          purchaseNo,
-          sequence,
-        };
-      }
-
-      sequence += 1;
-    }
-
-    throw new Error(
-      "Unable to find the next Purchase Number"
-    );
-  };
-
-const getNextPurchaseNo =
-  async () => {
-    await getPurchaseCounter();
-
-    for (
-      let attempt = 0;
-      attempt < 1000;
-      attempt += 1
-    ) {
-      const counter =
-        await Counter
-          .findOneAndUpdate(
-            {
-              name:
-                PURCHASE_COUNTER_NAME,
-            },
-            {
-              $inc: {
-                seq: 1,
-              },
-            },
-            {
-              new: true,
-              upsert: true,
-
-              setDefaultsOnInsert:
-                true,
-            }
-          );
-
-      const purchaseNo =
-        formatPurchaseNo(
-          counter.seq
-        );
-
-      const exists =
-        await Purchase.exists({
-          purchaseNo,
-        });
-
-      if (!exists) {
-        return purchaseNo;
-      }
-    }
-
-    throw new Error(
-      "Unable to generate a unique Purchase Number"
-    );
-  };
-
-const peekNextPurchaseNo =
-  async () => {
-    const counter =
-      await getPurchaseCounter();
-
-    const next =
-      await findNextAvailablePurchaseNo(
-        Number(
-          counter.seq || 0
-        ) + 1
-      );
-
-    return next.purchaseNo;
-  };
-
-const resolvePurchaseNo =
-  async (
-    value,
-    excludePurchaseId = null
-  ) => {
-    const requestedPurchaseNo =
-      normalizePurchaseNo(
-        value
-      );
-
-    if (
-      !requestedPurchaseNo
-    ) {
-      return getNextPurchaseNo();
-    }
-
-    validatePurchaseNo(
-      requestedPurchaseNo
-    );
-
-    const duplicateQuery = {
-      purchaseNo:
-        requestedPurchaseNo,
-    };
-
-    if (
-      excludePurchaseId
-    ) {
-      duplicateQuery._id = {
-        $ne:
-          excludePurchaseId,
-      };
-    }
-
-    const duplicate =
-      await Purchase.exists(
-        duplicateQuery
-      );
-
-    if (duplicate) {
-      throw new Error(
-        `Purchase Number "${requestedPurchaseNo}" already exists`
-      );
-    }
-
-    /*
-     * Frontend سے آنے والا auto number
-     * counter کے ساتھ sync ہوگا۔
-     *
-     * Manual high number جیسے PUR-0100
-     * automatic series کو jump نہیں کروائے گا۔
-     */
-    const requestedSequence =
-      getPurchaseSequence(
-        requestedPurchaseNo
-      );
-
-    if (
-      requestedSequence > 0
-    ) {
-      const counter =
-        await getPurchaseCounter();
-
-      const next =
-        await findNextAvailablePurchaseNo(
-          Number(
-            counter.seq || 0
-          ) + 1
-        );
-
-      if (
-        requestedPurchaseNo ===
-        next.purchaseNo
-      ) {
-        await Counter
-          .findOneAndUpdate(
-            {
-              name:
-                PURCHASE_COUNTER_NAME,
-            },
-            {
-              $max: {
-                seq:
-                  requestedSequence,
-              },
-            },
-            {
-              new: true,
-              upsert: true,
-
-              setDefaultsOnInsert:
-                true,
-            }
-          );
-      }
-    }
-
-    return requestedPurchaseNo;
-  };
-
-const getDuplicatePurchaseMessage = (
-  error
-) => {
-  if (
-    error?.code !== 11000
-  ) {
-    return (
-      error?.message ||
-      "Unable to save Purchase"
-    );
-  }
-
-  const field =
-    Object.keys(
-      error.keyPattern || {}
-    )[0];
-
-  if (
-    field === "purchaseNo"
-  ) {
-    return "This Purchase Number already exists";
-  }
-
-  if (
-    field === "grn"
-  ) {
-    return "This GRN has already been used in another Purchase";
-  }
-
+const duplicateMessage = (error, fallback = "Purchase could not be saved") => {
+  if (error?.code !== 11000) return error?.message || fallback;
+  const field = Object.keys(error.keyPattern || {})[0];
+  if (field === "purchaseNo") return "This Purchase Number already exists";
+  if (field === "grn") return "This GRN has already been used in another Purchase";
   return "Purchase Number or GRN already exists";
 };
 
-const makeItemKey = (
-  item
-) => [
-  String(
-    item.description || ""
-  )
-    .trim()
-    .toLowerCase(),
+const getPurchaseCounter = async () =>
+  Counter.findOneAndUpdate(
+    { name: PURCHASE_COUNTER_NAME },
+    { $setOnInsert: { seq: 0 } },
+    { new: true, upsert: true, setDefaultsOnInsert: true }
+  );
 
-  String(
-    item.size || ""
-  )
-    .trim()
-    .toLowerCase(),
+const findNextAvailablePurchaseNo = async (startSequence = 1) => {
+  let sequence = Math.max(Number(startSequence) || 1, 1);
 
-  String(
-    item.unit || ""
-  )
-    .trim()
-    .toLowerCase(),
-].join("|");
+  for (let attempt = 0; attempt < 10000; attempt += 1) {
+    const purchaseNo = formatPurchaseNo(sequence);
+    const exists = await Purchase.exists({ purchaseNo });
+    if (!exists) return { purchaseNo, sequence };
+    sequence += 1;
+  }
 
-const getGRNItemsMap = (
-  grnItems = []
-) => {
-  const map =
-    new Map();
+  throw new Error("Unable to find the next Purchase Number");
+};
 
-  grnItems.forEach(
-    (item) => {
-      const key =
-        makeItemKey(
-          item
-        );
+const getNextPurchaseNo = async () => {
+  await getPurchaseCounter();
 
-      const previous =
-        map.get(key) || {
-          item:
-            item.item ||
-            null,
+  for (let attempt = 0; attempt < 1000; attempt += 1) {
+    const counter = await Counter.findOneAndUpdate(
+      { name: PURCHASE_COUNTER_NAME },
+      { $inc: { seq: 1 } },
+      { new: true, upsert: true, setDefaultsOnInsert: true }
+    );
 
-          description:
-            item.description ||
-            "",
+    const purchaseNo = formatPurchaseNo(counter.seq);
+    const exists = await Purchase.exists({ purchaseNo });
+    if (!exists) return purchaseNo;
+  }
 
-          size:
-            item.size || "",
+  throw new Error("Unable to generate a unique Purchase Number");
+};
 
-          grnAcceptedQty:
-            0,
+const peekNextPurchaseNo = async () => {
+  const counter = await getPurchaseCounter();
+  const next = await findNextAvailablePurchaseNo(Number(counter.seq || 0) + 1);
+  return next.purchaseNo;
+};
 
-          unit:
-            item.unit ||
-            "Pcs",
+const resolvePurchaseNo = async (value, excludePurchaseId = null) => {
+  const requestedPurchaseNo = normalizePurchaseNo(value);
 
-          unitPrice:
-            item.unitPrice ||
-            0,
-        };
+  if (!requestedPurchaseNo) return getNextPurchaseNo();
 
-      previous.grnAcceptedQty +=
-        Number(
-          item.acceptedQty ||
-            0
-        );
+  validatePurchaseNo(requestedPurchaseNo);
 
-      map.set(
-        key,
-        previous
+  const duplicateQuery = { purchaseNo: requestedPurchaseNo };
+  if (excludePurchaseId) duplicateQuery._id = { $ne: excludePurchaseId };
+
+  if (await Purchase.exists(duplicateQuery)) {
+    throw new Error(`Purchase Number "${requestedPurchaseNo}" already exists`);
+  }
+
+  const requestedSequence = getPurchaseSequence(requestedPurchaseNo);
+  if (requestedSequence > 0) {
+    const counter = await getPurchaseCounter();
+    const next = await findNextAvailablePurchaseNo(Number(counter.seq || 0) + 1);
+
+    if (requestedPurchaseNo === next.purchaseNo) {
+      await Counter.findOneAndUpdate(
+        { name: PURCHASE_COUNTER_NAME },
+        { $max: { seq: requestedSequence } },
+        { new: true, upsert: true, setDefaultsOnInsert: true }
       );
     }
-  );
+  }
+
+  return requestedPurchaseNo;
+};
+
+const populatePurchase = (query) =>
+  query
+    .populate(
+      "grn",
+      "grnNo receivedDate challanNo warehouse status inspectionStatus purchaseStatus totalAcceptedQty stockPosted"
+    )
+    .populate(
+      "purchaseOrder",
+      "purchaseOrderNo orderDate expectedDate referenceNo status taxType taxRate"
+    )
+    .populate(
+      "vendor",
+      "vendorName name phoneNumber phone email address city ntn strn status"
+    )
+    .populate("items.item", "code name itemType unit status");
+
+const getVendorSnapshot = (grn, purchaseOrder) => {
+  const grnVendor =
+    grn.vendor && typeof grn.vendor === "object" ? grn.vendor : null;
+  const poVendor =
+    purchaseOrder.vendor && typeof purchaseOrder.vendor === "object"
+      ? purchaseOrder.vendor
+      : null;
+
+  return {
+    vendor:
+      idOf(grn.vendor) || idOf(purchaseOrder.vendor) || null,
+    vendorName:
+      cleanText(grn.vendorName) ||
+      cleanText(grnVendor?.vendorName || grnVendor?.name) ||
+      cleanText(purchaseOrder.vendorName) ||
+      cleanText(poVendor?.vendorName || poVendor?.name),
+    vendorPhone:
+      cleanText(grn.vendorPhone) ||
+      cleanText(grnVendor?.phoneNumber || grnVendor?.phone) ||
+      cleanText(purchaseOrder.vendorPhone) ||
+      cleanText(poVendor?.phoneNumber || poVendor?.phone),
+    vendorEmail:
+      cleanText(grn.vendorEmail) ||
+      cleanText(grnVendor?.email) ||
+      cleanText(purchaseOrder.vendorEmail) ||
+      cleanText(poVendor?.email),
+    vendorAddress:
+      cleanText(grn.vendorAddress) ||
+      cleanText(grnVendor?.address) ||
+      cleanText(purchaseOrder.vendorAddress) ||
+      cleanText(poVendor?.address),
+  };
+};
+
+const makeFallbackKey = (row = {}) =>
+  [
+    idOf(row.item),
+    cleanText(row.description || row.itemName || row.item?.name).toLowerCase(),
+    cleanText(row.size).toLowerCase(),
+    cleanText(row.unit || row.item?.unit, "Pcs").toLowerCase(),
+  ].join("|");
+
+const getRowKeys = (
+  row = {},
+  { useDocumentIdAsPORowId = false, useDocumentIdAsGRNRowId = false } = {}
+) => {
+  const keys = [];
+
+  const grnItemId = idOf(row.grnItemId);
+  if (grnItemId) keys.push(`grn-row:${grnItemId}`);
+
+  if (useDocumentIdAsGRNRowId) {
+    const documentId = idOf(row._id);
+    if (documentId) keys.push(`grn-row:${documentId}`);
+  }
+
+  const poItemId = idOf(row.purchaseOrderItemId);
+  if (poItemId) keys.push(`po-row:${poItemId}`);
+
+  if (useDocumentIdAsPORowId) {
+    const documentId = idOf(row._id);
+    if (documentId) keys.push(`po-row:${documentId}`);
+  }
+
+  keys.push(`fallback:${makeFallbackKey(row)}`);
+  return [...new Set(keys.filter(Boolean))];
+};
+
+const getPurchaseOrderRowsMap = (purchaseOrder) => {
+  const map = new Map();
+
+  for (const row of purchaseOrder.items || []) {
+    const data = {
+      purchaseOrderItemId: row._id || null,
+      item: idOf(row.item) || null,
+      description: cleanText(row.description || row.item?.name),
+      size: cleanText(row.size),
+      cartons: cleanNumber(row.cartons),
+      unit: cleanText(row.unit || row.item?.unit, "Pcs"),
+      unitPrice: roundMoney(row.unitPrice),
+      remarks: cleanText(row.remarks),
+    };
+
+    for (const key of getRowKeys(row, { useDocumentIdAsPORowId: true })) {
+      map.set(key, data);
+    }
+  }
 
   return map;
 };
 
-const cleanPurchaseItems = ({
-  items = [],
-  grnItems = [],
-}) => {
-  const grnItemsMap =
-    getGRNItemsMap(
-      grnItems
+const getIncomingRowsMap = (items = []) => {
+  const map = new Map();
+
+  for (const row of Array.isArray(items) ? items : []) {
+    if (!row) continue;
+    for (const key of getRowKeys(row)) map.set(key, row);
+  }
+
+  return map;
+};
+
+const findMappedRow = (map, row, options = {}) => {
+  for (const key of getRowKeys(row, options)) {
+    if (map.has(key)) return map.get(key);
+  }
+  return null;
+};
+
+const loadGRNSource = async (grnId, excludePurchaseId = null) => {
+  if (!isValidId(grnId)) throw new Error("A valid GRN is required");
+
+  const grn = await GRN.findById(grnId)
+    .populate(
+      "vendor",
+      "vendorName name phoneNumber phone email address city ntn strn status"
+    )
+    .populate(
+      "items.item",
+      "code name itemType unit status stockManaged purchasePrice purchaseRate costPrice"
     );
 
-  const cleanItems = [];
+  if (!grn) throw new Error("GRN not found");
+  if (grn.status === "Cancelled") {
+    throw new Error("Cancelled GRN cannot be converted into a Purchase");
+  }
+  if (!POSTABLE_GRN_STATUSES.includes(grn.status)) {
+    throw new Error("GRN must be received or posted before creating a Purchase");
+  }
+  if (!grn.stockPosted && grn.status !== "Posted") {
+    throw new Error("GRN stock must be posted before creating a Purchase");
+  }
 
-  for (
-    const item of items
-  ) {
-    if (
-      !item ||
-      !String(
-        item.description ||
-          ""
-      ).trim()
-    ) {
-      continue;
-    }
+  const totalAcceptedQty = (grn.items || []).reduce(
+    (sum, row) => sum + cleanNumber(row.acceptedQty),
+    0
+  );
 
-    const key =
-      makeItemKey(
-        item
-      );
+  if (totalAcceptedQty <= 0) {
+    throw new Error("GRN has no accepted quantity to purchase");
+  }
 
-    const grnItem =
-      grnItemsMap.get(
-        key
-      );
+  const duplicateQuery = {
+    grn: grn._id,
+    status: { $ne: "Cancelled" },
+  };
+  if (excludePurchaseId) duplicateQuery._id = { $ne: excludePurchaseId };
 
-    if (!grnItem) {
+  if (await Purchase.exists(duplicateQuery)) {
+    throw new Error("This GRN has already been used in another Purchase");
+  }
+
+  const purchaseOrder = await PurchaseOrder.findById(grn.purchaseOrder)
+    .populate(
+      "vendor",
+      "vendorName name phoneNumber phone email address city ntn strn status"
+    )
+    .populate(
+      "items.item",
+      "code name itemType unit status stockManaged purchasePrice purchaseRate costPrice"
+    );
+
+  if (!purchaseOrder) throw new Error("Purchase Order linked with GRN was not found");
+  if (purchaseOrder.status === "Cancelled") {
+    throw new Error("Purchase linked with a cancelled Purchase Order is not allowed");
+  }
+
+  return { grn, purchaseOrder, totalAcceptedQty };
+};
+
+const buildPurchaseItems = ({ grn, purchaseOrder, incomingItems = [] }) => {
+  const poRowsMap = getPurchaseOrderRowsMap(purchaseOrder);
+  const incomingMap = getIncomingRowsMap(incomingItems);
+  const output = [];
+
+  for (const grnRow of grn.items || []) {
+    const acceptedQty = cleanNumber(grnRow.acceptedQty);
+    if (acceptedQty <= 0) continue;
+
+    const poRow = findMappedRow(poRowsMap, grnRow);
+    if (!poRow) {
       throw new Error(
-        `Item "${item.description}" GRN mein nahi mila`
+        `Purchase Order row could not be matched for "${cleanText(
+          grnRow.description || grnRow.itemName,
+          "Item"
+        )}"`
       );
     }
 
-    const purchaseQty =
-      Number(
-        item.purchaseQty ||
-          item.quantity ||
-          0
-      );
+    const incoming = findMappedRow(incomingMap, grnRow, {
+      useDocumentIdAsGRNRowId: true,
+    });
 
-    if (
-      purchaseQty <= 0
-    ) {
-      continue;
-    }
-
-    if (
-      purchaseQty >
-      Number(
-        grnItem
-          .grnAcceptedQty ||
-          0
-      )
-    ) {
+    const itemId = idOf(grnRow.item) || idOf(poRow.item);
+    if (!isValidId(itemId)) {
       throw new Error(
-        `Item "${item.description}" ki purchase qty GRN accepted qty se zyada nahi ho sakti. Accepted qty ${grnItem.grnAcceptedQty} ${grnItem.unit} hai`
+        `Item "${cleanText(
+          grnRow.description || grnRow.itemName,
+          "Unknown item"
+        )}" is not linked with Item Master`
       );
     }
 
+    const requestedRate = incoming?.unitPrice;
     const unitPrice =
-      Number(
-        item.unitPrice ??
-          grnItem.unitPrice ??
-          0
-      );
+      requestedRate !== undefined && requestedRate !== ""
+        ? roundMoney(requestedRate)
+        : roundMoney(poRow.unitPrice);
 
-    const grossAmount =
-      purchaseQty *
-      unitPrice;
+    const discount = roundMoney(incoming?.discount);
+    const grossAmount = roundMoney(acceptedQty * unitPrice);
 
-    const discount =
-      Number(
-        item.discount ||
-          0
-      );
-
-    if (
-      discount >
-      grossAmount
-    ) {
+    if (discount > grossAmount) {
       throw new Error(
-        `Item "${item.description}" ka discount gross amount se zyada nahi ho sakta`
+        `Item discount cannot exceed gross amount for "${cleanText(
+          grnRow.description || grnRow.itemName,
+          "Item"
+        )}"`
       );
     }
 
-    const amount =
-      grossAmount -
-      discount;
-
-    cleanItems.push({
-      item:
-        item.item ||
-        grnItem.item ||
-        null,
-
-      description:
-        String(
-          item.description ||
-            grnItem.description ||
-            ""
-        ).trim(),
-
-      size:
-        String(
-          item.size ||
-            grnItem.size ||
-            ""
-        ).trim(),
-
-      grnAcceptedQty:
-        Number(
-          grnItem
-            .grnAcceptedQty ||
-            0
-        ),
-
-      purchaseQty,
-
-      unit:
-        String(
-          item.unit ||
-            grnItem.unit ||
-            "Pcs"
-        ).trim(),
-
+    output.push({
+      grnItemId: grnRow._id || null,
+      purchaseOrderItemId:
+        grnRow.purchaseOrderItemId || poRow.purchaseOrderItemId || null,
+      item: itemId,
+      itemCode: cleanText(grnRow.itemCode || grnRow.item?.code).toUpperCase(),
+      itemName: cleanText(
+        grnRow.itemName || grnRow.item?.name || poRow.description
+      ),
+      description: cleanText(
+        grnRow.description || grnRow.itemName,
+        poRow.description
+      ),
+      size: cleanText(grnRow.size, poRow.size),
+      cartons: cleanNumber(grnRow.cartons || poRow.cartons),
+      grnAcceptedQty: acceptedQty,
+      purchaseQty: acceptedQty,
+      unit: cleanText(grnRow.unit, poRow.unit || "Pcs"),
       unitPrice,
       grossAmount,
       discount,
-      amount,
-
-      remarks:
-        String(
-          item.remarks ||
-            ""
-        ).trim(),
+      amount: roundMoney(grossAmount - discount),
+      remarks: cleanText(incoming?.remarks, grnRow.remarks || poRow.remarks),
     });
   }
 
-  return cleanItems;
+  if (!output.length) throw new Error("GRN has no valid accepted items");
+  return output;
 };
 
 const calculateTotals = ({
-  items = [],
-  taxType = "without-tax",
-  taxRate = null,
-  overallDiscount = 0,
-  freightCharges = 0,
-  otherCharges = 0,
-  paidAmount = 0,
+  items,
+  taxType,
+  taxRate,
+  overallDiscount,
+  freightCharges,
+  otherCharges,
+  paidAmount,
 }) => {
-  const subtotal =
-    items.reduce(
-      (
-        sum,
-        item
-      ) =>
-        sum +
-        Number(
-          item.grossAmount ||
-            0
-        ),
-      0
-    );
+  const subtotal = roundMoney(
+    items.reduce((sum, item) => sum + cleanNumber(item.grossAmount), 0)
+  );
+  const itemDiscount = roundMoney(
+    items.reduce((sum, item) => sum + cleanNumber(item.discount), 0)
+  );
+  const finalOverallDiscount = roundMoney(overallDiscount);
 
-  const itemDiscount =
-    items.reduce(
-      (
-        sum,
-        item
-      ) =>
-        sum +
-        Number(
-          item.discount ||
-            0
-        ),
-      0
-    );
-
-  const finalOverallDiscount =
-    Number(
-      overallDiscount ||
-        0
-    );
-
-  if (
-    finalOverallDiscount >
-    subtotal -
-      itemDiscount
-  ) {
+  if (finalOverallDiscount > Math.max(subtotal - itemDiscount, 0)) {
     throw new Error(
-      "Overall discount taxable amount se zyada nahi ho sakta"
+      "Overall discount cannot exceed the amount remaining after item discounts"
     );
   }
 
-  const totalDiscount =
-    itemDiscount +
-    finalOverallDiscount;
-
-  const taxableAmount =
-    Math.max(
-      subtotal -
-        totalDiscount,
-      0
-    );
-
-  const finalTaxType =
-    allowedTaxTypes.includes(
-      taxType
-    )
-      ? taxType
-      : "without-tax";
-
-  const finalTaxRate =
-    finalTaxType ===
-    "with-tax"
-      ? Number(
-          taxRate ?? 18
-        )
-      : 0;
-
+  const totalDiscount = roundMoney(itemDiscount + finalOverallDiscount);
+  const taxableAmount = roundMoney(Math.max(subtotal - totalDiscount, 0));
+  const finalTaxType = taxType === "with-tax" ? "with-tax" : "without-tax";
+  const finalTaxRate = finalTaxType === "with-tax" ? cleanNumber(taxRate || 18) : 0;
   const salesTax =
-    finalTaxType ===
-    "with-tax"
-      ? taxableAmount *
-        (
-          Number(
-            finalTaxRate ||
-              0
-          ) / 100
-        )
+    finalTaxType === "with-tax"
+      ? roundMoney(taxableAmount * (finalTaxRate / 100))
       : 0;
+  const finalFreightCharges = roundMoney(freightCharges);
+  const finalOtherCharges = roundMoney(otherCharges);
+  const grandTotal = roundMoney(
+    taxableAmount + salesTax + finalFreightCharges + finalOtherCharges
+  );
+  const finalPaidAmount = roundMoney(paidAmount);
 
-  const finalFreightCharges =
-    Number(
-      freightCharges ||
-        0
-    );
-
-  const finalOtherCharges =
-    Number(
-      otherCharges ||
-        0
-    );
-
-  const grandTotal =
-    taxableAmount +
-    salesTax +
-    finalFreightCharges +
-    finalOtherCharges;
-
-  const finalPaidAmount =
-    Number(
-      paidAmount ||
-        0
-    );
-
-  if (
-    finalPaidAmount >
-    grandTotal
-  ) {
-    throw new Error(
-      "Paid amount grand total se zyada nahi ho sakta"
-    );
+  if (finalPaidAmount > grandTotal) {
+    throw new Error("Paid amount cannot exceed grand total");
   }
 
-  const balance =
-    grandTotal -
-    finalPaidAmount;
-
-  let paymentStatus =
-    "Unpaid";
-
-  if (
-    finalPaidAmount >=
-      grandTotal &&
-    grandTotal > 0
-  ) {
-    paymentStatus =
-      "Paid";
-  } else if (
-    finalPaidAmount > 0
-  ) {
-    paymentStatus =
-      "Partially Paid";
-  }
+  const balance = roundMoney(Math.max(grandTotal - finalPaidAmount, 0));
+  const paymentStatus =
+    grandTotal > 0 && balance <= 0
+      ? "Paid"
+      : finalPaidAmount > 0
+        ? "Partially Paid"
+        : "Unpaid";
 
   return {
     subtotal,
     itemDiscount,
-
-    overallDiscount:
-      finalOverallDiscount,
-
+    overallDiscount: finalOverallDiscount,
     totalDiscount,
     taxableAmount,
-
-    taxType:
-      finalTaxType,
-
-    taxRate:
-      finalTaxRate,
-
+    taxType: finalTaxType,
+    taxRate: finalTaxRate,
     salesTax,
-
-    freightCharges:
-      finalFreightCharges,
-
-    otherCharges:
-      finalOtherCharges,
-
+    freightCharges: finalFreightCharges,
+    otherCharges: finalOtherCharges,
     grandTotal,
-
-    paidAmount:
-      finalPaidAmount,
-
+    paidAmount: finalPaidAmount,
     balance,
     paymentStatus,
   };
 };
 
-const setGRNPurchaseStatus =
-  async (
-    grnId
-  ) => {
-    const activePurchase =
-      await Purchase.findOne({
-        grn:
-          grnId,
+const buildPurchaseData = async ({ body = {}, existingPurchase = null }) => {
+  const grnId = body.grn || existingPurchase?.grn;
+  const { grn, purchaseOrder } = await loadGRNSource(
+    grnId,
+    existingPurchase?._id || null
+  );
 
-        status: {
-          $ne:
-            "Cancelled",
-        },
-      });
+  const items = buildPurchaseItems({
+    grn,
+    purchaseOrder,
+    incomingItems: body.items || existingPurchase?.items || [],
+  });
 
-    await GRN.findByIdAndUpdate(
-      grnId,
-      {
-        purchaseStatus:
-          activePurchase
-            ? "Purchased"
-            : "Not Purchased",
-      }
-    );
+  // Tax is controlled by the Purchase Order. The Purchase form never asks
+  // the client to select it again.
+  const taxType = purchaseOrder.taxType === "with-tax" ? "with-tax" : "without-tax";
+  const taxRate = taxType === "with-tax" ? cleanNumber(purchaseOrder.taxRate || 18) : 0;
+
+  const totals = calculateTotals({
+    items,
+    taxType,
+    taxRate,
+    overallDiscount:
+      body.overallDiscount ?? existingPurchase?.overallDiscount ?? 0,
+    freightCharges:
+      body.freightCharges ?? existingPurchase?.freightCharges ?? 0,
+    otherCharges: body.otherCharges ?? existingPurchase?.otherCharges ?? 0,
+    paidAmount: body.paidAmount ?? existingPurchase?.paidAmount ?? 0,
+  });
+
+  const vendor = getVendorSnapshot(grn, purchaseOrder);
+  if (!isValidId(vendor.vendor)) throw new Error("Vendor linked with GRN was not found");
+  if (!vendor.vendorName) throw new Error("Vendor name linked with GRN was not found");
+
+  const purchaseDate = cleanText(
+    body.purchaseDate ?? existingPurchase?.purchaseDate,
+    grn.receivedDate
+  );
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(purchaseDate)) {
+    throw new Error("A valid purchase date is required");
+  }
+
+  const dueDate = cleanText(body.dueDate ?? existingPurchase?.dueDate);
+  if (dueDate && !/^\d{4}-\d{2}-\d{2}$/.test(dueDate)) {
+    throw new Error("Due date must use YYYY-MM-DD format");
+  }
+  if (dueDate && dueDate < purchaseDate) {
+    throw new Error("Due date cannot be earlier than purchase date");
+  }
+
+  const vendorInvoiceNo = cleanText(
+    body.vendorInvoiceNo ?? existingPurchase?.vendorInvoiceNo
+  );
+  if (!vendorInvoiceNo) throw new Error("Vendor invoice number is required");
+
+  const paymentMethod = PAYMENT_METHODS.includes(body.paymentMethod)
+    ? body.paymentMethod
+    : PAYMENT_METHODS.includes(existingPurchase?.paymentMethod)
+      ? existingPurchase.paymentMethod
+      : "Credit";
+
+  const requestedPostingStatus =
+    body.postingStatus === "Posted" ? "Posted" : "Draft";
+
+  return {
+    grn: grn._id,
+    grnNo: grn.grnNo,
+    purchaseOrder: purchaseOrder._id,
+    purchaseOrderNo: purchaseOrder.purchaseOrderNo,
+    ...vendor,
+    purchaseDate,
+    dueDate,
+    vendorInvoiceNo,
+    supplierBillNo: cleanText(
+      body.supplierBillNo ?? existingPurchase?.supplierBillNo
+    ),
+    challanNo: cleanText(
+      body.challanNo ?? existingPurchase?.challanNo,
+      grn.challanNo
+    ),
+    warehouse: cleanText(
+      body.warehouse ?? existingPurchase?.warehouse,
+      grn.warehouse || "Main Warehouse"
+    ),
+    taxType: totals.taxType,
+    taxRate: totals.taxRate,
+    items,
+    ...totals,
+    paymentMethod,
+    postingStatus: requestedPostingStatus,
+    status: requestedPostingStatus === "Posted" ? "Completed" : "Draft",
+    remarks: cleanText(body.remarks ?? existingPurchase?.remarks),
   };
+};
 
-router.get(
-  "/next-no",
-  async (
-    req,
-    res
-  ) => {
-    try {
-      const purchaseNo =
-        await peekNextPurchaseNo();
+const setGRNPurchaseStatus = async (grnId) => {
+  const activePurchase = await Purchase.findOne({
+    grn: grnId,
+    status: { $ne: "Cancelled" },
+  });
 
-      return res
-        .status(200)
-        .json({
-          success: true,
-          purchaseNo,
-        });
-    } catch (error) {
-      return res
-        .status(500)
-        .json({
-          success: false,
+  await GRN.findByIdAndUpdate(grnId, {
+    purchaseStatus: activePurchase ? "Purchased" : "Not Purchased",
+  });
+};
 
-          message:
-            "Purchase number generate nahi hua",
+const serializeEligibleGRN = async (grn) => {
+  const purchaseOrder = await PurchaseOrder.findById(grn.purchaseOrder)
+    .populate(
+      "vendor",
+      "vendorName name phoneNumber phone email address city ntn strn status"
+    )
+    .populate(
+      "items.item",
+      "code name itemType unit status stockManaged purchasePrice purchaseRate costPrice"
+    );
 
-          error:
-            error.message,
-        });
-    }
+  if (!purchaseOrder || purchaseOrder.status === "Cancelled") return null;
+
+  const items = buildPurchaseItems({
+    grn,
+    purchaseOrder,
+    incomingItems: [],
+  });
+  const vendor = getVendorSnapshot(grn, purchaseOrder);
+  const taxType = purchaseOrder.taxType === "with-tax" ? "with-tax" : "without-tax";
+  const taxRate = taxType === "with-tax" ? cleanNumber(purchaseOrder.taxRate || 18) : 0;
+
+  return {
+    _id: grn._id,
+    grnNo: grn.grnNo,
+    receivedDate: grn.receivedDate,
+    challanNo: grn.challanNo || "",
+    warehouse: grn.warehouse || "Main Warehouse",
+    status: grn.status,
+    inspectionStatus: grn.inspectionStatus,
+    purchaseStatus: grn.purchaseStatus,
+    totalAcceptedQty: grn.totalAcceptedQty,
+    purchaseOrder: purchaseOrder._id,
+    purchaseOrderNo: purchaseOrder.purchaseOrderNo,
+    purchaseOrderDate: purchaseOrder.orderDate || "",
+    purchaseOrderReferenceNo: purchaseOrder.referenceNo || "",
+    taxType,
+    taxRate,
+    ...vendor,
+    items,
+  };
+};
+
+router.get("/next-no", async (req, res) => {
+  try {
+    return res.json({ success: true, purchaseNo: await peekNextPurchaseNo() });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
   }
-);
+});
 
-router.get(
-  "/all",
-  async (
-    req,
-    res
-  ) => {
-    try {
-      const {
-        search = "",
-        status = "",
-        postingStatus = "",
-        paymentStatus = "",
-        vendor = "",
-        grn = "",
-        purchaseOrder = "",
-      } = req.query;
+router.get("/eligible-grns", async (req, res) => {
+  try {
+    const usedGRNs = await Purchase.find({ status: { $ne: "Cancelled" } }).distinct(
+      "grn"
+    );
 
-      const query = {};
+    const grns = await GRN.find({
+      _id: { $nin: usedGRNs },
+      status: { $in: POSTABLE_GRN_STATUSES },
+      stockPosted: true,
+      totalAcceptedQty: { $gt: 0 },
+    })
+      .populate(
+        "vendor",
+        "vendorName name phoneNumber phone email address city ntn strn status"
+      )
+      .populate(
+        "items.item",
+        "code name itemType unit status stockManaged purchasePrice purchaseRate costPrice"
+      )
+      .sort({ receivedDate: -1, createdAt: -1 });
 
-      if (
-        status &&
-        status !== "All"
-      ) {
-        query.status =
-          status;
-      }
-
-      if (
-        postingStatus &&
-        postingStatus !==
-          "All"
-      ) {
-        query.postingStatus =
-          postingStatus;
-      }
-
-      if (
-        paymentStatus &&
-        paymentStatus !==
-          "All"
-      ) {
-        query.paymentStatus =
-          paymentStatus;
-      }
-
-      if (vendor) {
-        query.vendor =
-          vendor;
-      }
-
-      if (grn) {
-        query.grn =
-          grn;
-      }
-
-      if (
-        purchaseOrder
-      ) {
-        query.purchaseOrder =
-          purchaseOrder;
-      }
-
-      if (search) {
-        query.$or = [
-          {
-            purchaseNo: {
-              $regex:
-                search,
-
-              $options:
-                "i",
-            },
-          },
-
-          {
-            grnNo: {
-              $regex:
-                search,
-
-              $options:
-                "i",
-            },
-          },
-
-          {
-            purchaseOrderNo: {
-              $regex:
-                search,
-
-              $options:
-                "i",
-            },
-          },
-
-          {
-            vendorName: {
-              $regex:
-                search,
-
-              $options:
-                "i",
-            },
-          },
-
-          {
-            vendorPhone: {
-              $regex:
-                search,
-
-              $options:
-                "i",
-            },
-          },
-
-          {
-            vendorInvoiceNo: {
-              $regex:
-                search,
-
-              $options:
-                "i",
-            },
-          },
-
-          {
-            supplierBillNo: {
-              $regex:
-                search,
-
-              $options:
-                "i",
-            },
-          },
-
-          {
-            challanNo: {
-              $regex:
-                search,
-
-              $options:
-                "i",
-            },
-          },
-
-          {
-            "items.description": {
-              $regex:
-                search,
-
-              $options:
-                "i",
-            },
-          },
-        ];
-      }
-
-      const purchases =
-        await Purchase
-          .find(
-            query
-          )
-          .populate(
-            "grn",
-            "grnNo receivedDate status purchaseStatus"
-          )
-          .populate(
-            "purchaseOrder",
-            "purchaseOrderNo orderDate expectedDate status grandTotal balance"
-          )
-          .populate(
-            "vendor",
-            "vendorName phoneNumber email address city ntn strn"
-          )
-          .sort({
-            createdAt: -1,
-          });
-
-      return res
-        .status(200)
-        .json(
-          purchases
-        );
-    } catch (error) {
-      return res
-        .status(500)
-        .json({
-          success: false,
-
-          message:
-            "Purchases load nahi huay",
-
-          error:
-            error.message,
-        });
+    const output = [];
+    for (const grn of grns) {
+      const row = await serializeEligibleGRN(grn);
+      if (row) output.push(row);
     }
+
+    return res.json({ success: true, grns: output });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: error.message || "Eligible GRNs could not be loaded",
+    });
   }
-);
+});
 
-router.get(
-  "/:id",
-  async (
-    req,
-    res
-  ) => {
-    try {
-      const purchase =
-        await Purchase
-          .findById(
-            req.params.id
-          )
-          .populate(
-            "grn",
-            "grnNo receivedDate status purchaseStatus items"
-          )
-          .populate(
-            "purchaseOrder",
-            "purchaseOrderNo orderDate expectedDate status grandTotal balance"
-          )
-          .populate(
-            "vendor",
-            "vendorName phoneNumber email address city ntn strn"
-          );
+router.get("/all", async (req, res) => {
+  try {
+    const {
+      search = "",
+      status = "",
+      postingStatus = "",
+      paymentStatus = "",
+      vendor = "",
+      grn = "",
+      purchaseOrder = "",
+    } = req.query;
 
-      if (!purchase) {
-        return res
-          .status(404)
-          .json({
-            success: false,
-
-            message:
-              "Purchase not found",
-          });
-      }
-
-      return res
-        .status(200)
-        .json({
-          success: true,
-
-          data:
-            purchase,
-        });
-    } catch (error) {
-      return res
-        .status(500)
-        .json({
-          success: false,
-
-          message:
-            "Purchase load nahi hui",
-
-          error:
-            error.message,
-        });
+    const query = {};
+    if (status && status !== "All") query.status = status;
+    if (postingStatus && postingStatus !== "All") {
+      query.postingStatus = postingStatus;
     }
-  }
-);
-
-router.post(
-  "/add",
-  async (
-    req,
-    res
-  ) => {
-    try {
-      const {
-        purchaseNo,
-        grn,
-        purchaseDate,
-        dueDate,
-        vendorInvoiceNo,
-        supplierBillNo,
-        challanNo,
-        warehouse,
-        taxType,
-        taxRate,
-        freightCharges,
-        otherCharges,
-        overallDiscount,
-        paidAmount,
-        paymentMethod,
-        postingStatus,
-        status,
-        remarks,
-        items,
-      } = req.body;
-
-      if (!grn) {
-        return res
-          .status(400)
-          .json({
-            success: false,
-
-            message:
-              "GRN required hai",
-          });
-      }
-
-      if (
-        !purchaseDate
-      ) {
-        return res
-          .status(400)
-          .json({
-            success: false,
-
-            message:
-              "Purchase date required hai",
-          });
-      }
-
-      if (
-        !vendorInvoiceNo
-      ) {
-        return res
-          .status(400)
-          .json({
-            success: false,
-
-            message:
-              "Vendor invoice no required hai",
-          });
-      }
-
-      const selectedGRN =
-        await GRN.findById(
-          grn
-        );
-
-      if (!selectedGRN) {
-        return res
-          .status(404)
-          .json({
-            success: false,
-
-            message:
-              "GRN not found",
-          });
-      }
-
-      if (
-        selectedGRN.status ===
-        "Cancelled"
-      ) {
-        return res
-          .status(400)
-          .json({
-            success: false,
-
-            message:
-              "Cancelled GRN ki purchase nahi ban sakti",
-          });
-      }
-
-      const existingPurchase =
-        await Purchase.findOne({
-          grn:
-            selectedGRN._id,
-
-          status: {
-            $ne:
-              "Cancelled",
-          },
-        });
-
-      if (
-        existingPurchase
-      ) {
-        return res
-          .status(400)
-          .json({
-            success: false,
-
-            message:
-              "Is GRN ki purchase already ban chuki hai",
-          });
-      }
-
-      const selectedPO =
-        await PurchaseOrder
-          .findById(
-            selectedGRN
-              .purchaseOrder
-          );
-
-      if (!selectedPO) {
-        return res
-          .status(404)
-          .json({
-            success: false,
-
-            message:
-              "Purchase Order not found",
-          });
-      }
-
-      const sourceItems =
-        items &&
-        items.length > 0
-          ? items
-          : selectedGRN.items
-              .filter(
-                (item) =>
-                  Number(
-                    item.acceptedQty ||
-                      0
-                  ) > 0
-              )
-              .map(
-                (item) => ({
-                  item:
-                    item.item ||
-                    null,
-
-                  description:
-                    item.description ||
-                    "",
-
-                  size:
-                    item.size ||
-                    "",
-
-                  grnAcceptedQty:
-                    item.acceptedQty ||
-                    0,
-
-                  purchaseQty:
-                    item.acceptedQty ||
-                    0,
-
-                  unit:
-                    item.unit ||
-                    "Pcs",
-
-                  unitPrice:
-                    item.unitPrice ||
-                    0,
-
-                  discount: 0,
-
-                  remarks:
-                    item.remarks ||
-                    "",
-                })
-              );
-
-      const cleanItems =
-        cleanPurchaseItems({
-          items:
-            sourceItems,
-
-          grnItems:
-            selectedGRN.items ||
-            [],
-        });
-
-      if (
-        cleanItems.length ===
-        0
-      ) {
-        return res
-          .status(400)
-          .json({
-            success: false,
-
-            message:
-              "Please at least one valid purchase item add karein",
-          });
-      }
-
-      const totals =
-        calculateTotals({
-          items:
-            cleanItems,
-
-          taxType,
-          taxRate,
-
-          overallDiscount,
-
-          freightCharges,
-          otherCharges,
-          paidAmount,
-        });
-
-      const finalPurchaseNo =
-        await resolvePurchaseNo(
-          purchaseNo
-        );
-
-      const finalPostingStatus =
-        allowedPostingStatuses
-          .includes(
-            postingStatus
-          )
-          ? postingStatus
-          : "Draft";
-
-      const finalStatus =
-        finalPostingStatus ===
-        "Posted"
-          ? "Completed"
-          : allowedStatuses
-                .includes(
-                  status
-                )
-            ? status
-            : "Draft";
-
-      const purchase =
-        new Purchase({
-          purchaseNo:
-            finalPurchaseNo,
-
-          grn:
-            selectedGRN._id,
-
-          grnNo:
-            selectedGRN.grnNo,
-
-          purchaseOrder:
-            selectedPO._id,
-
-          purchaseOrderNo:
-            selectedPO
-              .purchaseOrderNo,
-
-          vendor:
-            selectedGRN.vendor,
-
-          vendorName:
-            selectedGRN
-              .vendorName,
-
-          vendorPhone:
-            selectedGRN
-              .vendorPhone ||
-            "",
-
-          vendorEmail:
-            selectedGRN
-              .vendorEmail ||
-            "",
-
-          vendorAddress:
-            selectedGRN
-              .vendorAddress ||
-            "",
-
-          purchaseDate,
-
-          dueDate:
-            dueDate || "",
-
-          vendorInvoiceNo,
-
-          supplierBillNo:
-            supplierBillNo ||
-            "",
-
-          challanNo:
-            challanNo ||
-            selectedGRN
-              .challanNo ||
-            "",
-
-          warehouse:
-            warehouse ||
-            selectedGRN
-              .warehouse ||
-            "Main Warehouse",
-
-          taxType:
-            totals.taxType,
-
-          taxRate:
-            totals.taxRate,
-
-          items:
-            cleanItems,
-
-          subtotal:
-            totals.subtotal,
-
-          itemDiscount:
-            totals.itemDiscount,
-
-          overallDiscount:
-            totals
-              .overallDiscount,
-
-          totalDiscount:
-            totals.totalDiscount,
-
-          taxableAmount:
-            totals
-              .taxableAmount,
-
-          salesTax:
-            totals.salesTax,
-
-          freightCharges:
-            totals
-              .freightCharges,
-
-          otherCharges:
-            totals
-              .otherCharges,
-
-          grandTotal:
-            totals.grandTotal,
-
-          paidAmount:
-            totals.paidAmount,
-
-          balance:
-            totals.balance,
-
-          paymentMethod:
-            allowedPaymentMethods
-              .includes(
-                paymentMethod
-              )
-              ? paymentMethod
-              : "Credit",
-
-          paymentStatus:
-            totals.paymentStatus,
-
-          postingStatus:
-            finalPostingStatus,
-
-          status:
-            finalStatus,
-
-          remarks:
-            remarks || "",
-        });
-
-      const savedPurchase =
-        await purchase.save();
-
-      await setGRNPurchaseStatus(
-        selectedGRN._id
-      );
-
-      const populatedPurchase =
-        await Purchase
-          .findById(
-            savedPurchase._id
-          )
-          .populate(
-            "grn",
-            "grnNo receivedDate status purchaseStatus"
-          )
-          .populate(
-            "purchaseOrder",
-            "purchaseOrderNo orderDate expectedDate status grandTotal balance"
-          )
-          .populate(
-            "vendor",
-            "vendorName phoneNumber email address city ntn strn"
-          );
-
-      return res
-        .status(201)
-        .json({
-          success: true,
-
-          message:
-            "Purchase created successfully",
-
-          data:
-            populatedPurchase,
-        });
-    } catch (error) {
-      return res
-        .status(400)
-        .json({
-          success: false,
-
-          message:
-            getDuplicatePurchaseMessage(
-              error
-            ),
-        });
+    if (paymentStatus && paymentStatus !== "All") {
+      query.paymentStatus = paymentStatus;
     }
-  }
-);
-
-router.put(
-  "/update/:id",
-  async (
-    req,
-    res
-  ) => {
-    try {
-      const existingPurchase =
-        await Purchase.findById(
-          req.params.id
-        );
-
-      if (
-        !existingPurchase
-      ) {
-        return res
-          .status(404)
-          .json({
-            success: false,
-
-            message:
-              "Purchase not found",
-          });
-      }
-
-      if (
-        existingPurchase
-          .postingStatus ===
-        "Posted"
-      ) {
-        return res
-          .status(400)
-          .json({
-            success: false,
-
-            message:
-              "Posted purchase update nahi ho sakti",
-          });
-      }
-
-      if (
-        existingPurchase
-          .status ===
-        "Cancelled"
-      ) {
-        return res
-          .status(400)
-          .json({
-            success: false,
-
-            message:
-              "Cancelled purchase update nahi ho sakti",
-          });
-      }
-
-      const selectedGRN =
-        await GRN.findById(
-          req.body.grn ||
-            existingPurchase.grn
-        );
-
-      if (!selectedGRN) {
-        return res
-          .status(404)
-          .json({
-            success: false,
-
-            message:
-              "GRN not found",
-          });
-      }
-
-      if (
-        selectedGRN.status ===
-        "Cancelled"
-      ) {
-        return res
-          .status(400)
-          .json({
-            success: false,
-
-            message:
-              "Cancelled GRN ki purchase update nahi ho sakti",
-          });
-      }
-
-      if (
-        String(
-          selectedGRN._id
-        ) !==
-        String(
-          existingPurchase.grn
-        )
-      ) {
-        const grnAlreadyUsed =
-          await Purchase.findOne({
-            grn:
-              selectedGRN._id,
-
-            _id: {
-              $ne:
-                existingPurchase
-                  ._id,
-            },
-
-            status: {
-              $ne:
-                "Cancelled",
-            },
-          });
-
-        if (
-          grnAlreadyUsed
-        ) {
-          return res
-            .status(400)
-            .json({
-              success: false,
-
-              message:
-                "Is GRN ki purchase already exist karti hai",
-            });
-        }
-      }
-
-      const selectedPO =
-        await PurchaseOrder
-          .findById(
-            selectedGRN
-              .purchaseOrder
-          );
-
-      if (!selectedPO) {
-        return res
-          .status(404)
-          .json({
-            success: false,
-
-            message:
-              "Purchase Order not found",
-          });
-      }
-
-      const cleanItems =
-        cleanPurchaseItems({
-          items:
-            req.body.items ||
-            existingPurchase
-              .items,
-
-          grnItems:
-            selectedGRN.items ||
-            [],
-        });
-
-      if (
-        cleanItems.length ===
-        0
-      ) {
-        return res
-          .status(400)
-          .json({
-            success: false,
-
-            message:
-              "Please at least one valid purchase item add karein",
-          });
-      }
-
-      const totals =
-        calculateTotals({
-          items:
-            cleanItems,
-
-          taxType:
-            req.body.taxType ||
-            existingPurchase
-              .taxType,
-
-          taxRate:
-            req.body.taxRate ??
-            existingPurchase
-              .taxRate,
-
-          overallDiscount:
-            req.body
-              .overallDiscount ??
-            existingPurchase
-              .overallDiscount,
-
-          freightCharges:
-            req.body
-              .freightCharges ??
-            existingPurchase
-              .freightCharges,
-
-          otherCharges:
-            req.body
-              .otherCharges ??
-            existingPurchase
-              .otherCharges,
-
-          paidAmount:
-            req.body.paidAmount ??
-            existingPurchase
-              .paidAmount,
-        });
-
-      const finalPurchaseNo =
-        await resolvePurchaseNo(
-          req.body.purchaseNo ||
-            existingPurchase
-              .purchaseNo,
-
-          existingPurchase._id
-        );
-
-      const finalPostingStatus =
-        allowedPostingStatuses
-          .includes(
-            req.body
-              .postingStatus
-          )
-          ? req.body
-              .postingStatus
-          : existingPurchase
-              .postingStatus;
-
-      const finalStatus =
-        finalPostingStatus ===
-        "Posted"
-          ? "Completed"
-          : allowedStatuses
-                .includes(
-                  req.body.status
-                )
-            ? req.body.status
-            : existingPurchase
-                .status;
-
-      const updatedPurchase =
-        await Purchase
-          .findByIdAndUpdate(
-            req.params.id,
-            {
-              purchaseNo:
-                finalPurchaseNo,
-
-              grn:
-                selectedGRN._id,
-
-              grnNo:
-                selectedGRN.grnNo,
-
-              purchaseOrder:
-                selectedPO._id,
-
-              purchaseOrderNo:
-                selectedPO
-                  .purchaseOrderNo,
-
-              vendor:
-                selectedGRN
-                  .vendor,
-
-              vendorName:
-                selectedGRN
-                  .vendorName,
-
-              vendorPhone:
-                selectedGRN
-                  .vendorPhone ||
-                "",
-
-              vendorEmail:
-                selectedGRN
-                  .vendorEmail ||
-                "",
-
-              vendorAddress:
-                selectedGRN
-                  .vendorAddress ||
-                "",
-
-              purchaseDate:
-                req.body
-                  .purchaseDate ||
-                existingPurchase
-                  .purchaseDate,
-
-              dueDate:
-                req.body.dueDate ||
-                "",
-
-              vendorInvoiceNo:
-                req.body
-                  .vendorInvoiceNo ||
-                existingPurchase
-                  .vendorInvoiceNo,
-
-              supplierBillNo:
-                req.body
-                  .supplierBillNo ||
-                "",
-
-              challanNo:
-                req.body.challanNo ||
-                selectedGRN
-                  .challanNo ||
-                "",
-
-              warehouse:
-                req.body.warehouse ||
-                selectedGRN
-                  .warehouse ||
-                "Main Warehouse",
-
-              taxType:
-                totals.taxType,
-
-              taxRate:
-                totals.taxRate,
-
-              items:
-                cleanItems,
-
-              subtotal:
-                totals.subtotal,
-
-              itemDiscount:
-                totals
-                  .itemDiscount,
-
-              overallDiscount:
-                totals
-                  .overallDiscount,
-
-              totalDiscount:
-                totals
-                  .totalDiscount,
-
-              taxableAmount:
-                totals
-                  .taxableAmount,
-
-              salesTax:
-                totals.salesTax,
-
-              freightCharges:
-                totals
-                  .freightCharges,
-
-              otherCharges:
-                totals
-                  .otherCharges,
-
-              grandTotal:
-                totals
-                  .grandTotal,
-
-              paidAmount:
-                totals
-                  .paidAmount,
-
-              balance:
-                totals.balance,
-
-              paymentMethod:
-                allowedPaymentMethods
-                  .includes(
-                    req.body
-                      .paymentMethod
-                  )
-                  ? req.body
-                      .paymentMethod
-                  : existingPurchase
-                      .paymentMethod,
-
-              paymentStatus:
-                totals
-                  .paymentStatus,
-
-              postingStatus:
-                finalPostingStatus,
-
-              status:
-                finalStatus,
-
-              remarks:
-                req.body.remarks ||
-                "",
-            },
-            {
-              new: true,
-
-              runValidators:
-                true,
-            }
-          )
-          .populate(
-            "grn",
-            "grnNo receivedDate status purchaseStatus"
-          )
-          .populate(
-            "purchaseOrder",
-            "purchaseOrderNo orderDate expectedDate status grandTotal balance"
-          )
-          .populate(
-            "vendor",
-            "vendorName phoneNumber email address city ntn strn"
-          );
-
-      await setGRNPurchaseStatus(
-        existingPurchase.grn
-      );
-
-      await setGRNPurchaseStatus(
-        selectedGRN._id
-      );
-
-      return res
-        .status(200)
-        .json({
-          success: true,
-
-          message:
-            "Purchase updated successfully",
-
-          data:
-            updatedPurchase,
-        });
-    } catch (error) {
-      return res
-        .status(400)
-        .json({
-          success: false,
-
-          message:
-            getDuplicatePurchaseMessage(
-              error
-            ),
-        });
+    if (vendor) query.vendor = vendor;
+    if (grn) query.grn = grn;
+    if (purchaseOrder) query.purchaseOrder = purchaseOrder;
+
+    if (search) {
+      const safeSearch = escapeRegex(search);
+
+      query.$or = [
+        "purchaseNo",
+        "grnNo",
+        "purchaseOrderNo",
+        "vendorName",
+        "vendorPhone",
+        "vendorInvoiceNo",
+        "supplierBillNo",
+        "challanNo",
+        "items.itemCode",
+        "items.itemName",
+        "items.description",
+      ].map((field) => ({
+        [field]: { $regex: safeSearch, $options: "i" },
+      }));
     }
+
+    const purchases = await populatePurchase(
+      Purchase.find(query).sort({ purchaseDate: -1, createdAt: -1 })
+    );
+
+    return res.json({ success: true, purchases });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: error.message || "Purchases could not be loaded",
+    });
   }
-);
+});
 
-router.put(
-  "/post/:id",
-  async (
-    req,
-    res
-  ) => {
-    try {
-      const purchase =
-        await Purchase.findById(
-          req.params.id
-        );
-
-      if (!purchase) {
-        return res
-          .status(404)
-          .json({
-            success: false,
-
-            message:
-              "Purchase not found",
-          });
-      }
-
-      if (
-        purchase.status ===
-        "Cancelled"
-      ) {
-        return res
-          .status(400)
-          .json({
-            success: false,
-
-            message:
-              "Cancelled purchase post nahi ho sakti",
-          });
-      }
-
-      purchase.postingStatus =
-        "Posted";
-
-      purchase.status =
-        "Completed";
-
-      await purchase.save();
-
-      await setGRNPurchaseStatus(
-        purchase.grn
-      );
-
-      const populatedPurchase =
-        await Purchase
-          .findById(
-            purchase._id
-          )
-          .populate(
-            "grn",
-            "grnNo receivedDate status purchaseStatus"
-          )
-          .populate(
-            "purchaseOrder",
-            "purchaseOrderNo orderDate expectedDate status grandTotal balance"
-          )
-          .populate(
-            "vendor",
-            "vendorName phoneNumber email address city ntn strn"
-          );
-
-      return res
-        .status(200)
-        .json({
-          success: true,
-
-          message:
-            "Purchase posted successfully",
-
-          data:
-            populatedPurchase,
-        });
-    } catch (error) {
-      return res
-        .status(400)
-        .json({
-          success: false,
-
-          message:
-            error.message ||
-            "Purchase post nahi hui",
-        });
+router.get("/:id", async (req, res) => {
+  try {
+    if (!isValidId(req.params.id)) {
+      return res.status(400).json({ success: false, message: "Invalid Purchase ID" });
     }
-  }
-);
 
-router.patch(
-  "/payment/:id",
-  async (
-    req,
-    res
-  ) => {
-    try {
-      const purchase =
-        await Purchase.findById(
-          req.params.id
-        );
-
-      if (!purchase) {
-        return res
-          .status(404)
-          .json({
-            success: false,
-
-            message:
-              "Purchase not found",
-          });
-      }
-
-      if (
-        purchase.status ===
-        "Cancelled"
-      ) {
-        return res
-          .status(400)
-          .json({
-            success: false,
-
-            message:
-              "Cancelled purchase ki payment update nahi ho sakti",
-          });
-      }
-
-      const paidAmount =
-        Number(
-          req.body.paidAmount ||
-            0
-        );
-
-      if (
-        paidAmount >
-        Number(
-          purchase.grandTotal ||
-            0
-        )
-      ) {
-        return res
-          .status(400)
-          .json({
-            success: false,
-
-            message:
-              "Paid amount grand total se zyada nahi ho sakta",
-          });
-      }
-
-      purchase.paidAmount =
-        paidAmount;
-
-      purchase.balance =
-        Number(
-          purchase.grandTotal ||
-            0
-        ) -
-        paidAmount;
-
-      if (
-        paidAmount >=
-        Number(
-          purchase.grandTotal ||
-            0
-        )
-      ) {
-        purchase.paymentStatus =
-          "Paid";
-      } else if (
-        paidAmount > 0
-      ) {
-        purchase.paymentStatus =
-          "Partially Paid";
-      } else {
-        purchase.paymentStatus =
-          "Unpaid";
-      }
-
-      if (
-        allowedPaymentMethods
-          .includes(
-            req.body
-              .paymentMethod
-          )
-      ) {
-        purchase.paymentMethod =
-          req.body
-            .paymentMethod;
-      }
-
-      await purchase.save();
-
-      return res
-        .status(200)
-        .json({
-          success: true,
-
-          message:
-            "Payment updated successfully",
-
-          data:
-            purchase,
-        });
-    } catch (error) {
-      return res
-        .status(400)
-        .json({
-          success: false,
-
-          message:
-            error.message ||
-            "Payment update nahi hui",
-        });
+    const purchase = await populatePurchase(Purchase.findById(req.params.id));
+    if (!purchase) {
+      return res.status(404).json({ success: false, message: "Purchase not found" });
     }
+
+    return res.json({ success: true, data: purchase });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
   }
-);
+});
 
-router.patch(
-  "/cancel/:id",
-  async (
-    req,
-    res
-  ) => {
-    try {
-      const purchase =
-        await Purchase.findById(
-          req.params.id
-        );
+router.post("/add", async (req, res) => {
+  try {
+    const purchaseNo = await resolvePurchaseNo(req.body.purchaseNo);
+    const data = await buildPurchaseData({ body: req.body });
+    const purchase = new Purchase({ purchaseNo, ...data });
+    const saved = await purchase.save();
 
-      if (!purchase) {
-        return res
-          .status(404)
-          .json({
-            success: false,
+    await setGRNPurchaseStatus(saved.grn);
 
-            message:
-              "Purchase not found",
-          });
-      }
+    const populated = await populatePurchase(Purchase.findById(saved._id));
+    return res.status(201).json({
+      success: true,
+      message: "Purchase created successfully",
+      data: populated,
+    });
+  } catch (error) {
+    return res.status(400).json({
+      success: false,
+      message: duplicateMessage(error),
+    });
+  }
+});
 
-      purchase.status =
-        "Cancelled";
-
-      purchase.postingStatus =
-        "Draft";
-
-      await purchase.save();
-
-      await setGRNPurchaseStatus(
-        purchase.grn
-      );
-
-      return res
-        .status(200)
-        .json({
-          success: true,
-
-          message:
-            "Purchase cancelled successfully",
-
-          data:
-            purchase,
-        });
-    } catch (error) {
-      return res
-        .status(400)
-        .json({
-          success: false,
-
-          message:
-            error.message ||
-            "Purchase cancel nahi hui",
-        });
+router.put("/update/:id", async (req, res) => {
+  try {
+    if (!isValidId(req.params.id)) {
+      return res.status(400).json({ success: false, message: "Invalid Purchase ID" });
     }
-  }
-);
 
-router.delete(
-  "/delete/:id",
-  async (
-    req,
-    res
-  ) => {
-    try {
-      const purchase =
-        await Purchase.findById(
-          req.params.id
-        );
-
-      if (!purchase) {
-        return res
-          .status(404)
-          .json({
-            success: false,
-
-            message:
-              "Purchase not found",
-          });
-      }
-
-      if (
-        purchase
-          .postingStatus ===
-        "Posted"
-      ) {
-        return res
-          .status(400)
-          .json({
-            success: false,
-
-            message:
-              "Posted purchase delete nahi ho sakti. Pehle cancel karein.",
-          });
-      }
-
-      const grnId =
-        purchase.grn;
-
-      await Purchase
-        .findByIdAndDelete(
-          req.params.id
-        );
-
-      await setGRNPurchaseStatus(
-        grnId
-      );
-
-      return res
-        .status(200)
-        .json({
-          success: true,
-
-          message:
-            "Purchase deleted successfully",
-        });
-    } catch (error) {
-      return res
-        .status(500)
-        .json({
-          success: false,
-
-          message:
-            error.message ||
-            "Purchase delete nahi hui",
-        });
+    const purchase = await Purchase.findById(req.params.id);
+    if (!purchase) {
+      return res.status(404).json({ success: false, message: "Purchase not found" });
     }
-  }
-);
+    if (purchase.postingStatus === "Posted") {
+      return res.status(400).json({
+        success: false,
+        message: "Posted Purchase cannot be edited",
+      });
+    }
+    if (purchase.status === "Cancelled") {
+      return res.status(400).json({
+        success: false,
+        message: "Cancelled Purchase cannot be edited",
+      });
+    }
 
-module.exports =
-  router;
+    const oldGRNId = purchase.grn;
+    const purchaseNo = await resolvePurchaseNo(
+      req.body.purchaseNo || purchase.purchaseNo,
+      purchase._id
+    );
+    const data = await buildPurchaseData({
+      body: req.body,
+      existingPurchase: purchase,
+    });
+
+    purchase.set({ purchaseNo, ...data });
+    await purchase.save();
+
+    await setGRNPurchaseStatus(oldGRNId);
+    await setGRNPurchaseStatus(purchase.grn);
+
+    const populated = await populatePurchase(Purchase.findById(purchase._id));
+    return res.json({
+      success: true,
+      message: "Purchase updated successfully",
+      data: populated,
+    });
+  } catch (error) {
+    return res.status(400).json({
+      success: false,
+      message: duplicateMessage(error),
+    });
+  }
+});
+
+router.put("/post/:id", async (req, res) => {
+  try {
+    if (!isValidId(req.params.id)) {
+      return res.status(400).json({ success: false, message: "Invalid Purchase ID" });
+    }
+
+    const purchase = await Purchase.findById(req.params.id);
+    if (!purchase) {
+      return res.status(404).json({ success: false, message: "Purchase not found" });
+    }
+    if (purchase.status === "Cancelled") {
+      return res.status(400).json({
+        success: false,
+        message: "Cancelled Purchase cannot be posted",
+      });
+    }
+    if (purchase.postingStatus === "Posted") {
+      return res.json({ success: true, message: "Purchase is already posted", data: purchase });
+    }
+    if (!purchase.vendorInvoiceNo) {
+      return res.status(400).json({
+        success: false,
+        message: "Vendor invoice number is required before posting",
+      });
+    }
+    if (!purchase.items?.length || purchase.grandTotal < 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Purchase has no valid items",
+      });
+    }
+
+    purchase.postingStatus = "Posted";
+    purchase.status = "Completed";
+    purchase.postedAt = new Date();
+    await purchase.save();
+    await setGRNPurchaseStatus(purchase.grn);
+
+    const populated = await populatePurchase(Purchase.findById(purchase._id));
+    return res.json({
+      success: true,
+      message: "Purchase posted successfully",
+      data: populated,
+    });
+  } catch (error) {
+    return res.status(400).json({
+      success: false,
+      message: error.message || "Purchase could not be posted",
+    });
+  }
+});
+
+router.patch("/payment/:id", async (req, res) => {
+  try {
+    if (!isValidId(req.params.id)) {
+      return res.status(400).json({ success: false, message: "Invalid Purchase ID" });
+    }
+
+    const purchase = await Purchase.findById(req.params.id);
+    if (!purchase) {
+      return res.status(404).json({ success: false, message: "Purchase not found" });
+    }
+    if (purchase.status === "Cancelled") {
+      return res.status(400).json({
+        success: false,
+        message: "Payment cannot be updated for a cancelled Purchase",
+      });
+    }
+
+    const paidAmount = roundMoney(req.body.paidAmount);
+    if (paidAmount > purchase.grandTotal) {
+      return res.status(400).json({
+        success: false,
+        message: "Paid amount cannot exceed grand total",
+      });
+    }
+
+    purchase.paidAmount = paidAmount;
+    if (PAYMENT_METHODS.includes(req.body.paymentMethod)) {
+      purchase.paymentMethod = req.body.paymentMethod;
+    }
+    await purchase.save();
+
+    const populated = await populatePurchase(Purchase.findById(purchase._id));
+    return res.json({
+      success: true,
+      message: "Payment updated successfully",
+      data: populated,
+    });
+  } catch (error) {
+    return res.status(400).json({
+      success: false,
+      message: error.message || "Payment could not be updated",
+    });
+  }
+});
+
+router.patch("/cancel/:id", async (req, res) => {
+  try {
+    if (!isValidId(req.params.id)) {
+      return res.status(400).json({ success: false, message: "Invalid Purchase ID" });
+    }
+
+    const purchase = await Purchase.findById(req.params.id);
+    if (!purchase) {
+      return res.status(404).json({ success: false, message: "Purchase not found" });
+    }
+
+    purchase.status = "Cancelled";
+    purchase.postingStatus = "Draft";
+    purchase.cancelReason = cleanText(req.body.cancelReason);
+    purchase.cancelledAt = new Date();
+    await purchase.save();
+    await setGRNPurchaseStatus(purchase.grn);
+
+    const populated = await populatePurchase(Purchase.findById(purchase._id));
+    return res.json({
+      success: true,
+      message: "Purchase cancelled successfully",
+      data: populated,
+    });
+  } catch (error) {
+    return res.status(400).json({
+      success: false,
+      message: error.message || "Purchase could not be cancelled",
+    });
+  }
+});
+
+router.delete("/delete/:id", async (req, res) => {
+  try {
+    if (!isValidId(req.params.id)) {
+      return res.status(400).json({ success: false, message: "Invalid Purchase ID" });
+    }
+
+    const purchase = await Purchase.findById(req.params.id);
+    if (!purchase) {
+      return res.status(404).json({ success: false, message: "Purchase not found" });
+    }
+    if (purchase.postingStatus === "Posted") {
+      return res.status(400).json({
+        success: false,
+        message: "Posted Purchase cannot be deleted. Cancel it instead.",
+      });
+    }
+
+    const grnId = purchase.grn;
+    await Purchase.findByIdAndDelete(purchase._id);
+    await setGRNPurchaseStatus(grnId);
+
+    return res.json({ success: true, message: "Purchase deleted successfully" });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: error.message || "Purchase could not be deleted",
+    });
+  }
+});
+
+module.exports = router;

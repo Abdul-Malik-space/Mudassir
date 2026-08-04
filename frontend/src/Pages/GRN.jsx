@@ -59,19 +59,6 @@ const quantity = (
     }
   );
 
-const money = (
-  value
-) =>
-  `Rs. ${numberValue(
-    value
-  ).toLocaleString(
-    "en-PK",
-    {
-      maximumFractionDigits:
-        2,
-    }
-  )}`;
-
 const idOf = (
   value
 ) => {
@@ -202,11 +189,27 @@ const emptyForm = (
 
   purchaseOrderNo: "",
 
+  purchaseOrderStatus: "",
+
+  purchaseOrderDate: "",
+
+  expectedDate: "",
+
+  referenceNo: "",
+
+  taxType: "without-tax",
+
+  taxRate: 0,
+
   vendor: "",
 
   vendorName: "",
 
   vendorPhone: "",
+
+  vendorEmail: "",
+
+  vendorAddress: "",
 
   receivedDate:
     todayDate(),
@@ -396,6 +399,21 @@ const GRN = () => {
             sum,
             item
           ) => {
+            sum.cartons +=
+              numberValue(
+                item.cartons
+              );
+
+            sum.ordered +=
+              numberValue(
+                item.orderedQty
+              );
+
+            sum.previous +=
+              numberValue(
+                item.previousReceivedQty
+              );
+
             sum.received +=
               numberValue(
                 item.receivedQty
@@ -416,19 +434,16 @@ const GRN = () => {
                 item.pendingQty
               );
 
-            sum.value +=
-              numberValue(
-                item.amount
-              );
-
             return sum;
           },
           {
+            cartons: 0,
+            ordered: 0,
+            previous: 0,
             received: 0,
             accepted: 0,
             rejected: 0,
             pending: 0,
-            value: 0,
           }
         ),
       [
@@ -660,6 +675,35 @@ const GRN = () => {
           order.orderNo ||
           "",
 
+        purchaseOrderStatus:
+          order.status ||
+          "",
+
+        purchaseOrderDate:
+          order.purchaseOrderDate ||
+          order.orderDate ||
+          "",
+
+        expectedDate:
+          order.expectedDate ||
+          order.deliveryDate ||
+          "",
+
+        referenceNo:
+          order.referenceNo ||
+          "",
+
+        taxType:
+          order.taxType ===
+          "with-tax"
+            ? "with-tax"
+            : "without-tax",
+
+        taxRate:
+          numberValue(
+            order.taxRate
+          ),
+
         vendor:
           idOf(
             order.vendor
@@ -667,10 +711,24 @@ const GRN = () => {
 
         vendorName:
           order.vendorName ||
+          order.vendor?.vendorName ||
+          order.vendor?.name ||
           "",
 
         vendorPhone:
           order.vendorPhone ||
+          order.vendor?.phoneNumber ||
+          order.vendor?.phone ||
+          "",
+
+        vendorEmail:
+          order.vendorEmail ||
+          order.vendor?.email ||
+          "",
+
+        vendorAddress:
+          order.vendorAddress ||
+          order.vendor?.address ||
           "",
 
         items:
@@ -720,6 +778,11 @@ const GRN = () => {
                 item.size ||
                 "",
 
+              cartons:
+                numberValue(
+                  item.cartons
+                ),
+
               orderedQty:
                 numberValue(
                   item.orderedQty
@@ -752,14 +815,6 @@ const GRN = () => {
               unit:
                 item.unit ||
                 "Pcs",
-
-              unitPrice:
-                numberValue(
-                  item.unitPrice
-                ),
-
-              amount:
-                0,
 
               remarks:
                 item.remarks ||
@@ -831,12 +886,6 @@ const GRN = () => {
             0
           );
 
-        row.amount =
-          acceptedQty *
-          numberValue(
-            row.unitPrice
-          );
-
         items[index] =
           row;
 
@@ -847,6 +896,93 @@ const GRN = () => {
       }
     );
   };
+
+  const receiveAllPending =
+    () => {
+      setForm(
+        (current) => ({
+          ...current,
+
+          items:
+            current.items.map(
+              (item) => {
+                const pendingBefore =
+                  Math.max(
+                    numberValue(
+                      item.orderedQty
+                    ) -
+                      numberValue(
+                        item.previousReceivedQty
+                      ),
+                    0
+                  );
+
+                return {
+                  ...item,
+
+                  pendingBeforeQty:
+                    pendingBefore,
+
+                  receivedQty:
+                    pendingBefore
+                      ? String(
+                          pendingBefore
+                        )
+                      : "",
+
+                  rejectedQty: "",
+
+                  acceptedQty:
+                    pendingBefore,
+
+                  pendingQty: 0,
+                };
+              }
+            ),
+        })
+      );
+    };
+
+  const clearReceivedQuantities =
+    () => {
+      setForm(
+        (current) => ({
+          ...current,
+
+          items:
+            current.items.map(
+              (item) => {
+                const pendingBefore =
+                  Math.max(
+                    numberValue(
+                      item.orderedQty
+                    ) -
+                      numberValue(
+                        item.previousReceivedQty
+                      ),
+                    0
+                  );
+
+                return {
+                  ...item,
+
+                  pendingBeforeQty:
+                    pendingBefore,
+
+                  receivedQty: "",
+
+                  rejectedQty: "",
+
+                  acceptedQty: 0,
+
+                  pendingQty:
+                    pendingBefore,
+                };
+              }
+            ),
+        })
+      );
+    };
 
   const validate =
     () => {
@@ -1056,11 +1192,6 @@ const GRN = () => {
               unit:
                 item.unit,
 
-              unitPrice:
-                numberValue(
-                  item.unitPrice
-                ),
-
               remarks:
                 item.remarks.trim(),
             })
@@ -1145,6 +1276,40 @@ const GRN = () => {
           grn.purchaseOrderNo ||
           "",
 
+        purchaseOrderStatus:
+          grn.purchaseOrder?.status ||
+          "",
+
+        purchaseOrderDate:
+          grn.purchaseOrderDate ||
+          grn.purchaseOrder?.orderDate ||
+          "",
+
+        expectedDate:
+          grn.expectedDate ||
+          grn.purchaseOrder?.deliveryDate ||
+          "",
+
+        referenceNo:
+          grn.referenceNo ||
+          grn.purchaseOrder?.referenceNo ||
+          "",
+
+        taxType:
+          (
+            grn.taxType ||
+            grn.purchaseOrder?.taxType
+          ) ===
+          "with-tax"
+            ? "with-tax"
+            : "without-tax",
+
+        taxRate:
+          numberValue(
+            grn.taxRate ||
+              grn.purchaseOrder?.taxRate
+          ),
+
         vendor:
           idOf(
             grn.vendor
@@ -1156,6 +1321,14 @@ const GRN = () => {
 
         vendorPhone:
           grn.vendorPhone ||
+          "",
+
+        vendorEmail:
+          grn.vendorEmail ||
+          "",
+
+        vendorAddress:
+          grn.vendorAddress ||
           "",
 
         receivedDate:
@@ -1242,6 +1415,11 @@ const GRN = () => {
                 item.size ||
                 "",
 
+              cartons:
+                numberValue(
+                  item.cartons
+                ),
+
               orderedQty:
                 numberValue(
                   item.orderedQty
@@ -1288,16 +1466,6 @@ const GRN = () => {
               unit:
                 item.unit ||
                 "Pcs",
-
-              unitPrice:
-                numberValue(
-                  item.unitPrice
-                ),
-
-              amount:
-                numberValue(
-                  item.amount
-                ),
 
               remarks:
                 item.remarks ||
@@ -1473,7 +1641,7 @@ const GRN = () => {
       window.open(
         "",
         "_blank",
-        "width=1100,height=850"
+        "width=1200,height=850"
       );
 
     if (
@@ -1485,6 +1653,39 @@ const GRN = () => {
 
       return;
     }
+
+    const effectiveTaxType =
+      grn.taxType ||
+      grn.purchaseOrder?.taxType;
+
+    const effectiveTaxRate =
+      numberValue(
+        grn.taxRate ||
+          grn.purchaseOrder?.taxRate ||
+          18
+      );
+
+    const taxLabel =
+      effectiveTaxType ===
+      "with-tax"
+        ? `With Sales Tax ${effectiveTaxRate}%`
+        : "Without Tax";
+
+    const totalCartons =
+      numberValue(
+        grn.totalCartons
+      ) ||
+      (
+        grn.items ||
+        []
+      ).reduce(
+        (sum, item) =>
+          sum +
+          numberValue(
+            item.cartons
+          ),
+        0
+      );
 
     const rows =
       (
@@ -1503,12 +1704,33 @@ const GRN = () => {
                 <b>${escapeHtml(
                   item.itemName ||
                     item.description
-                )}</b><br>
+                )}</b>
 
-                ${escapeHtml(
-                  item.itemCode ||
-                    ""
-                )}
+                ${
+                  item.itemCode
+                    ? `<div class="muted">${escapeHtml(
+                        item.itemCode
+                      )}</div>`
+                    : ""
+                }
+
+                ${
+                  item.description &&
+                  item.description !==
+                    item.itemName
+                    ? `<div>${escapeHtml(
+                        item.description
+                      )}</div>`
+                    : ""
+                }
+
+                ${
+                  item.size
+                    ? `<div class="muted">Size: ${escapeHtml(
+                        item.size
+                      )}</div>`
+                    : ""
+                }
               </td>
 
               <td>${escapeHtml(
@@ -1519,6 +1741,18 @@ const GRN = () => {
               <td>${escapeHtml(
                 item.warehouse ||
                   ""
+              )}</td>
+
+              <td>${quantity(
+                item.cartons
+              )}</td>
+
+              <td>${quantity(
+                item.orderedQty
+              )}</td>
+
+              <td>${quantity(
+                item.previousReceivedQty
               )}</td>
 
               <td>${quantity(
@@ -1541,6 +1775,11 @@ const GRN = () => {
                 item.unit ||
                   ""
               )}</td>
+
+              <td>${escapeHtml(
+                item.remarks ||
+                  ""
+              )}</td>
             </tr>
           `
         )
@@ -1560,18 +1799,71 @@ const GRN = () => {
           <style>
             @page {
               size: A4 landscape;
-              margin: 9mm;
+              margin: 8mm;
+            }
+
+            * {
+              box-sizing: border-box;
             }
 
             body {
-              font-family: Arial;
-              font-size: 12px;
+              font-family: Arial, sans-serif;
+              font-size: 11px;
               color: #111827;
+              margin: 0;
             }
 
-            h1,
-            h2 {
-              text-align: center;
+            h1 {
+              margin: 0;
+              font-size: 22px;
+              letter-spacing: 0.5px;
+            }
+
+            .header {
+              display: flex;
+              justify-content: space-between;
+              gap: 24px;
+              border-bottom: 2px solid #111827;
+              padding-bottom: 10px;
+              margin-bottom: 12px;
+            }
+
+            .header-right {
+              line-height: 1.7;
+              text-align: right;
+            }
+
+            .details {
+              display: grid;
+              grid-template-columns: repeat(4, 1fr);
+              gap: 7px;
+              margin-bottom: 12px;
+            }
+
+            .detail {
+              border: 1px solid #d1d5db;
+              border-radius: 4px;
+              padding: 7px;
+              min-height: 42px;
+            }
+
+            .detail.wide {
+              grid-column: span 2;
+            }
+
+            .label {
+              display: block;
+              color: #4b5563;
+              font-size: 9px;
+              font-weight: bold;
+              text-transform: uppercase;
+              margin-bottom: 3px;
+            }
+
+            .muted {
+              color: #6b7280;
+              font-size: 9px;
+              margin-top: 2px;
             }
 
             table {
@@ -1581,19 +1873,37 @@ const GRN = () => {
 
             th,
             td {
-              border: 1px solid #111;
-              padding: 7px;
+              border: 1px solid #111827;
+              padding: 6px;
+              vertical-align: top;
             }
 
             th {
               background: #e5e7eb;
+              font-size: 9px;
+              text-transform: uppercase;
             }
 
-            .header {
+            .summary {
               display: flex;
-              justify-content: space-between;
-              border-bottom: 2px solid #111;
-              padding-bottom: 10px;
+              justify-content: flex-end;
+              gap: 18px;
+              margin-top: 12px;
+              font-weight: bold;
+            }
+
+            .footer {
+              margin-top: 18px;
+              display: grid;
+              grid-template-columns: 1fr 1fr;
+              gap: 30px;
+            }
+
+            .sign {
+              margin-top: 32px;
+              border-top: 1px solid #111827;
+              padding-top: 5px;
+              text-align: center;
             }
           </style>
         </head>
@@ -1601,12 +1911,13 @@ const GRN = () => {
         <body>
           <div class="header">
             <div>
-              <h2>Muddasir Packages</h2>
-
-              <b>Goods Receiving Note</b>
+              <h1>GOODS RECEIVING NOTE</h1>
+              <div class="muted">
+                Quantity-based receiving document
+              </div>
             </div>
 
-            <div>
+            <div class="header-right">
               <b>GRN:</b>
               ${escapeHtml(
                 grn.grnNo
@@ -1617,39 +1928,162 @@ const GRN = () => {
                 grn.purchaseOrderNo
               )}<br>
 
-              <b>Date:</b>
+              <b>Received Date:</b>
               ${escapeHtml(
                 grn.receivedDate
               )}
             </div>
           </div>
 
-          <p>
-            <b>Vendor:</b>
-            ${escapeHtml(
-              grn.vendorName
-            )}
+          <div class="details">
+            <div class="detail">
+              <span class="label">PO Date</span>
+              ${escapeHtml(
+                grn.purchaseOrderDate ||
+                  grn.purchaseOrder?.orderDate ||
+                  "-"
+              )}
+            </div>
 
-            &nbsp;
+            <div class="detail">
+              <span class="label">Expected Date</span>
+              ${escapeHtml(
+                grn.expectedDate ||
+                  grn.purchaseOrder?.expectedDate ||
+                  grn.purchaseOrder?.deliveryDate ||
+                  "-"
+              )}
+            </div>
 
-            <b>Receipt Type:</b>
-            ${escapeHtml(
-              grn.receiptType
-            )}
-          </p>
+            <div class="detail">
+              <span class="label">Reference No</span>
+              ${escapeHtml(
+                grn.referenceNo ||
+                  grn.purchaseOrder?.referenceNo ||
+                  "-"
+              )}
+            </div>
+
+            <div class="detail">
+              <span class="label">Tax Treatment</span>
+              ${escapeHtml(
+                taxLabel
+              )}
+            </div>
+
+            <div class="detail">
+              <span class="label">Vendor</span>
+              ${escapeHtml(
+                grn.vendorName ||
+                  "-"
+              )}
+            </div>
+
+            <div class="detail">
+              <span class="label">Vendor Phone</span>
+              ${escapeHtml(
+                grn.vendorPhone ||
+                  "-"
+              )}
+            </div>
+
+            <div class="detail">
+              <span class="label">Vendor Email</span>
+              ${escapeHtml(
+                grn.vendorEmail ||
+                  "-"
+              )}
+            </div>
+
+            <div class="detail">
+              <span class="label">Warehouse</span>
+              ${escapeHtml(
+                grn.warehouse ||
+                  "-"
+              )}
+            </div>
+
+            <div class="detail wide">
+              <span class="label">Vendor Address</span>
+              ${escapeHtml(
+                grn.vendorAddress ||
+                  "-"
+              )}
+            </div>
+
+            <div class="detail">
+              <span class="label">Supplier Challan</span>
+              ${escapeHtml(
+                grn.challanNo ||
+                  "-"
+              )}
+            </div>
+
+            <div class="detail">
+              <span class="label">Supplier Invoice</span>
+              ${escapeHtml(
+                grn.invoiceNo ||
+                  "-"
+              )}
+            </div>
+
+            <div class="detail">
+              <span class="label">Vehicle No</span>
+              ${escapeHtml(
+                grn.vehicleNo ||
+                  "-"
+              )}
+            </div>
+
+            <div class="detail">
+              <span class="label">Inspection</span>
+              ${escapeHtml(
+                grn.inspectionStatus ||
+                  "-"
+              )}
+            </div>
+
+            <div class="detail">
+              <span class="label">GRN Status</span>
+              ${escapeHtml(
+                grn.status ||
+                  "-"
+              )}
+            </div>
+
+            <div class="detail">
+              <span class="label">Received By</span>
+              ${escapeHtml(
+                grn.receivedBy ||
+                  "-"
+              )}
+            </div>
+
+            <div class="detail">
+              <span class="label">Checked By</span>
+              ${escapeHtml(
+                grn.checkedBy ||
+                  "-"
+              )}
+            </div>
+          </div>
 
           <table>
             <thead>
               <tr>
                 <th>#</th>
-                <th>Item</th>
+                <th>Item Details</th>
                 <th>Type</th>
                 <th>Warehouse</th>
+                <th>Cartons</th>
+                <th>Ordered</th>
+                <th>Previous</th>
                 <th>Received</th>
                 <th>Accepted</th>
                 <th>Rejected</th>
                 <th>Pending</th>
                 <th>Unit</th>
+                <th>Remarks</th>
               </tr>
             </thead>
 
@@ -1658,6 +2092,43 @@ const GRN = () => {
             </tbody>
           </table>
 
+          <div class="summary">
+            <span>
+              Cartons:
+              ${quantity(
+                totalCartons
+              )}
+            </span>
+
+            <span>
+              Received:
+              ${quantity(
+                grn.totalReceivedQty
+              )}
+            </span>
+
+            <span>
+              Accepted:
+              ${quantity(
+                grn.totalAcceptedQty
+              )}
+            </span>
+
+            <span>
+              Rejected:
+              ${quantity(
+                grn.totalRejectedQty
+              )}
+            </span>
+
+            <span>
+              Pending:
+              ${quantity(
+                grn.totalPendingQty
+              )}
+            </span>
+          </div>
+
           <p>
             <b>Remarks:</b>
             ${escapeHtml(
@@ -1665,6 +2136,16 @@ const GRN = () => {
                 "-"
             )}
           </p>
+
+          <div class="footer">
+            <div class="sign">
+              Received By
+            </div>
+
+            <div class="sign">
+              Checked / Approved By
+            </div>
+          </div>
 
           <script>
             window.print();
@@ -1779,11 +2260,89 @@ const GRN = () => {
                         —{" "}
                         {
                           order.vendorName
-                        }
+                        }{" "}
+                        —{" "}
+                        {
+                          (
+                            order.items ||
+                            []
+                          ).length
+                        }{" "}
+                        item(s)
                       </option>
                     )
                   )}
                 </select>
+              </Field>
+
+              <Field label="PO Status">
+                <input
+                  value={
+                    form.purchaseOrderStatus ||
+                    "-"
+                  }
+                  readOnly
+                  className={
+                    inputClass
+                  }
+                />
+              </Field>
+
+              <Field label="PO Date">
+                <input
+                  value={
+                    form.purchaseOrderDate ||
+                    ""
+                  }
+                  readOnly
+                  className={
+                    inputClass
+                  }
+                />
+              </Field>
+
+              <Field label="Expected Date">
+                <input
+                  value={
+                    form.expectedDate ||
+                    ""
+                  }
+                  readOnly
+                  className={
+                    inputClass
+                  }
+                />
+              </Field>
+
+              <Field label="Reference No">
+                <input
+                  value={
+                    form.referenceNo ||
+                    ""
+                  }
+                  readOnly
+                  className={
+                    inputClass
+                  }
+                />
+              </Field>
+
+              <Field label="Tax Treatment">
+                <input
+                  value={
+                    form.taxType ===
+                    "with-tax"
+                      ? `With Sales Tax ${numberValue(
+                          form.taxRate ||
+                            18
+                        )}%`
+                      : "Without Tax"
+                  }
+                  readOnly
+                  className={
+                    inputClass
+                  }
+                />
               </Field>
 
               <Field
@@ -1837,6 +2396,30 @@ const GRN = () => {
                 <input
                   value={
                     form.vendorPhone
+                  }
+                  readOnly
+                  className={
+                    inputClass
+                  }
+                />
+              </Field>
+
+              <Field label="Vendor Email">
+                <input
+                  value={
+                    form.vendorEmail
+                  }
+                  readOnly
+                  className={
+                    inputClass
+                  }
+                />
+              </Field>
+
+              <Field label="Vendor Address">
+                <input
+                  value={
+                    form.vendorAddress
                   }
                   readOnly
                   className={
@@ -2017,8 +2600,51 @@ const GRN = () => {
               </Field>
             </div>
 
+            {form.purchaseOrder && (
+              <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900">
+                Purchase Order details and pending quantities have been loaded automatically.
+                Rates, amounts and financial totals are not shown in GRN.
+              </div>
+            )}
+
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <h2 className="font-bold text-slate-900">
+                  Receiving Quantities
+                </h2>
+
+                <p className="text-xs text-slate-500">
+                  Enter the quantity physically received. Accepted and pending quantities update automatically.
+                </p>
+              </div>
+
+              {form.items.length > 0 && (
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={
+                      receiveAllPending
+                    }
+                    className="rounded-lg bg-emerald-600 px-4 py-2 text-xs font-bold text-white hover:bg-emerald-700"
+                  >
+                    Receive All Pending
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={
+                      clearReceivedQuantities
+                    }
+                    className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50"
+                  >
+                    Clear Quantities
+                  </button>
+                </div>
+              )}
+            </div>
+
             <div className="overflow-x-auto rounded-xl border">
-              <table className="w-full min-w-[1400px] text-left text-xs">
+              <table className="w-full min-w-[1380px] text-left text-xs">
                 <thead className="bg-slate-800 text-white">
                   <tr>
                     <th className="p-3">
@@ -2031,6 +2657,10 @@ const GRN = () => {
 
                     <th className="p-3">
                       Warehouse
+                    </th>
+
+                    <th className="p-3">
+                      Cartons
                     </th>
 
                     <th className="p-3">
@@ -2075,7 +2705,7 @@ const GRN = () => {
                   {!form.items.length ? (
                     <tr>
                       <td
-                        colSpan="12"
+                        colSpan="13"
                         className="p-8 text-center text-slate-400"
                       >
                         Select a Purchase Order
@@ -2106,6 +2736,25 @@ const GRN = () => {
                                 item.itemCode
                               }
                             </div>
+
+                            {item.description &&
+                              item.description !==
+                                item.itemName && (
+                                <div className="mt-1 text-[10px] text-slate-600">
+                                  {
+                                    item.description
+                                  }
+                                </div>
+                              )}
+
+                            {item.size && (
+                              <div className="mt-1 text-[10px] font-semibold text-slate-500">
+                                Size:{" "}
+                                {
+                                  item.size
+                                }
+                              </div>
+                            )}
                           </td>
 
                           <td className="p-3">
@@ -2118,6 +2767,12 @@ const GRN = () => {
                             {
                               item.warehouse
                             }
+                          </td>
+
+                          <td className="p-3">
+                            {quantity(
+                              item.cartons
+                            )}
                           </td>
 
                           <td className="p-3">
@@ -2142,6 +2797,13 @@ const GRN = () => {
                             <input
                               type="number"
                               min="0"
+                              max={
+                                numberValue(
+                                  item.pendingBeforeQty
+                                )
+                              }
+                              step="any"
+                              placeholder="0"
                               value={
                                 item.receivedQty
                               }
@@ -2164,6 +2826,18 @@ const GRN = () => {
                             <input
                               type="number"
                               min="0"
+                              max={
+                                numberValue(
+                                  item.receivedQty
+                                )
+                              }
+                              step="any"
+                              placeholder="0"
+                              disabled={
+                                numberValue(
+                                  item.receivedQty
+                                ) <= 0
+                              }
                               value={
                                 item.rejectedQty
                               }
@@ -2250,37 +2924,51 @@ const GRN = () => {
 
               <div className="space-y-2 rounded-xl bg-slate-50 p-5">
                 <Total
-                  label="Received"
+                  label="Total Cartons"
+                  value={quantity(
+                    totals.cartons
+                  )}
+                />
+
+                <Total
+                  label="Ordered Quantity"
+                  value={quantity(
+                    totals.ordered
+                  )}
+                />
+
+                <Total
+                  label="Previously Received"
+                  value={quantity(
+                    totals.previous
+                  )}
+                />
+
+                <Total
+                  label="Received in this GRN"
                   value={quantity(
                     totals.received
                   )}
                 />
 
                 <Total
-                  label="Accepted"
+                  label="Accepted Quantity"
                   value={quantity(
                     totals.accepted
                   )}
                 />
 
                 <Total
-                  label="Rejected"
+                  label="Rejected Quantity"
                   value={quantity(
                     totals.rejected
                   )}
                 />
 
                 <Total
-                  label="Pending"
+                  label="Remaining Pending"
                   value={quantity(
                     totals.pending
-                  )}
-                />
-
-                <Total
-                  label="Accepted Value"
-                  value={money(
-                    totals.value
                   )}
                   strong
                 />
