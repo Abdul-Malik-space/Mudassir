@@ -1,8 +1,21 @@
 const express = require("express");
+const mongoose = require("mongoose");
+
 const router = express.Router();
 
 const GeneralJournal = require("../models/GeneralJournal");
 const Counter = require("../models/Counter");
+
+const JOURNAL_TYPE = "Adjustment Journal";
+const ALLOWED_STATUSES = ["Draft", "Approved", "Cancelled"];
+const ALLOWED_POSTING_STATUSES = ["Not Posted", "Posted"];
+const ALLOWED_PARTY_TYPES = [
+  "Customer",
+  "Vendor",
+  "Employee",
+  "Owner",
+  "Other",
+];
 
 const cashAccounts = [
   { id: "cash-in-hand", name: "Cash in Hand", type: "Cash" },
@@ -51,350 +64,204 @@ const allAccounts = [
   ...adjustmentAccounts,
 ];
 
-const voucherTypes = [
-  "Cash In",
-  "Cash Out",
-  "Bank In",
-  "Bank Out",
-  "Cash to Bank",
-  "Bank to Cash",
-  "Bank to Bank",
-  "Adjustment Journal",
-  "Opening Balance",
-];
-
-const manualTypes = ["Adjustment Journal", "Opening Balance"];
-
-const allowedStatuses = ["Draft", "Approved", "Cancelled"];
-const allowedPostingStatuses = ["Not Posted", "Posted"];
-const allowedPartyTypes = ["Customer", "Vendor", "Employee", "Owner", "Other"];
-const allowedPaymentMethods = [
-  "Cash",
-  "Bank Transfer",
-  "Cheque",
-  "Transfer",
-  "Journal",
-  "Other",
-];
-
-const getAccount = (accountId) => {
-  return allAccounts.find((account) => account.id === accountId);
+const cleanText = (value, fallback = "") => {
+  const text = String(value ?? "").trim();
+  return text || fallback;
 };
 
-const getAccountName = (accountId) => {
-  return getAccount(accountId)?.name || "";
+const cleanNumber = (value) => {
+  const number = Number(value);
+  return Number.isFinite(number) ? Math.max(number, 0) : 0;
 };
 
-const getAccountType = (accountId) => {
-  return getAccount(accountId)?.type || "";
+const roundMoney = (value) =>
+  Math.round((cleanNumber(value) + Number.EPSILON) * 100) / 100;
+
+const escapeRegex = (value) =>
+  String(value ?? "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+const isValidId = (value) => mongoose.isValidObjectId(value);
+
+const getAccount = (accountId) =>
+  allAccounts.find((account) => account.id === cleanText(accountId)) || null;
+
+const duplicateMessage = (error, fallback = "Journal could not be saved") => {
+  if (error?.code !== 11000) return error?.message || fallback;
+  return "This voucher number already exists";
 };
+
+const formatVoucherNo = (year, sequence) =>
+  `JV-${year}-${String(sequence).padStart(4, "0")}`;
+
+const getCounterName = (year) => `generalJournal-${year}`;
 
 const getNextVoucherNo = async () => {
   const year = new Date().getFullYear();
-  let voucherNo = "";
 
-  for (let i = 0; i < 5; i++) {
+  for (let attempt = 0; attempt < 1000; attempt += 1) {
     const counter = await Counter.findOneAndUpdate(
-      { name: `generalJournal-${year}` },
+      { name: getCounterName(year) },
       { $inc: { seq: 1 } },
-      { new: true, upsert: true }
+      { new: true, upsert: true, setDefaultsOnInsert: true }
     );
 
-    voucherNo = `JV-${year}-${String(counter.seq).padStart(4, "0")}`;
-
-    const exists = await GeneralJournal.findOne({ voucherNo });
+    const voucherNo = formatVoucherNo(year, counter.seq);
+    const exists = await GeneralJournal.exists({ voucherNo });
     if (!exists) return voucherNo;
   }
 
-  throw new Error("Unable to generate unique voucher number");
+  throw new Error("Unable to generate a unique voucher number");
 };
 
 const peekNextVoucherNo = async () => {
   const year = new Date().getFullYear();
-  const counter = await Counter.findOne({ name: `generalJournal-${year}` });
-  const nextSeq = counter ? counter.seq + 1 : 1;
+  const counter = await Counter.findOne({ name: getCounterName(year) }).lean();
+  let sequence = Math.max(Number(counter?.seq || 0) + 1, 1);
 
-  return `JV-${year}-${String(nextSeq).padStart(4, "0")}`;
+  for (let attempt = 0; attempt < 1000; attempt += 1) {
+    const voucherNo = formatVoucherNo(year, sequence);
+    if (!(await GeneralJournal.exists({ voucherNo }))) return voucherNo;
+    sequence += 1;
+  }
+
+  throw new Error("Unable to preview the next voucher number");
 };
 
-const makeEntry = (account, debit, credit, narration) => {
-  const selectedAccount = getAccount(account);
-
-  if (!selectedAccount) {
-    throw new Error(`Invalid account selected: ${account}`);
+const cleanJournalEntries = (entries = []) => {
+  if (!Array.isArray(entries)) {
+    throw new Error("Journal entries must be an array");
   }
 
-  return {
-    account,
-    accountName: selectedAccount.name,
-    accountType: selectedAccount.type,
-    debit: Number(debit || 0),
-    credit: Number(credit || 0),
-    narration: narration || "",
-  };
-};
-
-const buildAutoEntries = (body) => {
-  const amount = Number(body.amount || 0);
-
-  if (amount <= 0) {
-    throw new Error("Amount required hai");
-  }
-
-  const type = body.transactionType;
-
-  if (type === "Cash In") {
-    if (!body.cashAccount || !body.counterAccount) {
-      throw new Error("Cash Account aur Counter Account required hain");
-    }
-
-    if (body.cashAccount === body.counterAccount) {
-      throw new Error("Cash Account aur Counter Account same nahi ho sakte");
-    }
-
-    return [
-      makeEntry(body.cashAccount, amount, 0, "Cash received"),
-      makeEntry(body.counterAccount, 0, amount, "Cash in counter entry"),
-    ];
-  }
-
-  if (type === "Cash Out") {
-    if (!body.cashAccount || !body.counterAccount) {
-      throw new Error("Cash Account aur Counter Account required hain");
-    }
-
-    if (body.cashAccount === body.counterAccount) {
-      throw new Error("Cash Account aur Counter Account same nahi ho sakte");
-    }
-
-    return [
-      makeEntry(body.counterAccount, amount, 0, "Cash out counter entry"),
-      makeEntry(body.cashAccount, 0, amount, "Cash paid"),
-    ];
-  }
-
-  if (type === "Bank In") {
-    if (!body.bankAccount || !body.counterAccount) {
-      throw new Error("Bank Account aur Counter Account required hain");
-    }
-
-    if (body.bankAccount === body.counterAccount) {
-      throw new Error("Bank Account aur Counter Account same nahi ho sakte");
-    }
-
-    return [
-      makeEntry(body.bankAccount, amount, 0, "Bank received"),
-      makeEntry(body.counterAccount, 0, amount, "Bank in counter entry"),
-    ];
-  }
-
-  if (type === "Bank Out") {
-    if (!body.bankAccount || !body.counterAccount) {
-      throw new Error("Bank Account aur Counter Account required hain");
-    }
-
-    if (body.bankAccount === body.counterAccount) {
-      throw new Error("Bank Account aur Counter Account same nahi ho sakte");
-    }
-
-    return [
-      makeEntry(body.counterAccount, amount, 0, "Bank out counter entry"),
-      makeEntry(body.bankAccount, 0, amount, "Bank paid"),
-    ];
-  }
-
-  if (
-    type === "Cash to Bank" ||
-    type === "Bank to Cash" ||
-    type === "Bank to Bank"
-  ) {
-    if (!body.fromAccount || !body.toAccount) {
-      throw new Error("From Account aur To Account required hain");
-    }
-
-    if (body.fromAccount === body.toAccount) {
-      throw new Error("From Account aur To Account same nahi ho sakte");
-    }
-
-    return [
-      makeEntry(body.toAccount, amount, 0, "Transfer received account"),
-      makeEntry(body.fromAccount, 0, amount, "Transfer paid account"),
-    ];
-  }
-
-  throw new Error("Invalid automatic voucher type");
-};
-
-const cleanManualEntries = (entries = []) => {
   const cleanEntries = entries
     .filter(
       (entry) =>
         entry &&
-        (entry.account ||
-          Number(entry.debit || 0) > 0 ||
-          Number(entry.credit || 0) > 0)
+        (cleanText(entry.account) ||
+          cleanNumber(entry.debit) > 0 ||
+          cleanNumber(entry.credit) > 0 ||
+          cleanText(entry.narration))
     )
-    .map((entry) => {
-      const debit = Number(entry.debit || 0);
-      const credit = Number(entry.credit || 0);
-
-      if (!entry.account) {
-        throw new Error("Har journal row mein account required hai");
+    .map((entry, index) => {
+      const account = getAccount(entry.account);
+      if (!account) {
+        throw new Error(`Select a valid account in journal row ${index + 1}`);
       }
 
-      const selectedAccount = getAccount(entry.account);
+      const debit = roundMoney(entry.debit);
+      const credit = roundMoney(entry.credit);
 
-      if (!selectedAccount) {
-        throw new Error(`Invalid account selected: ${entry.account}`);
-      }
-
-      if (debit <= 0 && credit <= 0) {
-        throw new Error("Har row mein Debit ya Credit amount required hai");
-      }
-
-      if (debit > 0 && credit > 0) {
-        throw new Error("Aik row mein Debit aur Credit dono nahi ho sakte");
+      if ((debit <= 0 && credit <= 0) || (debit > 0 && credit > 0)) {
+        throw new Error(
+          `Journal row ${index + 1} must contain either Debit or Credit`
+        );
       }
 
       return {
-        account: entry.account,
-        accountName: selectedAccount.name,
-        accountType: selectedAccount.type,
+        account: account.id,
+        accountName: account.name,
+        accountType: account.type,
         debit,
         credit,
-        narration: entry.narration || "",
+        narration: cleanText(entry.narration),
       };
     });
 
   if (cleanEntries.length < 2) {
-    throw new Error("Manual journal mein kam az kam 2 rows required hain");
+    throw new Error("At least two journal entries are required");
   }
 
   return cleanEntries;
 };
 
-const calculateTotals = (entries = []) => {
-  const totalDebit = entries.reduce(
-    (sum, entry) => sum + Number(entry.debit || 0),
-    0
+const calculateTotals = (entries) => {
+  const totalDebit = roundMoney(
+    entries.reduce((sum, entry) => sum + cleanNumber(entry.debit), 0)
   );
-
-  const totalCredit = entries.reduce(
-    (sum, entry) => sum + Number(entry.credit || 0),
-    0
+  const totalCredit = roundMoney(
+    entries.reduce((sum, entry) => sum + cleanNumber(entry.credit), 0)
   );
+  const difference = roundMoney(totalDebit - totalCredit);
+  const isBalanced =
+    totalDebit > 0 && Math.abs(totalDebit - totalCredit) < 0.000001;
 
-  const difference = totalDebit - totalCredit;
+  if (!isBalanced) {
+    throw new Error("Total Debit and Total Credit must be equal");
+  }
 
-  return {
-    totalDebit,
-    totalCredit,
-    difference,
-    isBalanced: Number(totalDebit) === Number(totalCredit),
-  };
+  return { totalDebit, totalCredit, difference: 0, isBalanced: true };
 };
 
-const buildVoucherPayload = async (body, existingVoucher = null) => {
-  if (!body.voucherDate && !existingVoucher?.voucherDate) {
-    throw new Error("Voucher date required hai");
-  }
-
-  const transactionType =
-    body.transactionType || existingVoucher?.transactionType || "";
-
-  if (!voucherTypes.includes(transactionType)) {
-    throw new Error("Invalid transaction type");
-  }
-
-  const entries = manualTypes.includes(transactionType)
-    ? cleanManualEntries(body.entries || existingVoucher?.entries || [])
-    : buildAutoEntries({
-        ...existingVoucher?.toObject?.(),
-        ...body,
-        transactionType,
-      });
-
-  const totals = calculateTotals(entries);
-
-  if (!totals.isBalanced) {
-    throw new Error("Voucher balanced nahi hai. Debit aur Credit equal honay chahiye");
-  }
-
-  const amount = Number(
-    body.amount || existingVoucher?.amount || totals.totalDebit || 0
+const buildAdjustmentPayload = ({ body = {}, existingJournal = null }) => {
+  const voucherDate = cleanText(
+    body.voucherDate ?? existingJournal?.voucherDate
   );
 
-  const postingStatus = allowedPostingStatuses.includes(body.postingStatus)
-    ? body.postingStatus
-    : existingVoucher?.postingStatus || "Not Posted";
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(voucherDate)) {
+    throw new Error("A valid voucher date is required");
+  }
 
-  const status =
-    postingStatus === "Posted"
-      ? "Approved"
-      : allowedStatuses.includes(body.status)
-      ? body.status
-      : existingVoucher?.status || "Draft";
-
-  const voucherNo = body.voucherNo
-    ? String(body.voucherNo).trim().toUpperCase()
-    : existingVoucher?.voucherNo || (await getNextVoucherNo());
+  const entries = cleanJournalEntries(
+    body.entries ?? existingJournal?.entries ?? []
+  );
+  const totals = calculateTotals(entries);
 
   return {
-    voucherNo,
-    voucherDate: body.voucherDate || existingVoucher?.voucherDate,
+    voucherDate,
+    transactionType: JOURNAL_TYPE,
+    amount: totals.totalDebit,
 
-    transactionType,
-    amount,
+    // These fields belong to the future Payments & Received page. They are
+    // intentionally blank on an Adjustment Journal.
+    cashAccount: "",
+    bankAccount: "",
+    fromAccount: "",
+    toAccount: "",
+    counterAccount: "",
 
-    cashAccount: body.cashAccount || existingVoucher?.cashAccount || "",
-    bankAccount: body.bankAccount || existingVoucher?.bankAccount || "",
-    fromAccount: body.fromAccount || existingVoucher?.fromAccount || "",
-    toAccount: body.toAccount || existingVoucher?.toAccount || "",
-    counterAccount: body.counterAccount || existingVoucher?.counterAccount || "",
-
-    partyType: allowedPartyTypes.includes(body.partyType)
+    partyType: ALLOWED_PARTY_TYPES.includes(body.partyType)
       ? body.partyType
-      : existingVoucher?.partyType || "Other",
-
-    partyName: body.partyName || existingVoucher?.partyName || "",
-    referenceNo: body.referenceNo || existingVoucher?.referenceNo || "",
-
-    paymentMethod: allowedPaymentMethods.includes(body.paymentMethod)
-      ? body.paymentMethod
-      : existingVoucher?.paymentMethod || "Cash",
-
-    chequeNo: body.chequeNo || existingVoucher?.chequeNo || "",
-    remarks: body.remarks || "",
-
-    status,
-    postingStatus,
-
+      : ALLOWED_PARTY_TYPES.includes(existingJournal?.partyType)
+        ? existingJournal.partyType
+        : "Other",
+    partyName: cleanText(body.partyName ?? existingJournal?.partyName),
+    referenceNo: cleanText(
+      body.referenceNo ?? existingJournal?.referenceNo
+    ),
+    paymentMethod: "Journal",
+    chequeNo: "",
+    remarks: cleanText(body.remarks ?? existingJournal?.remarks),
+    status: "Draft",
+    postingStatus: "Not Posted",
     entries,
     totals,
   };
 };
 
-// Next voucher no
+const findAdjustmentJournal = async (journalId) => {
+  if (!isValidId(journalId)) throw new Error("Invalid journal ID");
+
+  const journal = await GeneralJournal.findOne({
+    _id: journalId,
+    transactionType: JOURNAL_TYPE,
+  });
+
+  if (!journal) throw new Error("Adjustment Journal not found");
+  return journal;
+};
+
 router.get("/next-no", async (req, res) => {
   try {
-    const voucherNo = await peekNextVoucherNo();
-
-    res.status(200).json({
-      success: true,
-      voucherNo,
-    });
+    return res.json({ success: true, voucherNo: await peekNextVoucherNo() });
   } catch (error) {
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
-      message: "Voucher number generate nahi hua",
-      error: error.message,
+      message: error.message || "Voucher number could not be generated",
     });
   }
 });
 
-// Accounts list for frontend
 router.get("/accounts", async (req, res) => {
-  res.status(200).json({
+  return res.json({
     success: true,
     accounts: allAccounts,
     cashAccounts,
@@ -403,16 +270,14 @@ router.get("/accounts", async (req, res) => {
     expenseAccounts,
     receivablePayableAccounts,
     adjustmentAccounts,
-    voucherTypes,
+    voucherTypes: [JOURNAL_TYPE],
   });
 });
 
-// Get all vouchers
 router.get("/all", async (req, res) => {
   try {
     const {
       search = "",
-      transactionType = "",
       status = "",
       postingStatus = "",
       partyType = "",
@@ -420,42 +285,46 @@ router.get("/all", async (req, res) => {
       dateTo = "",
     } = req.query;
 
-    const query = {};
+    const query = { transactionType: JOURNAL_TYPE };
 
-    if (transactionType && transactionType !== "All") {
-      query.transactionType = transactionType;
-    }
-
-    if (status && status !== "All") {
+    if (status && status !== "All" && ALLOWED_STATUSES.includes(status)) {
       query.status = status;
     }
 
-    if (postingStatus && postingStatus !== "All") {
+    if (
+      postingStatus &&
+      postingStatus !== "All" &&
+      ALLOWED_POSTING_STATUSES.includes(postingStatus)
+    ) {
       query.postingStatus = postingStatus;
     }
 
-    if (partyType && partyType !== "All") {
+    if (
+      partyType &&
+      partyType !== "All" &&
+      ALLOWED_PARTY_TYPES.includes(partyType)
+    ) {
       query.partyType = partyType;
     }
 
     if (dateFrom || dateTo) {
       query.voucherDate = {};
-
       if (dateFrom) query.voucherDate.$gte = dateFrom;
       if (dateTo) query.voucherDate.$lte = dateTo;
     }
 
     if (search) {
+      const safeSearch = escapeRegex(search);
       query.$or = [
-        { voucherNo: { $regex: search, $options: "i" } },
-        { transactionType: { $regex: search, $options: "i" } },
-        { partyName: { $regex: search, $options: "i" } },
-        { referenceNo: { $regex: search, $options: "i" } },
-        { chequeNo: { $regex: search, $options: "i" } },
-        { remarks: { $regex: search, $options: "i" } },
-        { "entries.accountName": { $regex: search, $options: "i" } },
-        { "entries.narration": { $regex: search, $options: "i" } },
-      ];
+        "voucherNo",
+        "partyName",
+        "referenceNo",
+        "remarks",
+        "entries.accountName",
+        "entries.narration",
+      ].map((field) => ({
+        [field]: { $regex: safeSearch, $options: "i" },
+      }));
     }
 
     const journals = await GeneralJournal.find(query).sort({
@@ -463,273 +332,172 @@ router.get("/all", async (req, res) => {
       createdAt: -1,
     });
 
-    res.status(200).json(journals);
+    return res.json({ success: true, journals });
   } catch (error) {
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
-      message: "General journals load nahi huay",
-      error: error.message,
+      message: error.message || "Adjustment Journals could not be loaded",
     });
   }
 });
 
-// Get single voucher
 router.get("/:id", async (req, res) => {
   try {
-    const journal = await GeneralJournal.findById(req.params.id);
-
-    if (!journal) {
-      return res.status(404).json({
-        success: false,
-        message: "Journal voucher not found",
-      });
-    }
-
-    res.status(200).json({
-      success: true,
-      data: journal,
-    });
+    const journal = await findAdjustmentJournal(req.params.id);
+    return res.json({ success: true, data: journal });
   } catch (error) {
-    res.status(500).json({
+    return res.status(error.message === "Invalid journal ID" ? 400 : 404).json({
       success: false,
-      message: "Journal voucher load nahi hua",
-      error: error.message,
+      message: error.message,
     });
   }
 });
 
-// Add voucher
 router.post("/add", async (req, res) => {
   try {
-    const payload = await buildVoucherPayload(req.body);
+    const payload = buildAdjustmentPayload({ body: req.body || {} });
+    const journal = await GeneralJournal.create({
+      voucherNo: await getNextVoucherNo(),
+      ...payload,
+    });
 
-    const journal = new GeneralJournal(payload);
-    const savedJournal = await journal.save();
-
-    res.status(201).json({
+    return res.status(201).json({
       success: true,
-      message: "Journal voucher created successfully",
-      data: savedJournal,
-    });
-  } catch (error) {
-    if (error.code === 11000) {
-      return res.status(400).json({
-        success: false,
-        message: "Ye voucher number already used hai",
-      });
-    }
-
-    res.status(400).json({
-      success: false,
-      message: "Journal voucher save nahi hua",
-      error: error.message,
-    });
-  }
-});
-
-// Update voucher
-router.put("/update/:id", async (req, res) => {
-  try {
-    const existingJournal = await GeneralJournal.findById(req.params.id);
-
-    if (!existingJournal) {
-      return res.status(404).json({
-        success: false,
-        message: "Journal voucher not found",
-      });
-    }
-
-    if (existingJournal.postingStatus === "Posted") {
-      return res.status(400).json({
-        success: false,
-        message: "Posted voucher update nahi ho sakta. Pehle unpost karein.",
-      });
-    }
-
-    if (existingJournal.status === "Cancelled") {
-      return res.status(400).json({
-        success: false,
-        message: "Cancelled voucher update nahi ho sakta",
-      });
-    }
-
-    const payload = await buildVoucherPayload(req.body, existingJournal);
-
-    const updatedJournal = await GeneralJournal.findByIdAndUpdate(
-      req.params.id,
-      payload,
-      {
-        new: true,
-        runValidators: true,
-      }
-    );
-
-    res.status(200).json({
-      success: true,
-      message: "Journal voucher updated successfully",
-      data: updatedJournal,
-    });
-  } catch (error) {
-    if (error.code === 11000) {
-      return res.status(400).json({
-        success: false,
-        message: "Ye voucher number already used hai",
-      });
-    }
-
-    res.status(400).json({
-      success: false,
-      message: "Journal voucher update nahi hua",
-      error: error.message,
-    });
-  }
-});
-
-// Post voucher
-router.put("/post/:id", async (req, res) => {
-  try {
-    const journal = await GeneralJournal.findById(req.params.id);
-
-    if (!journal) {
-      return res.status(404).json({
-        success: false,
-        message: "Journal voucher not found",
-      });
-    }
-
-    if (journal.status === "Cancelled") {
-      return res.status(400).json({
-        success: false,
-        message: "Cancelled voucher post nahi ho sakta",
-      });
-    }
-
-    if (!journal.totals?.isBalanced) {
-      return res.status(400).json({
-        success: false,
-        message: "Unbalanced voucher post nahi ho sakta",
-      });
-    }
-
-    journal.postingStatus = "Posted";
-    journal.status = "Approved";
-
-    await journal.save();
-
-    res.status(200).json({
-      success: true,
-      message: "Journal voucher posted successfully",
+      message: "Adjustment Journal created successfully",
       data: journal,
     });
   } catch (error) {
-    res.status(400).json({
+    return res.status(400).json({
       success: false,
-      message: "Journal voucher post nahi hua",
-      error: error.message,
+      message: duplicateMessage(error, "Adjustment Journal could not be saved"),
     });
   }
 });
 
-// Unpost voucher
-router.put("/unpost/:id", async (req, res) => {
+router.put("/update/:id", async (req, res) => {
   try {
-    const journal = await GeneralJournal.findById(req.params.id);
+    const journal = await findAdjustmentJournal(req.params.id);
 
-    if (!journal) {
-      return res.status(404).json({
-        success: false,
-        message: "Journal voucher not found",
-      });
+    if (journal.postingStatus === "Posted") {
+      throw new Error("Posted journal cannot be updated. Unpost it first.");
     }
 
     if (journal.status === "Cancelled") {
-      return res.status(400).json({
-        success: false,
-        message: "Cancelled voucher unpost nahi ho sakta",
-      });
+      throw new Error("Cancelled journal cannot be updated");
+    }
+
+    const payload = buildAdjustmentPayload({
+      body: req.body || {},
+      existingJournal: journal,
+    });
+
+    Object.assign(journal, payload);
+    await journal.save();
+
+    return res.json({
+      success: true,
+      message: "Adjustment Journal updated successfully",
+      data: journal,
+    });
+  } catch (error) {
+    return res.status(400).json({
+      success: false,
+      message: duplicateMessage(
+        error,
+        "Adjustment Journal could not be updated"
+      ),
+    });
+  }
+});
+
+router.put("/post/:id", async (req, res) => {
+  try {
+    const journal = await findAdjustmentJournal(req.params.id);
+
+    if (journal.status === "Cancelled") {
+      throw new Error("Cancelled journal cannot be posted");
+    }
+
+    const totals = calculateTotals(cleanJournalEntries(journal.entries));
+    journal.totals = totals;
+    journal.amount = totals.totalDebit;
+    journal.postingStatus = "Posted";
+    journal.status = "Approved";
+    await journal.save();
+
+    return res.json({
+      success: true,
+      message: "Adjustment Journal posted successfully",
+      data: journal,
+    });
+  } catch (error) {
+    return res.status(400).json({ success: false, message: error.message });
+  }
+});
+
+router.put("/unpost/:id", async (req, res) => {
+  try {
+    const journal = await findAdjustmentJournal(req.params.id);
+
+    if (journal.status === "Cancelled") {
+      throw new Error("Cancelled journal cannot be unposted");
     }
 
     journal.postingStatus = "Not Posted";
     journal.status = "Draft";
-
     await journal.save();
 
-    res.status(200).json({
+    return res.json({
       success: true,
-      message: "Journal voucher unposted successfully",
+      message: "Adjustment Journal unposted successfully",
       data: journal,
     });
   } catch (error) {
-    res.status(400).json({
-      success: false,
-      message: "Journal voucher unpost nahi hua",
-      error: error.message,
-    });
+    return res.status(400).json({ success: false, message: error.message });
   }
 });
 
-// Cancel voucher
 router.patch("/cancel/:id", async (req, res) => {
   try {
-    const journal = await GeneralJournal.findById(req.params.id);
+    const journal = await findAdjustmentJournal(req.params.id);
 
-    if (!journal) {
-      return res.status(404).json({
-        success: false,
-        message: "Journal voucher not found",
-      });
+    if (journal.postingStatus === "Posted") {
+      throw new Error("Posted journal must be unposted before cancellation");
     }
 
     journal.status = "Cancelled";
     journal.postingStatus = "Not Posted";
-
     await journal.save();
 
-    res.status(200).json({
+    return res.json({
       success: true,
-      message: "Journal voucher cancelled successfully",
+      message: "Adjustment Journal cancelled successfully",
       data: journal,
     });
   } catch (error) {
-    res.status(400).json({
-      success: false,
-      message: "Journal voucher cancel nahi hua",
-      error: error.message,
-    });
+    return res.status(400).json({ success: false, message: error.message });
   }
 });
 
-// Delete voucher
 router.delete("/delete/:id", async (req, res) => {
   try {
-    const journal = await GeneralJournal.findById(req.params.id);
-
-    if (!journal) {
-      return res.status(404).json({
-        success: false,
-        message: "Journal voucher not found",
-      });
-    }
+    const journal = await findAdjustmentJournal(req.params.id);
 
     if (journal.postingStatus === "Posted") {
-      return res.status(400).json({
-        success: false,
-        message: "Posted voucher delete nahi ho sakta. Pehle unpost karein.",
-      });
+      throw new Error("Posted journal cannot be deleted. Unpost it first.");
     }
 
-    await GeneralJournal.findByIdAndDelete(req.params.id);
+    if (journal.status === "Cancelled") {
+      throw new Error("Cancelled journal cannot be deleted");
+    }
 
-    res.status(200).json({
+    await GeneralJournal.deleteOne({ _id: journal._id });
+    return res.json({
       success: true,
-      message: "Journal voucher deleted successfully",
+      message: "Adjustment Journal deleted successfully",
     });
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: "Journal voucher delete nahi hua",
-      error: error.message,
-    });
+    return res.status(400).json({ success: false, message: error.message });
   }
 });
 

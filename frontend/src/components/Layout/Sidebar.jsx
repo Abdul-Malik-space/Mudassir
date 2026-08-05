@@ -20,8 +20,6 @@ import {
   Receipt,
   BookOpen,
   Banknote,
-  ArrowDownCircle,
-  ArrowUpCircle,
 } from "lucide-react";
 
 const menuItems = [
@@ -86,10 +84,15 @@ const menuItems = [
     ],
   },
   {
-  id: "general-journal",
-  icon: BookOpen,
-  label: "General Journal",
-},
+    id: "payments-received",
+    icon: Banknote,
+    label: "Payments & Received",
+  },
+  {
+    id: "general-journal",
+    icon: BookOpen,
+    label: "General Journal",
+  },
   {
     id: "expense",
     icon: Wallet,

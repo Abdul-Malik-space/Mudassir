@@ -215,6 +215,9 @@ const grnRoutes = require("./routes/grnRoutes");
 const generalJournalRoutes = require(
   "./routes/generalJournalRoutes"
 );
+const paymentsReceivedRoutes = require(
+  "./routes/paymentsReceivedRoutes"
+);
 const laminationRoutes = require(
   "./routes/laminationRoutes"
 );
@@ -367,6 +370,11 @@ app.use("/api/grns", grnRoutes);
 app.use(
   "/api/general-journals",
   generalJournalRoutes
+);
+
+app.use(
+  "/api/payments-received",
+  paymentsReceivedRoutes
 );
 
 app.use("/api/lamination", laminationRoutes);

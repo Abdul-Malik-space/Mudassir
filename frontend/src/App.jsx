@@ -28,6 +28,7 @@ import DepartmentForm from "./Pages/Department";
 import ReadyProductEntry from "./Pages/ReadyProduct";
 
 import GeneralJournal from "./Pages/GeneralJournal";
+import PaymentsReceived from "./Pages/PaymentsReceived";
 
 import SaleEntry from "./Pages/Sales";
 import SalesOrders from "./Pages/SalesOrders";
@@ -78,6 +79,7 @@ function App() {
               {currentPage === "vendors" && <AddVendor />}
               {currentPage === "traders" && <AddTraders />}
               {currentPage === "general-journal" && <GeneralJournal />}
+              {currentPage === "payments-received" && <PaymentsReceived />}
               {currentPage === "list-items" && <AddItemsList />}
               {currentPage === "categories-list" && <AddCatagries />}
               {currentPage === "brand-list" && <BrandLIst />}
@@ -86,7 +88,7 @@ function App() {
               {/* Purchase Pages */}
               {currentPage === "purchase-orders" && <PurchaseOrders />}
               {currentPage === "grn" && <GRN />}
-             {currentPage === "purchases" && <Purchases />}
+              {currentPage === "purchases" && <Purchases />}
 
               {/* Production Pages */}
               {currentPage === "production-items" && <ProductionItemsManager />}
