@@ -16,18 +16,26 @@ import { API_BASE_URL } from "../config/api";
 
 const emptyItem = {
   item: "",
+  itemCode: "",
   description: "",
   size: "",
   cartons: "",
   quantity: "",
-  unit: "Rolls",
+  unit: "Pcs",
   unitPrice: "",
+  defaultPurchasePrice: 0,
+  priceSource: "Item Master",
+  purchasePriceUpdatedAt: null,
   remarks: "",
 };
 
 const todayDate = () => new Date().toISOString().slice(0, 10);
 
-const money = (value) => `Rs. ${Number(value || 0).toLocaleString()}`;
+const money = (value) =>
+  `Rs. ${Number(value || 0).toLocaleString("en-PK", {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2,
+  })}`;
 
 const RequiredLabel = ({ children }) => (
   <label className="text-xs font-bold text-slate-600">
@@ -52,22 +60,107 @@ const normalizeArray = (data, keys = []) => {
 };
 
 const apiRequest = async (url, options = {}) => {
+  const { headers = {}, ...requestOptions } = options;
+
   const response = await fetch(url, {
+    ...requestOptions,
     headers: {
-      "Content-Type": "application/json",
-      ...(options.headers || {}),
+      Accept: "application/json",
+      ...(requestOptions.body ? { "Content-Type": "application/json" } : {}),
+      ...headers,
     },
-    ...options,
   });
 
   const data = await response.json().catch(() => ({}));
 
-  if (!response.ok) {
-    throw new Error(data.message || data.error || "Request failed");
+  if (!response.ok || data?.success === false) {
+    throw new Error(
+      data?.error ||
+        data?.message ||
+        `Request failed with status ${response.status}`
+    );
   }
 
   return data;
 };
+
+const getItemId = (item) =>
+  String(item?._id || item?.id || "");
+
+const getItemCode = (item) =>
+  String(
+    item?.code ||
+      item?.itemCode ||
+      item?.sku ||
+      item?.productCode ||
+      ""
+  ).trim();
+
+const getItemName = (item) =>
+  String(
+    item?.name ||
+      item?.itemName ||
+      item?.description ||
+      item?.title ||
+      ""
+  ).trim();
+
+const getItemUnit = (item) =>
+  String(
+    item?.unit ||
+      item?.uom ||
+      item?.measurementUnit ||
+      "Pcs"
+  ).trim();
+
+const getItemPurchasePrice = (item) => {
+  const value =
+    item?.purchasePrice ??
+    item?.purchaseRate ??
+    item?.costPrice ??
+    item?.rate ??
+    0;
+
+  const number = Number(value);
+
+  return Number.isFinite(number)
+    ? Math.max(number, 0)
+    : 0;
+};
+
+const getItemLabel = (item) => {
+  const code = getItemCode(item);
+  const name = getItemName(item);
+
+  if (code && name) {
+    return `${code} — ${name}`;
+  }
+
+  if (code || name) {
+    return code || name;
+  }
+
+  const id = getItemId(item);
+
+  return id
+    ? `Item ${id.slice(-6)}`
+    : "Unnamed Item";
+};
+
+const normalizeItemMaster = (item) => ({
+  ...item,
+  _id: getItemId(item),
+  code: getItemCode(item),
+  name: getItemName(item),
+  unit: getItemUnit(item),
+  purchasePrice: getItemPurchasePrice(item),
+  purchasePriceUpdatedAt:
+    item?.purchasePriceUpdatedAt || null,
+  priceSource:
+    String(item?.priceSource || "Item Master").trim() ||
+    "Item Master",
+  notes: String(item?.notes || item?.remarks || "").trim(),
+});
 
 const getDefaultForm = (purchaseOrderNo = "") => ({
   purchaseOrderNo,
@@ -119,16 +212,36 @@ const PurchaseOrders = () => {
     try {
       setItemLoading(true);
 
-      const data = await apiRequest(`${API_BASE_URL}/items/all`);
-      const list = normalizeArray(data, ["items"]).filter(
-        (item) => item.status !== "Inactive"
+      const data = await apiRequest(
+        `${API_BASE_URL}/items/purchase-options`
       );
 
+      const list = normalizeArray(data, [
+        "items",
+        "products",
+        "records",
+      ])
+        .map(normalizeItemMaster)
+        .filter(
+          (item) =>
+            item._id &&
+            item.status !== "Inactive" &&
+            item.itemType !== "Service" &&
+            item.stockManaged !== false
+        )
+        .sort((a, b) =>
+          getItemLabel(a).localeCompare(
+            getItemLabel(b)
+          )
+        );
+
       setItemsMaster(list);
+      return list;
     } catch (error) {
       console.error("Items loading error:", error);
       alert(error.message || "Items load nahi huay");
       setItemsMaster([]);
+      return [];
     } finally {
       setItemLoading(false);
     }
@@ -213,13 +326,22 @@ const PurchaseOrders = () => {
 
       await Promise.all([fetchVendors(), fetchItems()]);
 
-      const nextNo = await fetchNextNo();
+      let nextNo = "";
+
+      try {
+        nextNo = await fetchNextNo();
+      } catch (numberError) {
+        console.warn(
+          "Purchase Order number preview could not be loaded:",
+          numberError
+        );
+      }
 
       setEditId(null);
       setForm(getDefaultForm(nextNo));
       setShowForm(true);
     } catch (error) {
-      alert(error.message || "Purchase Order No load nahi hua");
+      alert(error.message || "Purchase Order form open nahi hua");
     } finally {
       setSaving(false);
     }
@@ -234,9 +356,41 @@ const PurchaseOrders = () => {
   const updateItem = (index, field, value) => {
     const updatedItems = [...form.items];
 
-    updatedItems[index] = {
+    const updatedRow = {
       ...updatedItems[index],
       [field]: value,
+    };
+
+    if (field === "unitPrice") {
+      const enteredPrice = Number(value);
+      const defaultPrice = Number(
+        updatedRow.defaultPurchasePrice || 0
+      );
+
+      updatedRow.priceSource =
+        value === "" ||
+        (Number.isFinite(enteredPrice) &&
+          Math.abs(enteredPrice - defaultPrice) < 0.005)
+          ? "Item Master"
+          : "Manual Override";
+    }
+
+    updatedItems[index] = updatedRow;
+
+    setForm({
+      ...form,
+      items: updatedItems,
+    });
+  };
+
+  const resetItemPrice = (index) => {
+    const updatedItems = [...form.items];
+    const row = updatedItems[index];
+
+    updatedItems[index] = {
+      ...row,
+      unitPrice: Number(row.defaultPurchasePrice || 0),
+      priceSource: "Item Master",
     };
 
     setForm({
@@ -246,16 +400,26 @@ const PurchaseOrders = () => {
   };
 
   const handleItemSelect = (index, itemId) => {
-    const selectedItem = itemsMaster.find((item) => item._id === itemId);
+    const selectedItem = itemsMaster.find(
+      (item) =>
+        getItemId(item) ===
+        String(itemId)
+    );
+
     const updatedItems = [...form.items];
 
     if (!selectedItem) {
       updatedItems[index] = {
         ...updatedItems[index],
         item: "",
+        itemCode: "",
         description: "",
-        unit: "Rolls",
+        unit: "Pcs",
         unitPrice: "",
+        defaultPurchasePrice: 0,
+        priceSource: "Item Master",
+        purchasePriceUpdatedAt: null,
+        remarks: "",
       };
 
       setForm({
@@ -268,10 +432,16 @@ const PurchaseOrders = () => {
 
     updatedItems[index] = {
       ...updatedItems[index],
-      item: selectedItem._id,
-      description: selectedItem.name || "",
-      unit: selectedItem.unit || "Pcs",
-      unitPrice: selectedItem.purchasePrice || 0,
+      item: getItemId(selectedItem),
+      itemCode: getItemCode(selectedItem),
+      description: getItemName(selectedItem),
+      unit: getItemUnit(selectedItem),
+      unitPrice: getItemPurchasePrice(selectedItem),
+      defaultPurchasePrice:
+        getItemPurchasePrice(selectedItem),
+      priceSource: "Item Master",
+      purchasePriceUpdatedAt:
+        selectedItem.purchasePriceUpdatedAt || null,
       remarks: selectedItem.notes || "",
     };
 
@@ -298,11 +468,6 @@ const PurchaseOrders = () => {
   };
 
   const validateForm = () => {
-    if (!form.purchaseOrderNo.trim()) {
-      alert("Purchase Order No required hai");
-      return false;
-    }
-
     if (!form.vendor) {
       alert("Vendor select karein");
       return false;
@@ -320,13 +485,16 @@ const PurchaseOrders = () => {
 
     const validItems = form.items.filter(
       (item) =>
+        item.item &&
         item.description?.trim() &&
         Number(item.quantity || 0) > 0 &&
-        Number(item.unitPrice || 0) >= 0
+        item.unitPrice !== "" &&
+        Number.isFinite(Number(item.unitPrice)) &&
+        Number(item.unitPrice) >= 0
     );
 
     if (validItems.length === 0) {
-      alert("Please at least one valid item add karein");
+      alert("Select at least one Item Master record and enter valid quantity and unit price.");
       return false;
     }
 
@@ -337,23 +505,39 @@ const PurchaseOrders = () => {
     const validItems = form.items
       .filter(
         (item) =>
+          item.item &&
           item.description?.trim() &&
           Number(item.quantity || 0) > 0 &&
-          Number(item.unitPrice || 0) >= 0
+          item.unitPrice !== "" &&
+          Number.isFinite(Number(item.unitPrice)) &&
+          Number(item.unitPrice) >= 0
       )
       .map((item) => ({
-        item: item.item || null,
+        _id: item._id || undefined,
+        item: item.item,
+        itemCode: String(item.itemCode || "").trim(),
+        itemName: String(item.description || "").trim(),
         description: String(item.description || "").trim(),
         size: String(item.size || "").trim(),
         cartons: Number(item.cartons || 0),
         quantity: Number(item.quantity || 0),
         unit: String(item.unit || "Pcs").trim(),
         unitPrice: Number(item.unitPrice || 0),
+        defaultPurchasePrice: Number(
+          item.defaultPurchasePrice || 0
+        ),
+        priceSource:
+          item.priceSource === "Manual Override"
+            ? "Manual Override"
+            : "Item Master",
+        purchasePriceUpdatedAt:
+          item.purchasePriceUpdatedAt || null,
+        receivedQty: Number(item.receivedQty || 0),
+        pendingQty: Number(item.pendingQty || 0),
         remarks: String(item.remarks || "").trim(),
       }));
 
     return {
-      purchaseOrderNo: form.purchaseOrderNo,
       vendor: form.vendor,
       orderDate: form.orderDate,
       expectedDate: form.expectedDate,
@@ -380,12 +564,19 @@ const PurchaseOrders = () => {
 
       const method = editId ? "PUT" : "POST";
 
-      await apiRequest(url, {
+      const result = await apiRequest(url, {
         method,
         body: JSON.stringify(payload),
       });
 
       await fetchOrders();
+
+      if (!editId && result?.data?.purchaseOrderNo) {
+        alert(
+          `Purchase Order ${result.data.purchaseOrderNo} created successfully.`
+        );
+      }
+
       closeForm();
     } catch (error) {
       alert(error.message || "Purchase order save nahi hua");
@@ -395,7 +586,16 @@ const PurchaseOrders = () => {
   };
 
   const handleEdit = async (order) => {
-    await Promise.all([fetchVendors(), fetchItems()]);
+    const [, refreshedItems] =
+      await Promise.all([
+        fetchVendors(),
+        fetchItems(),
+      ]);
+
+    const availableItems =
+      refreshedItems?.length
+        ? refreshedItems
+        : itemsMaster;
 
     setEditId(order._id);
 
@@ -410,16 +610,71 @@ const PurchaseOrders = () => {
       status: order.status || "Draft",
       remarks: order.remarks || "",
       items: order.items?.length
-        ? order.items.map((row) => ({
-            item: row.item?._id || row.item || "",
-            description: row.description || "",
-            size: row.size || "",
-            cartons: row.cartons || "",
-            quantity: row.quantity || "",
-            unit: row.unit || "Pcs",
-            unitPrice: row.unitPrice || "",
-            remarks: row.remarks || "",
-          }))
+        ? order.items.map((row) => {
+            const itemId =
+              row.item?._id || row.item || "";
+
+            const currentMasterItem =
+              availableItems.find(
+                (masterItem) =>
+                  getItemId(masterItem) ===
+                  String(itemId)
+              ) || row.item;
+
+            const currentDefaultPrice =
+              getItemPurchasePrice(
+                currentMasterItem
+              );
+
+            const savedDefaultPrice =
+              row.defaultPurchasePrice ??
+              currentDefaultPrice;
+
+            const savedUnitPrice =
+              row.unitPrice ??
+              savedDefaultPrice ??
+              "";
+
+            return {
+              _id: row._id || "",
+              item: itemId,
+              itemCode:
+                row.itemCode ||
+                getItemCode(currentMasterItem) ||
+                "",
+              description:
+                row.description ||
+                row.itemName ||
+                getItemName(currentMasterItem) ||
+                "",
+              size: row.size || "",
+              cartons: row.cartons || "",
+              quantity: row.quantity || "",
+              unit:
+                row.unit ||
+                getItemUnit(currentMasterItem) ||
+                "Pcs",
+              unitPrice: savedUnitPrice,
+              defaultPurchasePrice:
+                savedDefaultPrice,
+              priceSource:
+                row.priceSource ||
+                (Math.abs(
+                  Number(savedUnitPrice || 0) -
+                    Number(savedDefaultPrice || 0)
+                ) < 0.005
+                  ? "Item Master"
+                  : "Manual Override"),
+              purchasePriceUpdatedAt:
+                row.purchasePriceUpdatedAt ||
+                currentMasterItem
+                  ?.purchasePriceUpdatedAt ||
+                null,
+              receivedQty: row.receivedQty || 0,
+              pendingQty: row.pendingQty || 0,
+              remarks: row.remarks || "",
+            };
+          })
         : [{ ...emptyItem }],
     });
 
@@ -469,7 +724,8 @@ const PurchaseOrders = () => {
         (item, index) => `
           <tr>
             <td>${index + 1}</td>
-            <td>${item.description || ""}</td>
+            <td>${item.itemCode || item.item?.code || ""}</td>
+            <td>${item.description || item.itemName || ""}</td>
             <td>${item.size || ""}</td>
             <td>${item.cartons || ""}</td>
             <td>${item.quantity || ""}</td>
@@ -492,7 +748,8 @@ const PurchaseOrders = () => {
           <title>${order.purchaseOrderNo}</title>
           <style>
             body { font-family: Arial, sans-serif; padding: 30px; color: #111827; }
-            .top { display: flex; justify-content: flex-end; align-items: flex-start; border-bottom: 2px solid #111827; padding-bottom: 12px; }
+            .top { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid #111827; padding-bottom: 12px; }
+            h1 { margin: 0; font-size: 30px; }
             h2 { text-align: center; margin: 24px 0 18px; text-decoration: underline; }
             .small { font-size: 12px; color: #374151; line-height: 1.7; }
             .box { border: 1px solid #111827; padding: 10px; margin: 12px 0; line-height: 1.7; font-size: 13px; }
@@ -507,6 +764,11 @@ const PurchaseOrders = () => {
 
         <body>
           <div class="top">
+            <div>
+              <h1>Purchase Order</h1>
+              <div class="small">Procurement Document</div>
+            </div>
+
             <div class="small">
               <b>Purchase Order No:</b> ${order.purchaseOrderNo || ""}<br/>
               <b>Date:</b> ${order.orderDate || ""}<br/>
@@ -528,6 +790,7 @@ const PurchaseOrders = () => {
             <thead>
               <tr>
                 <th>Sr</th>
+                <th>Item Code</th>
                 <th>Description</th>
                 <th>Size</th>
                 <th>Cartons</th>
@@ -600,15 +863,21 @@ const PurchaseOrders = () => {
           <div className="pt-5 space-y-6">
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
               <div>
-                <RequiredLabel>Purchase Order No</RequiredLabel>
+                <NormalLabel>Purchase Order No</NormalLabel>
                 <input
-                  value={form.purchaseOrderNo}
-                  onChange={(e) =>
-                    setForm({ ...form, purchaseOrderNo: e.target.value })
+                  value={
+                    form.purchaseOrderNo ||
+                    (editId ? "" : "Auto-generated on save")
                   }
-                  className="w-full border rounded-lg px-3 py-2 mt-1"
-                  placeholder="PO-0001"
+                  readOnly
+                  className="w-full border rounded-lg px-3 py-2 mt-1 bg-slate-100 text-slate-700 font-semibold cursor-not-allowed"
+                  placeholder="Auto-generated on save"
                 />
+                <p className="text-[11px] text-slate-500 mt-1">
+                  {editId
+                    ? "Purchase Order number cannot be changed."
+                    : "A unique PO number will be assigned automatically when saved."}
+                </p>
               </div>
 
               <div>
@@ -702,8 +971,18 @@ const PurchaseOrders = () => {
                 >
                   <option>Draft</option>
                   <option>Ordered</option>
-                  <option>Partially Received</option>
-                  <option>Received</option>
+                  <option
+                    value="Partially Received"
+                    disabled
+                  >
+                    Partially Received (system)
+                  </option>
+                  <option
+                    value="Received"
+                    disabled
+                  >
+                    Received (system)
+                  </option>
                   <option>Cancelled</option>
                 </select>
               </div>
@@ -713,9 +992,11 @@ const PurchaseOrders = () => {
               <div className="bg-slate-50 px-4 py-3 flex justify-between items-center">
                 <div>
                   <h3 className="font-bold">Purchase Items</h3>
-                  {/* <p className="text-xs text-slate-500">
-                    Item Master se item select karein. Quantity aur price required hain.
-                  </p> */}
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    Item select karte hi Item Master ki default purchase
+                    price aur unit auto-fill ho jayegi. Quotation ke mutabiq
+                    price ko zarurat par manually change kiya ja sakta hai.
+                  </p>
                 </div>
 
                 <button
@@ -764,11 +1045,23 @@ const PurchaseOrders = () => {
                             </option>
 
                             {itemsMaster.map((masterItem) => (
-                              <option key={masterItem._id} value={masterItem._id}>
-                                {masterItem.code} - {masterItem.name}
+                              <option
+                                key={getItemId(masterItem)}
+                                value={getItemId(masterItem)}
+                              >
+                                {getItemLabel(masterItem)}
                               </option>
                             ))}
                           </select>
+
+                          {item.item && (
+                            <div className="mt-1 text-[11px] text-slate-500">
+                              Code: {item.itemCode || "—"} · Default:{" "}
+                              <span className="font-semibold text-slate-700">
+                                {money(item.defaultPurchasePrice)}
+                              </span>
+                            </div>
+                          )}
                         </td>
 
                         <td className="p-2 min-w-[220px]">
@@ -828,16 +1121,53 @@ const PurchaseOrders = () => {
                           />
                         </td>
 
-                        <td className="p-2 min-w-[120px]">
+                        <td className="p-2 min-w-[165px]">
                           <input
                             type="number"
+                            min="0"
+                            step="0.01"
                             value={item.unitPrice}
                             onChange={(e) =>
-                              updateItem(index, "unitPrice", e.target.value)
+                              updateItem(
+                                index,
+                                "unitPrice",
+                                e.target.value
+                              )
                             }
                             className="w-full border rounded px-2 py-1.5"
-                            placeholder="190"
+                            placeholder="0.00"
                           />
+
+                          {item.item && (
+                            <div className="mt-1 flex items-center justify-between gap-2 text-[11px]">
+                              <span
+                                className={
+                                  item.priceSource ===
+                                  "Manual Override"
+                                    ? "text-amber-700 font-semibold"
+                                    : "text-emerald-700 font-semibold"
+                                }
+                              >
+                                {item.priceSource ===
+                                "Manual Override"
+                                  ? "Manual price"
+                                  : "Item Master price"}
+                              </span>
+
+                              {item.priceSource ===
+                                "Manual Override" && (
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    resetItemPrice(index)
+                                  }
+                                  className="text-blue-700 hover:underline"
+                                >
+                                  Reset
+                                </button>
+                              )}
+                            </div>
+                          )}
                         </td>
 
                         <td className="p-2 text-right font-bold">
@@ -937,7 +1267,7 @@ const PurchaseOrders = () => {
           </h1>
 
           <p className="text-sm text-slate-500 mt-1">
-            Vendor purchase booking, item master selection, tax and balance tracking
+            Item Master prices auto-fill with controlled manual overrides, tax and balance tracking
           </p>
         </div>
 

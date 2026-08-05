@@ -85,7 +85,21 @@ const normalizeNumber = (value) => {
 
   const number = Number(value);
 
-  return Number.isFinite(number) ? number : 0;
+  return Number.isFinite(number)
+    ? Math.max(number, 0)
+    : 0;
+};
+
+const normalizeMoney = (value) => {
+  const number = normalizeNumber(value);
+
+  if (number === undefined) {
+    return undefined;
+  }
+
+  return Math.round(
+    (number + Number.EPSILON) * 100
+  ) / 100;
 };
 
 const normalizeItemFields = (target = {}) => {
@@ -132,23 +146,29 @@ const normalizeItemFields = (target = {}) => {
     target.notes = String(target.notes || "").trim();
   }
 
-  const numericFields = [
-    "purchasePrice",
-    "salePrice",
-    "openingStock",
-    "minStock",
-  ];
-
-  numericFields.forEach((field) => {
-    if (target[field] !== undefined) {
-      target[field] = normalizeNumber(
-        target[field]
-      );
+  ["purchasePrice", "salePrice"].forEach(
+    (field) => {
+      if (target[field] !== undefined) {
+        target[field] = normalizeMoney(
+          target[field]
+        );
+      }
     }
-  });
+  );
+
+  ["openingStock", "minStock"].forEach(
+    (field) => {
+      if (target[field] !== undefined) {
+        target[field] = normalizeNumber(
+          target[field]
+        );
+      }
+    }
+  );
 
   if (target.itemType === "Service") {
     target.stockManaged = false;
+    target.purchasePrice = 0;
     target.openingStock = 0;
     target.minStock = 0;
   }
@@ -168,6 +188,7 @@ const itemSchema = new mongoose.Schema(
         50,
         "Item code cannot exceed 50 characters",
       ],
+      index: true,
     },
 
     name: {
@@ -178,6 +199,7 @@ const itemSchema = new mongoose.Schema(
         150,
         "Item name cannot exceed 150 characters",
       ],
+      index: true,
     },
 
     itemType: {
@@ -220,6 +242,10 @@ const itemSchema = new mongoose.Schema(
       ],
     },
 
+    /*
+     * Purchase Order میں item select ہونے پر یہی default
+     * purchase price استعمال ہوگا۔
+     */
     purchasePrice: {
       type: Number,
       default: 0,
@@ -227,6 +253,11 @@ const itemSchema = new mongoose.Schema(
         0,
         "Purchase price cannot be negative",
       ],
+    },
+
+    purchasePriceUpdatedAt: {
+      type: Date,
+      default: null,
     },
 
     salePrice: {
@@ -311,15 +342,32 @@ itemSchema.index({
   status: 1,
 });
 
+itemSchema.index({
+  status: 1,
+  stockManaged: 1,
+  itemType: 1,
+  code: 1,
+});
+
 /*
  * Mongoose 9:
  * Synchronous middleware میں next() استعمال نہیں ہوگا۔
  */
 itemSchema.pre("validate", function () {
+  const purchasePriceChanged =
+    this.isNew ||
+    this.isModified("purchasePrice");
+
   normalizeItemFields(this);
+
+  if (purchasePriceChanged) {
+    this.purchasePriceUpdatedAt =
+      new Date();
+  }
 
   if (this.itemType === "Service") {
     this.stockManaged = false;
+    this.purchasePrice = 0;
     this.openingStock = 0;
     this.minStock = 0;
   }
@@ -332,16 +380,49 @@ const updateMiddleware = function () {
     return;
   }
 
-  if (update.$set) {
-    normalizeItemFields(update.$set);
-  } else {
-    normalizeItemFields(update);
+  const operatorUpdate =
+    Object.keys(update).some(
+      (key) =>
+        key.startsWith("$")
+    );
+
+  const target =
+    operatorUpdate
+      ? update.$set || {}
+      : update;
+
+  const hasPurchasePrice =
+    Object.prototype.hasOwnProperty.call(
+      target,
+      "purchasePrice"
+    );
+
+  normalizeItemFields(target);
+
+  if (
+    operatorUpdate &&
+    update.$set
+  ) {
+    update.$set = target;
   }
 
   if (update.$setOnInsert) {
     normalizeItemFields(
       update.$setOnInsert
     );
+  }
+
+  if (hasPurchasePrice) {
+    if (operatorUpdate) {
+      update.$set = {
+        ...(update.$set || {}),
+        purchasePriceUpdatedAt:
+          new Date(),
+      };
+    } else {
+      update.purchasePriceUpdatedAt =
+        new Date();
+    }
   }
 
   this.setUpdate(update);
@@ -369,6 +450,22 @@ itemSchema.virtual(
     this.stockManaged === true &&
     this.itemType !== "Service"
   );
+});
+
+itemSchema.virtual(
+  "purchaseOrderDefault"
+).get(function () {
+  return {
+    item: this._id,
+    code: this.code,
+    name: this.name,
+    itemType: this.itemType,
+    unit: this.unit,
+    purchasePrice:
+      normalizeMoney(
+        this.purchasePrice
+      ) || 0,
+  };
 });
 
 module.exports = mongoose.model(

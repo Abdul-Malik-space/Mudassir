@@ -31,6 +31,27 @@ const purchaseOrderItemSchema =
         index: true,
       },
 
+      itemCode: {
+        type: String,
+        trim: true,
+        uppercase: true,
+        default: "",
+        maxlength: [
+          50,
+          "Item code cannot exceed 50 characters",
+        ],
+      },
+
+      itemName: {
+        type: String,
+        trim: true,
+        default: "",
+        maxlength: [
+          150,
+          "Item name cannot exceed 150 characters",
+        ],
+      },
+
       description: {
         type: String,
         required: [
@@ -85,6 +106,29 @@ const purchaseOrderItemSchema =
         ],
       },
 
+      defaultPurchasePrice: {
+        type: Number,
+        default: 0,
+        min: [
+          0,
+          "Default purchase price cannot be negative",
+        ],
+      },
+
+      priceSource: {
+        type: String,
+        enum: [
+          "Item Master",
+          "Manual Override",
+        ],
+        default: "Item Master",
+      },
+
+      purchasePriceUpdatedAt: {
+        type: Date,
+        default: null,
+      },
+
       amount: {
         type: Number,
         default: 0,
@@ -132,8 +176,27 @@ const purchaseOrderItemSchema =
 purchaseOrderItemSchema.pre(
   "validate",
   function () {
+    this.itemCode =
+      cleanText(
+        this.itemCode
+      ).toUpperCase();
+
+    this.itemName =
+      cleanText(
+        this.itemName
+      );
+
     this.description =
-      cleanText(this.description);
+      cleanText(
+        this.description,
+        this.itemName
+      );
+
+    this.itemName =
+      cleanText(
+        this.itemName,
+        this.description
+      );
 
     this.size =
       cleanText(this.size);
@@ -149,6 +212,19 @@ purchaseOrderItemSchema.pre(
 
     this.unitPrice =
       roundMoney(this.unitPrice);
+
+    this.defaultPurchasePrice =
+      roundMoney(
+        this.defaultPurchasePrice
+      );
+
+    this.priceSource =
+      Math.abs(
+        this.unitPrice -
+          this.defaultPurchasePrice
+      ) < 0.005
+        ? "Item Master"
+        : "Manual Override";
 
     this.receivedQty =
       cleanNumber(this.receivedQty);

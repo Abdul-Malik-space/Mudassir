@@ -243,6 +243,67 @@ const getStockMap = async (
   );
 };
 
+
+const toPurchaseOption = (item = {}) => ({
+  _id: item._id,
+  id: item._id,
+
+  code:
+    cleanText(item.code)
+      .toUpperCase(),
+
+  name:
+    cleanText(item.name),
+
+  description:
+    cleanText(item.name),
+
+  itemType:
+    cleanText(
+      item.itemType,
+      "Raw Material"
+    ),
+
+  category:
+    cleanText(
+      item.category,
+      "General"
+    ),
+
+  brand:
+    cleanText(item.brand),
+
+  unit:
+    cleanText(
+      item.unit,
+      "Pcs"
+    ),
+
+  purchasePrice:
+    cleanNumber(
+      item.purchasePrice
+    ),
+
+  notes:
+    cleanText(item.notes),
+
+  stockManaged:
+    item.stockManaged !== false,
+
+  status:
+    cleanText(
+      item.status,
+      "Active"
+    ),
+
+  purchasePriceUpdatedAt:
+    item.purchasePriceUpdatedAt ||
+    null,
+
+  priceSource:
+    "Item Master",
+});
+
 const addStockToItems =
   async (items = []) => {
     const stockMap =
@@ -652,6 +713,110 @@ router.get(
 
           message:
             "Unable to load items",
+
+          error:
+            error.message,
+        });
+    }
+  }
+);
+
+
+/*
+ * Purchase Order item selector کے لیے dedicated endpoint۔
+ * اس response میں default purchasePrice واضح طور پر شامل ہے۔
+ */
+router.get(
+  "/purchase-options",
+  async (req, res) => {
+    try {
+      const search =
+        cleanText(req.query.search);
+
+      const query = {
+        status: "Active",
+
+        itemType: {
+          $ne: "Service",
+        },
+
+        stockManaged: {
+          $ne: false,
+        },
+      };
+
+      if (search) {
+        query.$or = [
+          {
+            code: {
+              $regex: search,
+              $options: "i",
+            },
+          },
+          {
+            name: {
+              $regex: search,
+              $options: "i",
+            },
+          },
+          {
+            category: {
+              $regex: search,
+              $options: "i",
+            },
+          },
+          {
+            brand: {
+              $regex: search,
+              $options: "i",
+            },
+          },
+        ];
+      }
+
+      const rows =
+        await Item.find(query)
+          .select(
+            [
+              "code",
+              "name",
+              "itemType",
+              "category",
+              "brand",
+              "unit",
+              "purchasePrice",
+              "purchasePriceUpdatedAt",
+              "notes",
+              "stockManaged",
+              "status",
+            ].join(" ")
+          )
+          .sort({
+            code: 1,
+            name: 1,
+          })
+          .lean();
+
+      const items =
+        rows.map(
+          toPurchaseOption
+        );
+
+      return res
+        .status(200)
+        .json({
+          success: true,
+          items,
+          count: items.length,
+        });
+    } catch (error) {
+      return res
+        .status(500)
+        .json({
+          success: false,
+
+          message:
+            "Unable to load Purchase Order item options",
 
           error:
             error.message,

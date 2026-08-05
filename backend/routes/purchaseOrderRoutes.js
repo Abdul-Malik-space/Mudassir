@@ -204,8 +204,12 @@ const populatePurchaseOrder = (
         "unit",
         "uom",
         "purchasePrice",
+        "purchasePriceUpdatedAt",
         "purchaseRate",
         "costPrice",
+        "category",
+        "brand",
+        "notes",
         "status",
         "itemType",
         "stockManaged",
@@ -467,22 +471,14 @@ const preparePurchaseItems =
           idOf(row.item) &&
           cleanNumber(
             row.quantity
-          ) > 0 &&
-          Number.isFinite(
-            Number(
-              row.unitPrice ?? 0
-            )
-          ) &&
-          Number(
-            row.unitPrice ?? 0
-          ) >= 0
+          ) > 0
       );
 
     if (
       candidateRows.length === 0
     ) {
       throw new Error(
-        "Select at least one Item Master record and enter valid quantity and unit price"
+        "Select at least one Item Master record and enter a valid quantity"
       );
     }
 
@@ -564,6 +560,19 @@ const preparePurchaseItems =
           );
         }
 
+        if (
+          itemDocument.itemType ===
+            "Service" ||
+          itemDocument.stockManaged ===
+            false
+        ) {
+          throw new Error(
+            `Item "${getItemName(
+              itemDocument
+            )}" cannot be used in a stock Purchase Order`
+          );
+        }
+
         const description =
           cleanText(
             row.description,
@@ -599,19 +608,46 @@ const preparePurchaseItems =
             row.quantity
           );
 
-        const unitPrice =
+        const defaultPurchasePrice =
+          roundMoney(
+            getItemPurchasePrice(
+              itemDocument
+            )
+          );
+
+        const hasSubmittedPrice =
           row.unitPrice !==
-              undefined &&
-            row.unitPrice !==
-              ""
+            undefined &&
+          row.unitPrice !== "";
+
+        if (
+          hasSubmittedPrice &&
+          (
+            !Number.isFinite(
+              Number(row.unitPrice)
+            ) ||
+            Number(row.unitPrice) < 0
+          )
+        ) {
+          throw new Error(
+            `Enter a valid unit price for "${description}"`
+          );
+        }
+
+        const unitPrice =
+          hasSubmittedPrice
             ? roundMoney(
                 row.unitPrice
               )
-            : roundMoney(
-                getItemPurchasePrice(
-                  itemDocument
-                )
-              );
+            : defaultPurchasePrice;
+
+        const priceSource =
+          Math.abs(
+            unitPrice -
+              defaultPurchasePrice
+          ) < 0.005
+            ? "Item Master"
+            : "Manual Override";
 
         const rowId =
           idOf(row._id);
@@ -658,6 +694,16 @@ const preparePurchaseItems =
           item:
             itemDocument._id,
 
+          itemCode:
+            getItemCode(
+              itemDocument
+            ),
+
+          itemName:
+            getItemName(
+              itemDocument
+            ),
+
           description,
 
           size,
@@ -672,6 +718,15 @@ const preparePurchaseItems =
           unit,
 
           unitPrice,
+
+          defaultPurchasePrice,
+
+          priceSource,
+
+          purchasePriceUpdatedAt:
+            itemDocument
+              .purchasePriceUpdatedAt ||
+            null,
 
           amount:
             roundMoney(
@@ -848,6 +903,9 @@ router.get(
         .json({
           success: true,
           purchaseOrderNo,
+          isPreview: true,
+          message:
+            "Final Purchase Order number is assigned automatically when the order is saved",
         });
     } catch (error) {
       return res
@@ -1048,16 +1106,10 @@ router.post(
             req.body.advance,
         });
 
+      // Purchase Order numbers are always generated server-side.
+      // Any number sent by the client is intentionally ignored.
       const purchaseOrderNo =
-        cleanText(
-          req.body
-            .purchaseOrderNo
-        )
-          ? cleanText(
-              req.body
-                .purchaseOrderNo
-            ).toUpperCase()
-          : await getNextPurchaseOrderNo();
+        await getNextPurchaseOrderNo();
 
       const vendorSnapshot =
         buildVendorSnapshot(
@@ -1245,13 +1297,8 @@ router.put(
           vendor
         );
 
-      existingOrder.purchaseOrderNo =
-        cleanText(
-          req.body
-            .purchaseOrderNo,
-          existingOrder
-            .purchaseOrderNo
-        ).toUpperCase();
+      // The automatically generated Purchase Order number is immutable.
+      // It is never accepted from the update payload.
 
       Object.assign(
         existingOrder,

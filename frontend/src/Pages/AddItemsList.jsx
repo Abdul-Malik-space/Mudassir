@@ -650,6 +650,21 @@ const ItemsManager = () => {
     }
 
     if (
+      formData.itemType !==
+        "Service" &&
+      String(
+        formData.purchasePrice ??
+          ""
+      ).trim() === ""
+    ) {
+      alert(
+        "Default purchase price is required. Enter 0 if the price is not decided yet."
+      );
+
+      return false;
+    }
+
+    if (
       numberValue(
         formData.purchasePrice
       ) < 0
@@ -1453,9 +1468,7 @@ const ItemsManager = () => {
             </h1>
 
             <p className="text-blue-100 text-xs">
-              Classify raw materials,
-              finished goods,
-              consumables, and services.
+              Manage inventory behaviour and the default purchase price used by Purchase Orders.
             </p>
           </div>
         </div>
@@ -1771,15 +1784,29 @@ const ItemsManager = () => {
                               </div>
 
                               <div className="text-[10px] text-slate-500 mt-1">
-                                Purchase:{" "}
-                                {money(
-                                  item.purchasePrice
-                                )}{" "}
+                                PO Default:{" "}
+                                <span className="font-semibold text-blue-700">
+                                  {money(
+                                    item.purchasePrice
+                                  )}
+                                </span>{" "}
                                 · Sale:{" "}
                                 {money(
                                   item.salePrice
                                 )}
                               </div>
+
+                              {!serviceItem &&
+                                numberValue(
+                                  item.purchasePrice
+                                ) <= 0 && (
+                                  <div className="inline-flex items-center gap-1 text-[10px] text-amber-700 bg-amber-50 px-2 py-1 rounded-full mt-2">
+                                    <AlertTriangle
+                                      size={11}
+                                    />
+                                    Set PO purchase price
+                                  </div>
+                                )}
                             </td>
 
                             <td className="p-4">
@@ -2364,11 +2391,11 @@ const ItemsManager = () => {
               title="3. Price and Stock Settings"
             >
               <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-                <FormField label="Purchase / Cost Price">
+                <FormField label="Default Purchase Price">
                   <input
                     type="number"
                     min="0"
-                    step="any"
+                    step="0.01"
                     value={
                       formData.purchasePrice
                     }
@@ -2398,8 +2425,10 @@ const ItemsManager = () => {
                         ? "bg-slate-100 cursor-not-allowed"
                         : ""
                     }`}
-                    placeholder="0"
+                    placeholder="0.00"
                   />
+
+                 
                 </FormField>
 
                 <FormField label="Sale Price">
