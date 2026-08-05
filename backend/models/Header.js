@@ -1,81 +1,51 @@
 const mongoose = require("mongoose");
 
-const menuItemSchema = new mongoose.Schema({
-  id: String,
-  label: String,
-  icon: String,
-  active: {
-    type: Boolean,
-    default: false
+const headerSchema = new mongoose.Schema(
+  {
+    key: {
+      type: String,
+      required: true,
+      unique: true,
+      trim: true,
+      default: "main",
+      index: true,
+    },
+
+    adminLabel: {
+      type: String,
+      trim: true,
+      default: "Admin",
+      maxlength: 60,
+    },
+
+    searchPlaceholder: {
+      type: String,
+      trim: true,
+      default: "Search Anything",
+      maxlength: 120,
+    },
+
+    darkMode: {
+      type: Boolean,
+      default: false,
+    },
+
+    notificationPollSeconds: {
+      type: Number,
+      min: 10,
+      max: 300,
+      default: 30,
+    },
+
+    lastNotificationReadAt: {
+      type: Date,
+      default: null,
+    },
   },
-  badge: String,
-  count: String,
-
-  submenu: [
-    {
-      id: String,
-      label: String
-    }
-  ]
-});
-
-const headerSchema = new mongoose.Schema({
-  companyName: {
-    type: String,
-    required: true
-  },
-
-  userName: {
-    type: String,
-    required: true
-  },
-
-  role: {
-    type: String,
-    default: "Administrator"
-  },
-
-  logo: {
-    type: String,
-    default: ""
-  },
-
-  dashboardTitle: {
-    type: String,
-    default: "Dashboard"
-  },
-
-  welcomeText: {
-    type: String,
-    default: "Welcome Back"
-  },
-
-  searchPlaceholder: {
-    type: String,
-    default: "Search Anything"
-  },
-
-  notificationCount: {
-    type: Number,
-    default: 0
-  },
-
-  darkMode: {
-    type: Boolean,
-    default: false
-  },
-
-  quickButtonText: {
-    type: String,
-    default: "New"
-  },
-
-  menus: [menuItemSchema],
-
-  createdAt: {
-    type: Date,
-    default: Date.now
+  {
+    timestamps: true,
+    versionKey: false,
   }
-});
+);
 
 module.exports = mongoose.model("Header", headerSchema);

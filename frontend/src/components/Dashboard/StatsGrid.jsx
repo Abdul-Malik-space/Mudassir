@@ -1,62 +1,67 @@
-import React, {
-  useEffect,
-  useMemo,
-  useState,
-} from "react";
+import React, { useEffect, useMemo, useState } from "react";
 
 import {
   ArrowDownRight,
   ArrowUpRight,
   DollarSign,
-  Eye,
-  ShoppingCart,
+  PackageCheck,
+  ReceiptText,
   Users,
 } from "lucide-react";
 
 import { API_BASE_URL } from "../../config/api";
 
-const numberFormatter = new Intl.NumberFormat(
-  "en-PK",
-  {
-    maximumFractionDigits: 0,
-  }
-);
+const numberFormatter = new Intl.NumberFormat("en-PK", {
+  maximumFractionDigits: 0,
+});
+
+const currencyFormatter = new Intl.NumberFormat("en-PK", {
+  style: "currency",
+  currency: "PKR",
+  currencyDisplay: "narrowSymbol",
+  maximumFractionDigits: 0,
+});
+
+const emptyStat = {
+  value: 0,
+  change: 0,
+  trend: "up",
+};
 
 const emptyStats = {
-  totalRevenue: {
-    value: 0,
-    change: 0,
-    trend: "up",
-  },
+  totalRevenue: { ...emptyStat },
+  totalExpenses: { ...emptyStat },
+  totalCustomers: { ...emptyStat },
+  readyProducts: { ...emptyStat },
+};
 
-  totalExpenses: {
-    value: 0,
-    change: 0,
-    trend: "up",
-  },
+const clamp = (value, minimum, maximum) =>
+  Math.min(Math.max(Number(value) || 0, minimum), maximum);
 
-  totalCustomers: {
-    value: 0,
-    change: 0,
-    trend: "up",
-  },
+const getTrendDetails = (change, trend) => {
+  const numericChange = Number(change || 0);
 
-  readyProducts: {
-    value: 0,
-    change: 0,
-    trend: "up",
-  },
+  if (numericChange === 0) {
+    return {
+      direction: "neutral",
+      textClass: "text-slate-500 dark:text-slate-400",
+      barWidth: 12,
+    };
+  }
+
+  const isUp = trend !== "down";
+
+  return {
+    direction: isUp ? "up" : "down",
+    textClass: isUp ? "text-emerald-600" : "text-rose-600",
+    barWidth: clamp(Math.abs(numericChange) * 4, 12, 100),
+  };
 };
 
 function StatsGrid() {
-  const [stats, setStats] =
-    useState(emptyStats);
-
-  const [loading, setLoading] =
-    useState(true);
-
-  const [error, setError] =
-    useState("");
+  const [stats, setStats] = useState(emptyStats);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
 
   useEffect(() => {
     const controller = new AbortController();
@@ -66,65 +71,38 @@ function StatsGrid() {
         setLoading(true);
         setError("");
 
-        const apiUrl =
-          `${API_BASE_URL}/dashboard/stats`;
-
-        console.log(
-          "Dashboard Stats API:",
-          apiUrl
-        );
+        const apiUrl = `${API_BASE_URL}/dashboard/stats`;
 
         const response = await fetch(apiUrl, {
           method: "GET",
-
           headers: {
             Accept: "application/json",
           },
-
           signal: controller.signal,
         });
 
-        const contentType =
-          response.headers.get(
-            "content-type"
-          ) || "";
+        const contentType = response.headers.get("content-type") || "";
 
-        /*
-        اگر API سے HTML واپس آئے تو
-        response.json() نہ چلائیں۔
-        */
-
-        if (
-          !contentType.includes(
-            "application/json"
-          )
-        ) {
-          const responseText =
-            await response.text();
+        if (!contentType.includes("application/json")) {
+          const responseText = await response.text();
 
           console.error(
-            "Stats API returned non-JSON:",
+            "Dashboard stats returned a non-JSON response:",
             responseText.slice(0, 300)
           );
 
           throw new Error(
-            `Stats API نے JSON کے بجائے ${
-              contentType || "نامعلوم response"
-            } واپس کیا۔ API URL چیک کریں: ${apiUrl}`
+            "Dashboard statistics could not be loaded because the API returned an invalid response."
           );
         }
 
-        const result =
-          await response.json();
+        const result = await response.json();
 
-        if (
-          !response.ok ||
-          !result.success
-        ) {
+        if (!response.ok || !result.success) {
           throw new Error(
             result.error ||
               result.message ||
-              "Dashboard data could not be loaded."
+              "Dashboard statistics could not be loaded."
           );
         }
 
@@ -134,22 +112,14 @@ function StatsGrid() {
         });
       } catch (err) {
         if (err.name !== "AbortError") {
-          console.error(
-            "StatsGrid error:",
-            err
-          );
-
+          console.error("StatsGrid error:", err);
           setError(
-            err.message ||
-              "Dashboard data could not be loaded."
+            err.message || "Dashboard statistics could not be loaded."
           );
-
           setStats(emptyStats);
         }
       } finally {
-        if (
-          !controller.signal.aborted
-        ) {
+        if (!controller.signal.aborted) {
           setLoading(false);
         }
       }
@@ -157,108 +127,67 @@ function StatsGrid() {
 
     loadStats();
 
-    return () => {
-      controller.abort();
-    };
+    return () => controller.abort();
   }, []);
 
   const statsData = useMemo(
     () => [
       {
+        key: "revenue",
         title: "Total Revenue",
-
-        value: `Rs ${numberFormatter.format(
-          Number(
-            stats.totalRevenue?.value || 0
-          )
-        )}`,
-
-        change: Number(
-          stats.totalRevenue?.change || 0
+        value: currencyFormatter.format(
+          Number(stats.totalRevenue?.value || 0)
         ),
-
-        trend:
-          stats.totalRevenue?.trend || "up",
-
+        change: Number(stats.totalRevenue?.change || 0),
+        trend: stats.totalRevenue?.trend || "up",
         icon: DollarSign,
-
-        color:
-          "from-emerald-500 to-teal-600",
+        gradient: "from-emerald-500 to-teal-600",
       },
-
       {
+        key: "expenses",
         title: "Total Expenses",
-
-        value: `Rs ${numberFormatter.format(
-          Number(
-            stats.totalExpenses?.value || 0
-          )
-        )}`,
-
-        change: Number(
-          stats.totalExpenses?.change || 0
+        value: currencyFormatter.format(
+          Number(stats.totalExpenses?.value || 0)
         ),
-
-        trend:
-          stats.totalExpenses?.trend || "up",
-
-        icon: ShoppingCart,
-
-        color:
-          "from-blue-500 to-indigo-600",
+        change: Number(stats.totalExpenses?.change || 0),
+        trend: stats.totalExpenses?.trend || "up",
+        icon: ReceiptText,
+        gradient: "from-blue-500 to-indigo-600",
       },
-
       {
-        title: "Total Urwa Customers",
-
+        key: "customers",
+        title: "Total Customers",
         value: numberFormatter.format(
-          Number(
-            stats.totalCustomers?.value || 0
-          )
+          Number(stats.totalCustomers?.value || 0)
         ),
-
-        change: Number(
-          stats.totalCustomers?.change || 0
-        ),
-
-        trend:
-          stats.totalCustomers?.trend || "up",
-
+        change: Number(stats.totalCustomers?.change || 0),
+        trend: stats.totalCustomers?.trend || "up",
         icon: Users,
-
-        color:
-          "from-purple-500 to-pink-600",
+        gradient: "from-purple-500 to-pink-600",
       },
-
       {
-        title: "Urwa Ready Products",
-
+        key: "ready-products",
+        title: "Ready Products",
         value: numberFormatter.format(
-          Number(
-            stats.readyProducts?.value || 0
-          )
+          Number(stats.readyProducts?.value || 0)
         ),
-
-        change: Number(
-          stats.readyProducts?.change || 0
-        ),
-
-        trend:
-          stats.readyProducts?.trend || "up",
-
-        icon: Eye,
-
-        color:
-          "from-orange-500 to-red-600",
+        change: Number(stats.readyProducts?.change || 0),
+        trend: stats.readyProducts?.trend || "up",
+        icon: PackageCheck,
+        gradient: "from-orange-500 to-red-600",
       },
     ],
     [stats]
   );
 
   return (
-    <div>
+    <section aria-label="Dashboard statistics">
       {error && (
-        <div className="mb-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700 dark:border-rose-900/50 dark:bg-rose-950/30 dark:text-rose-300">
+        <div
+          role="alert"
+          aria-live="polite"
+          className="mb-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-medium text-rose-700 dark:border-rose-900/50 dark:bg-rose-950/30 dark:text-rose-300"
+        >
           {error}
         </div>
       )}
@@ -266,75 +195,70 @@ function StatsGrid() {
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
         {statsData.map((item) => {
           const Icon = item.icon;
-
-          const isUp =
-            item.trend !== "down";
-
-          const changeText = `${
-            item.change > 0 ? "+" : ""
-          }${Number(
+          const trendDetails = getTrendDetails(item.change, item.trend);
+          const changeText = `${item.change > 0 ? "+" : ""}${Number(
             item.change || 0
           ).toFixed(1)}%`;
 
           return (
-            <div
-              key={item.title}
-              className="group rounded-2xl border border-slate-200/50 bg-white/80 p-6 backdrop-blur-xl transition-all duration-300 hover:shadow-xl hover:shadow-slate-200/20 dark:border-slate-700/50 dark:bg-slate-900/80 dark:hover:shadow-slate-900/20"
+            <article
+              key={item.key}
+              className="group rounded-2xl border border-slate-200/70 bg-white/90 p-5 shadow-sm backdrop-blur-xl transition-all duration-300 hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-xl hover:shadow-slate-200/30 dark:border-slate-700/60 dark:bg-slate-900/85 dark:hover:border-slate-600 dark:hover:shadow-slate-950/30"
             >
-              <div className="flex items-start justify-between">
-                <div className="flex-1">
-                  <p className="mb-2 text-sm font-medium text-slate-600 dark:text-slate-400">
+              <div className="flex items-start justify-between gap-4">
+                <div className="min-w-0 flex-1">
+                  <p className="mb-2 text-sm font-semibold text-slate-500 dark:text-slate-400">
                     {item.title}
                   </p>
 
-                  <p className="mb-4 text-3xl font-bold text-slate-800 dark:text-white">
-                    {loading
-                      ? "..."
-                      : item.value}
-                  </p>
+                  {loading ? (
+                    <div className="mb-4 h-9 w-32 animate-pulse rounded-lg bg-slate-200 dark:bg-slate-700" />
+                  ) : (
+                    <p className="mb-4 truncate text-3xl font-black tracking-tight text-slate-900 dark:text-white">
+                      {item.value}
+                    </p>
+                  )}
 
-                  <div className="flex items-center space-x-2">
-                    {isUp ? (
+                  <div className="flex flex-wrap items-center gap-1.5 text-sm">
+                    {trendDetails.direction === "up" && (
                       <ArrowUpRight className="h-4 w-4 text-emerald-500" />
-                    ) : (
+                    )}
+
+                    {trendDetails.direction === "down" && (
                       <ArrowDownRight className="h-4 w-4 text-rose-500" />
                     )}
 
-                    <span
-                      className={
-                        isUp
-                          ? "text-emerald-600"
-                          : "text-rose-600"
-                      }
-                    >
-                      {loading
-                        ? "..."
-                        : changeText}
+                    <span className={`font-bold ${trendDetails.textClass}`}>
+                      {loading ? "..." : changeText}
                     </span>
 
-                    <span className="text-sm text-slate-500 dark:text-slate-400">
-                      vs last month
+                    <span className="text-slate-500 dark:text-slate-400">
+                      compared with last month
                     </span>
                   </div>
                 </div>
 
                 <div
-                  className={`rounded-xl bg-gradient-to-br p-3 text-white transition-all duration-200 group-hover:scale-110 ${item.color}`}
+                  className={`shrink-0 rounded-xl bg-gradient-to-br p-3 text-white shadow-lg transition-transform duration-200 group-hover:scale-105 ${item.gradient}`}
+                  aria-hidden="true"
                 >
                   <Icon className="h-6 w-6" />
                 </div>
               </div>
 
-              <div className="mt-4 h-2 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
+              <div className="mt-5 h-1.5 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
                 <div
-                  className={`h-full w-full rounded-full bg-gradient-to-r transition-all duration-1000 ${item.color}`}
+                  className={`h-full rounded-full bg-gradient-to-r transition-all duration-700 ${item.gradient}`}
+                  style={{
+                    width: loading ? "35%" : `${trendDetails.barWidth}%`,
+                  }}
                 />
               </div>
-            </div>
+            </article>
           );
         })}
       </div>
-    </div>
+    </section>
   );
 }
 
