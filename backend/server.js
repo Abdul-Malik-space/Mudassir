@@ -1,13 +1,44 @@
 const express = require("express");
 const mongoose = require("mongoose");
 const cors = require("cors");
+const cookieParser = require("cookie-parser");
+const helmet = require("helmet");
 require("dotenv").config();
+
+const {
+  requireAuth,
+  requirePasswordReady,
+  requireCsrf,
+  requirePermission,
+  requireRole,
+} = require("./middleware/auth");
+
+const {
+  PERMISSIONS,
+} = require("./config/accessControl");
 
 const app = express();
 
 /*
 |--------------------------------------------------------------------------
-| Basic Middlewares
+| Application Security
+|--------------------------------------------------------------------------
+*/
+
+app.set("trust proxy", 1);
+app.disable("x-powered-by");
+
+app.use(
+  helmet({
+    crossOriginResourcePolicy: {
+      policy: "cross-origin",
+    },
+  })
+);
+
+/*
+|--------------------------------------------------------------------------
+| Request Parsers
 |--------------------------------------------------------------------------
 */
 
@@ -24,6 +55,8 @@ app.use(
   })
 );
 
+app.use(cookieParser());
+
 /*
 |--------------------------------------------------------------------------
 | CORS Configuration
@@ -34,10 +67,7 @@ const allowedOrigins = [
   "http://localhost:5173",
   "https://mudassir-2xsa.vercel.app",
   process.env.CLIENT_URL,
-
-  ...(process.env.ALLOWED_ORIGINS || "")
-    .split(",")
-    .map((origin) => origin.trim()),
+  ...(process.env.ALLOWED_ORIGINS || "").split(","),
 ]
   .map((origin) => String(origin || "").trim())
   .filter(Boolean);
@@ -49,17 +79,15 @@ const corsOptions = {
     Origin header موجود نہیں ہوتا۔
     */
 
-    if (!origin) {
-      return callback(null, true);
-    }
-
-    if (allowedOrigins.includes(origin)) {
+    if (!origin || allowedOrigins.includes(origin)) {
       return callback(null, true);
     }
 
     console.error("CORS rejected origin:", origin);
 
-    return callback(null, false);
+    return callback(
+      new Error("Origin is not allowed by CORS")
+    );
   },
 
   credentials: true,
@@ -76,6 +104,8 @@ const corsOptions = {
   allowedHeaders: [
     "Content-Type",
     "Authorization",
+    "X-CSRF-Token",
+    "Accept",
   ],
 };
 
@@ -121,15 +151,10 @@ const connectDB = async () => {
         socketTimeoutMS: 45000,
       })
       .then((connection) => {
-        console.log("DB Connected Successfully!");
+        console.log("Database connected successfully");
         return connection;
       })
       .catch((error) => {
-        /*
-        Failed promise کو reset کریں تاکہ اگلی request
-        دوبارہ connection try کر سکے۔
-        */
-
         databaseConnectionPromise = null;
         throw error;
       });
@@ -149,7 +174,8 @@ app.get("/", (req, res) => {
   return res.status(200).json({
     success: true,
     message: "Backend API is running",
-    environment: process.env.NODE_ENV || "development",
+    environment:
+      process.env.NODE_ENV || "development",
   });
 });
 
@@ -157,7 +183,8 @@ app.get("/health", (req, res) => {
   return res.status(200).json({
     success: true,
     message: "Server is running",
-    databaseState: mongoose.connection.readyState,
+    databaseState:
+      mongoose.connection.readyState,
   });
 });
 
@@ -165,7 +192,8 @@ app.get("/api/health", (req, res) => {
   return res.status(200).json({
     success: true,
     message: "API is running",
-    databaseState: mongoose.connection.readyState,
+    databaseState:
+      mongoose.connection.readyState,
   });
 });
 
@@ -189,14 +217,25 @@ app.use("/api", async (req, res, next) => {
     return res.status(503).json({
       success: false,
       message: "Database connection failed",
-      error: error.message,
+      ...(process.env.NODE_ENV !== "production" && {
+        error: error.message,
+      }),
     });
   }
 });
 
 /*
 |--------------------------------------------------------------------------
-| Routes Import
+| Authentication Routes
+|--------------------------------------------------------------------------
+*/
+
+const authRoutes = require("./routes/authRoutes");
+const userRoutes = require("./routes/userRoutes");
+
+/*
+|--------------------------------------------------------------------------
+| Business Routes Import
 |--------------------------------------------------------------------------
 */
 
@@ -274,31 +313,19 @@ const invoiceRoutes = require(
 const stockLedgerRoutes = require(
   "./routes/stockLedgerRoutes"
 );
-
-const systemResetRoutes = require("./routes/systemResetRoutes");
+const systemResetRoutes = require(
+  "./routes/systemResetRoutes"
+);
 const materialIssueRoutes = require(
   "./routes/materialIssueRoutes"
 );
 
-
-
-
-
 /*
 |--------------------------------------------------------------------------
-| Dashboard Routes
+| Dashboard Routes Import
 |--------------------------------------------------------------------------
 */
 
-
-app.use(
-  "/api/material-issues",
-  materialIssueRoutes
-);
-app.use(
-  "/api/system-reset",
-  systemResetRoutes
-);
 const dashboardRoutes = require(
   "./routes/dashboardRoutes"
 );
@@ -315,120 +342,357 @@ const activityFeedRoutes = require(
   "./routes/activityFeedRoutes"
 );
 
+/*
+|--------------------------------------------------------------------------
+| Authorization Helper
+|--------------------------------------------------------------------------
+|
+| requirePermission کئی permissions ملنے پر OR rule استعمال کرتا ہے۔
+| مثال: stock ledger کو warehouse یا reports permission رکھنے والا user
+| استعمال کرسکتا ہے۔
+|
+*/
 
+const protect = (...permissions) => [
+  requireAuth,
+  requirePasswordReady,
+  requireCsrf,
+  requirePermission(...permissions),
+];
 
 /*
 |--------------------------------------------------------------------------
-| Dashboard Endpoints
+| Public Authentication Endpoints
+|--------------------------------------------------------------------------
+|
+| Login public ہے۔ /me، logout، change-password اور preferences پر
+| authRoutes اپنی متعلقہ authentication/CSRF middleware لگاتا ہے۔
+|
+*/
+
+app.use("/api/auth", authRoutes);
+
+/*
+|--------------------------------------------------------------------------
+| User and Role Management
+|--------------------------------------------------------------------------
+|
+| userRoutes بھی permission چیک کرتا ہے۔ یہاں password-ready guard اضافی
+| تحفظ فراہم کرتا ہے تاکہ temporary password والا user management نہ چلا سکے۔
+|
+*/
+
+app.use(
+  "/api/users",
+  requireAuth,
+  requirePasswordReady,
+  userRoutes
+);
+
+/*
+|--------------------------------------------------------------------------
+| Protected Dashboard Endpoints
 |--------------------------------------------------------------------------
 */
 
 app.use(
   "/api/dashboard/sales-chart",
+  ...protect(PERMISSIONS.DASHBOARD_VIEW),
   salesChartRoutes
 );
 
 app.use(
   "/api/dashboard/activity-feed",
+  ...protect(PERMISSIONS.DASHBOARD_VIEW),
   activityFeedRoutes
 );
 
 app.use(
   "/api/dashboard/table-section",
+  ...protect(PERMISSIONS.DASHBOARD_VIEW),
   tableSectionRoutes
 );
 
 app.use(
   "/api/dashboard/revenue-chart",
+  ...protect(PERMISSIONS.DASHBOARD_VIEW),
   revenueChartRoutes
 );
 
-app.use("/api/dashboard", dashboardRoutes);
+app.use(
+  "/api/dashboard",
+  ...protect(PERMISSIONS.DASHBOARD_VIEW),
+  dashboardRoutes
+);
 
 /*
 |--------------------------------------------------------------------------
-| Main API Endpoints
+| Customers, Vendors and Items
 |--------------------------------------------------------------------------
 */
 
-app.use("/api/customers", customerRoutes);
-app.use("/api/vendors", vendorRoutes);
-app.use("/api/traders", traderRoutes);
-app.use("/api/items", itemRoutes);
-app.use("/api/categories", categoryRoutes);
-app.use("/api/brands", brandRoutes);
-app.use("/api/units", unitRoutes);
-app.use("/api/purchases", purchaseRoutes);
+app.use(
+  "/api/customers",
+  ...protect(PERMISSIONS.CUSTOMERS_MANAGE),
+  customerRoutes
+);
+
+app.use(
+  "/api/vendors",
+  ...protect(PERMISSIONS.VENDORS_MANAGE),
+  vendorRoutes
+);
+
+app.use(
+  "/api/traders",
+  ...protect(PERMISSIONS.TRADERS_MANAGE),
+  traderRoutes
+);
+
+app.use(
+  "/api/items",
+  ...protect(PERMISSIONS.ITEMS_MANAGE),
+  itemRoutes
+);
+
+app.use(
+  "/api/categories",
+  ...protect(PERMISSIONS.ITEMS_MANAGE),
+  categoryRoutes
+);
+
+app.use(
+  "/api/brands",
+  ...protect(PERMISSIONS.ITEMS_MANAGE),
+  brandRoutes
+);
+
+app.use(
+  "/api/units",
+  ...protect(PERMISSIONS.ITEMS_MANAGE),
+  unitRoutes
+);
+
+/*
+|--------------------------------------------------------------------------
+| Purchases
+|--------------------------------------------------------------------------
+*/
+
+app.use(
+  "/api/purchases",
+  ...protect(PERMISSIONS.PURCHASE_MANAGE),
+  purchaseRoutes
+);
 
 app.use(
   "/api/purchase-orders",
+  ...protect(PERMISSIONS.PURCHASE_MANAGE),
   purchaseOrderRoutes
 );
 
-app.use("/api/grns", grnRoutes);
+app.use(
+  "/api/grns",
+  ...protect(PERMISSIONS.PURCHASE_MANAGE),
+  grnRoutes
+);
+
+/*
+|--------------------------------------------------------------------------
+| Accounting
+|--------------------------------------------------------------------------
+*/
 
 app.use(
   "/api/general-journals",
+  ...protect(PERMISSIONS.JOURNAL_MANAGE),
   generalJournalRoutes
 );
 
 app.use(
   "/api/payments-received",
+  ...protect(PERMISSIONS.PAYMENTS_MANAGE),
   paymentsReceivedRoutes
 );
 
-app.use("/api/lamination", laminationRoutes);
-app.use("/api/printing", printingRoutes);
+app.use(
+  "/api/expenses",
+  ...protect(PERMISSIONS.EXPENSES_MANAGE),
+  expenseRoutes
+);
+
+app.use(
+  "/api/payroll",
+  ...protect(PERMISSIONS.PAYROLL_MANAGE),
+  payrollRoutes
+);
+
+app.use(
+  "/api/account",
+  ...protect(PERMISSIONS.ACCOUNTS_VIEW),
+  accountRoutes
+);
+
+/*
+|--------------------------------------------------------------------------
+| Production
+|--------------------------------------------------------------------------
+*/
+
+app.use(
+  "/api/lamination",
+  ...protect(PERMISSIONS.PRODUCTION_MANAGE),
+  laminationRoutes
+);
+
+app.use(
+  "/api/printing",
+  ...protect(PERMISSIONS.PRODUCTION_MANAGE),
+  printingRoutes
+);
 
 app.use(
   "/api/dieCutting",
+  ...protect(PERMISSIONS.PRODUCTION_MANAGE),
   dieCuttingRoutes
 );
 
 app.use(
   "/api/diecutting",
+  ...protect(PERMISSIONS.PRODUCTION_MANAGE),
   dieCuttingRoutes
 );
 
-app.use("/api/pasting", pastingRoutes);
-app.use("/api/otherwork", otherWorkRoutes);
-
 app.use(
-  "/api/ready-products",
-  readyProductRoutes
+  "/api/pasting",
+  ...protect(PERMISSIONS.PRODUCTION_MANAGE),
+  pastingRoutes
 );
 
-app.use("/api/expenses", expenseRoutes);
-app.use("/api/payroll", payrollRoutes);
-app.use("/api/account", accountRoutes);
-app.use("/api/warehouses", warehouseRoutes);
-app.use("/api/reports-pro", reportRoutesPro);
-app.use("/api/settings", settingRoutes);
+app.use(
+  "/api/otherwork",
+  ...protect(PERMISSIONS.PRODUCTION_MANAGE),
+  otherWorkRoutes
+);
 
 app.use(
   "/api/production-items",
+  ...protect(PERMISSIONS.PRODUCTION_MANAGE),
   productionItemRoutes
 );
 
-app.use("/api/headers", headerRoutes);
-app.use("/api/sales", salesRoutes);
-app.use("/api/jobs", jobsRoutes);
+app.use(
+  "/api/material-issues",
+  ...protect(PERMISSIONS.PRODUCTION_MANAGE),
+  materialIssueRoutes
+);
+
+app.use(
+  "/api/jobs",
+  ...protect(PERMISSIONS.PRODUCTION_MANAGE),
+  jobsRoutes
+);
+
+app.use(
+  "/api/ready-products",
+  ...protect(PERMISSIONS.READY_PRODUCTS_MANAGE),
+  readyProductRoutes
+);
+
+/*
+|--------------------------------------------------------------------------
+| Sales
+|--------------------------------------------------------------------------
+*/
+
+app.use(
+  "/api/sales",
+  ...protect(PERMISSIONS.SALES_MANAGE),
+  salesRoutes
+);
 
 app.use(
   "/api/sales-orders",
+  ...protect(PERMISSIONS.SALES_MANAGE),
   salesOrderRoutes
 );
 
 app.use(
   "/api/delivery-challans",
+  ...protect(PERMISSIONS.SALES_MANAGE),
   deliveryChallanRoutes
 );
 
-app.use("/api/invoices", invoiceRoutes);
+app.use(
+  "/api/invoices",
+  ...protect(PERMISSIONS.SALES_MANAGE),
+  invoiceRoutes
+);
+
+/*
+|--------------------------------------------------------------------------
+| Warehouses and Reports
+|--------------------------------------------------------------------------
+*/
+
+app.use(
+  "/api/warehouses",
+  ...protect(PERMISSIONS.WAREHOUSES_MANAGE),
+  warehouseRoutes
+);
 
 app.use(
   "/api/stock-ledger",
+  ...protect(
+    PERMISSIONS.WAREHOUSES_MANAGE,
+    PERMISSIONS.REPORTS_VIEW
+  ),
   stockLedgerRoutes
+);
+
+app.use(
+  "/api/reports-pro",
+  ...protect(PERMISSIONS.REPORTS_VIEW),
+  reportRoutesPro
+);
+
+/*
+|--------------------------------------------------------------------------
+| Settings and Header Configuration
+|--------------------------------------------------------------------------
+*/
+
+app.use(
+  "/api/settings",
+  ...protect(PERMISSIONS.SETTINGS_MANAGE),
+  settingRoutes
+);
+
+/*
+Header configuration کا legacy endpoint محفوظ رکھا گیا ہے، مگر اب صرف
+settings permission رکھنے والا user اسے access کرسکتا ہے۔ نیا authenticated
+Header profile اور notification preferences /api/auth سے لیتا ہے۔
+*/
+
+app.use(
+  "/api/headers",
+  ...protect(PERMISSIONS.SETTINGS_MANAGE),
+  headerRoutes
+);
+
+/*
+|--------------------------------------------------------------------------
+| System Reset — Super Administrator Only
+|--------------------------------------------------------------------------
+*/
+
+app.use(
+  "/api/system-reset",
+  requireAuth,
+  requirePasswordReady,
+  requireCsrf,
+  requireRole("super_admin"),
+  systemResetRoutes
 );
 
 /*
@@ -457,13 +721,18 @@ app.use((error, req, res, next) => {
     error.stack || error.message
   );
 
-  return res.status(
-    error.status || 500
-  ).json({
-    success: false,
-    message:
-      error.message || "Internal server error",
-  });
+  const isProduction =
+    process.env.NODE_ENV === "production";
+
+  return res
+    .status(error.status || 500)
+    .json({
+      success: false,
+      message: isProduction
+        ? "Internal server error"
+        : error.message ||
+          "Internal server error",
+    });
 });
 
 /*
@@ -489,6 +758,8 @@ if (require.main === module) {
         "Server startup failed:",
         error.message
       );
+
+      process.exitCode = 1;
     });
 }
 
