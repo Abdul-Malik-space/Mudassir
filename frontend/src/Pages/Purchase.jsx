@@ -27,6 +27,23 @@ const numberValue = (value) => {
   return Number.isFinite(number) ? number : 0;
 };
 
+const normalizeInheritedTax = (taxType, taxRate) => {
+  const finalTaxType = taxType === "with-tax" ? "with-tax" : "without-tax";
+
+  return {
+    taxType: finalTaxType,
+    taxRate:
+      finalTaxType === "with-tax"
+        ? numberValue(taxRate || 18)
+        : 0,
+  };
+};
+
+const inheritedTaxLabel = (taxType, taxRate) =>
+  taxType === "with-tax"
+    ? `With Sales Tax ${numberValue(taxRate || 18)}%`
+    : "Without Sales Tax";
+
 const quantity = (value) =>
   numberValue(value).toLocaleString(undefined, {
     maximumFractionDigits: 3,
@@ -99,6 +116,7 @@ const emptyForm = (purchaseNo = "") => ({
   warehouse: "",
   taxType: "without-tax",
   taxRate: 0,
+  taxSource: "GRN / Purchase Order",
   overallDiscount: "",
   freightCharges: "",
   otherCharges: "",
@@ -287,6 +305,10 @@ const Purchases = () => {
     setForm((current) => ({ ...current, [field]: value }));
   };
 
+  // Tax is NEVER chosen by the user here. Selecting a GRN is the only
+  // action required — with-tax / without-tax and the rate are pulled
+  // straight from the GRN (verified against its Purchase Order on the
+  // server) and applied automatically to the whole form.
   const selectGRN = (grnId) => {
     const grn = eligibleGrns.find(
       (row) => String(row._id) === String(grnId)
@@ -296,6 +318,11 @@ const Purchases = () => {
       setForm((current) => emptyForm(current.purchaseNo));
       return;
     }
+
+    const inheritedTax = normalizeInheritedTax(
+      grn.taxType,
+      grn.taxRate
+    );
 
     setForm((current) => ({
       ...current,
@@ -312,8 +339,11 @@ const Purchases = () => {
       purchaseDate: grn.receivedDate || current.purchaseDate || todayDate(),
       challanNo: grn.challanNo || "",
       warehouse: grn.warehouse || "Main Warehouse",
-      taxType: grn.taxType || "without-tax",
-      taxRate: numberValue(grn.taxRate),
+      // Auto-filled, read-only — with-tax (with rate) or without-tax,
+      // whichever the GRN carries. Nothing left for the user to pick.
+      taxType: inheritedTax.taxType,
+      taxRate: inheritedTax.taxRate,
+      taxSource: grn.taxSource || "GRN / Purchase Order",
       items: (grn.items || []).map((item) => ({
         grnItemId: idOf(item.grnItemId),
         purchaseOrderItemId: idOf(item.purchaseOrderItemId),
@@ -395,6 +425,8 @@ const Purchases = () => {
     return true;
   };
 
+  // Tax is never sent by the form. The backend inherits and verifies it
+  // from the selected GRN and its linked Purchase Order.
   const buildPayload = (postingStatus = "Draft") => ({
     purchaseNo: form.purchaseNo.trim(),
     grn: form.grn,
@@ -493,8 +525,11 @@ const Purchases = () => {
         supplierBillNo: purchase.supplierBillNo || "",
         challanNo: purchase.challanNo || "",
         warehouse: purchase.warehouse || "Main Warehouse",
-        taxType: purchase.taxType || "without-tax",
-        taxRate: numberValue(purchase.taxRate),
+        taxType:
+          normalizeInheritedTax(purchase.taxType, purchase.taxRate).taxType,
+        taxRate:
+          normalizeInheritedTax(purchase.taxType, purchase.taxRate).taxRate,
+        taxSource: purchase.taxSource || "GRN / Purchase Order",
         overallDiscount: purchase.overallDiscount || "",
         freightCharges: purchase.freightCharges || "",
         otherCharges: purchase.otherCharges || "",
@@ -617,6 +652,9 @@ const Purchases = () => {
     }
   };
 
+  // Plain "PURCHASE VOUCHER" print — intentionally carries no company /
+  // brand name or letterhead at the top. Only Purchase, GRN, PO and
+  // vendor details are printed.
   const printPurchase = (purchase) => {
     const rows = (purchase.items || [])
       .map(
@@ -635,10 +673,10 @@ const Purchases = () => {
       )
       .join("");
 
-    const taxLabel =
-      purchase.taxType === "with-tax"
-        ? `With Sales Tax ${numberValue(purchase.taxRate)}%`
-        : "Without Sales Tax";
+    const taxLabel = inheritedTaxLabel(
+      purchase.taxType,
+      purchase.taxRate
+    );
 
     const printWindow = window.open("", "_blank");
     if (!printWindow) {
@@ -768,11 +806,10 @@ const Purchases = () => {
                 <Label required>Purchase No</Label>
                 <input
                   value={form.purchaseNo}
-                  onChange={(event) =>
-                    updateField("purchaseNo", event.target.value.toUpperCase())
-                  }
+                  readOnly
                   className={inputClass}
-                  placeholder="PUR-0001"
+                  placeholder="Generated automatically"
+                  title="Purchase number is generated automatically by the server"
                 />
               </div>
 
@@ -793,7 +830,8 @@ const Purchases = () => {
                     <option value="">Select Posted GRN</option>
                     {eligibleGrns.map((grn) => (
                       <option key={grn._id} value={grn._id}>
-                        {grn.grnNo} — {grn.purchaseOrderNo} — {grn.vendorName}
+                        {grn.grnNo} — {grn.purchaseOrderNo} — {grn.vendorName} —{" "}
+                        {inheritedTaxLabel(grn.taxType, grn.taxRate)}
                       </option>
                     ))}
                   </select>
@@ -875,17 +913,33 @@ const Purchases = () => {
                 <input value={form.warehouse} disabled className={inputClass} />
               </div>
 
-              <div>
-                <Label>Tax from Purchase Order</Label>
-                <input
-                  value={
-                    form.taxType === "with-tax"
-                      ? `With Sales Tax ${numberValue(form.taxRate)}%`
-                      : "Without Sales Tax"
-                  }
-                  disabled
-                  className={inputClass}
-                />
+              {/*
+                Tax Treatment — READ ONLY, always. There is no select/input
+                here at all, so the user is never asked to choose or type a
+                tax option. Whatever the selected GRN carries (with-tax +
+                rate, or without-tax) is shown here automatically and is
+                exactly what gets saved — the backend re-derives and
+                verifies the same value from the GRN independently, so even
+                editing the network request can't change it.
+              */}
+              <div className="md:col-span-2">
+                <Label>Tax Treatment</Label>
+                <div
+                  className={`flex min-h-[42px] items-center rounded-lg border px-3 py-2 text-sm ${
+                    !form.grn
+                      ? "border-slate-300 bg-slate-100 text-slate-500"
+                      : form.taxType === "with-tax"
+                        ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                        : "border-slate-200 bg-slate-50 text-slate-700"
+                  }`}
+                  title={`Automatic source: ${form.taxSource || "GRN / Purchase Order"}`}
+                >
+                  <span className="font-semibold">
+                    {form.grn
+                      ? inheritedTaxLabel(form.taxType, form.taxRate)
+                      : "Tax will be filled automatically once a GRN is selected"}
+                  </span>
+                </div>
               </div>
             </div>
 
@@ -903,7 +957,7 @@ const Purchases = () => {
                     {form.vendorAddress || "No vendor address available"}
                   </div>
                   <div className="mt-2 text-xs font-semibold text-blue-700">
-                    Quantity is locked to GRN accepted quantity. Tax is inherited from the Purchase Order.
+                    Quantity is locked to the GRN accepted quantity. Tax treatment is loaded automatically from the selected GRN and cannot be changed here.
                   </div>
                 </div>
               </div>

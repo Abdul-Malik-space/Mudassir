@@ -6,6 +6,7 @@ const PAYMENT_METHODS = ["Cash", "Bank", "Cheque", "Credit", "Other"];
 const PAYMENT_STATUSES = ["Unpaid", "Partially Paid", "Paid"];
 const POSTING_STATUSES = ["Draft", "Posted"];
 const PURCHASE_STATUSES = ["Draft", "Completed", "Cancelled"];
+const TAX_SOURCE = "GRN / Purchase Order";
 
 const cleanText = (value, fallback = "") => {
   const text = String(value ?? "").trim();
@@ -314,6 +315,13 @@ const purchaseSchema = new mongoose.Schema(
       max: 100,
     },
 
+    taxSource: {
+      type: String,
+      enum: [TAX_SOURCE],
+      default: TAX_SOURCE,
+      immutable: true,
+    },
+
     items: {
       type: [purchaseItemSchema],
       validate: {
@@ -453,6 +461,12 @@ purchaseSchema.index({ vendor: 1, purchaseDate: -1 });
 purchaseSchema.index({ postingStatus: 1, createdAt: -1 });
 purchaseSchema.index({ paymentStatus: 1, dueDate: 1 });
 
+purchaseSchema.virtual("taxLabel").get(function () {
+  return this.taxType === "with-tax"
+    ? `With Sales Tax ${cleanNumber(this.taxRate || 18)}%`
+    : "Without Sales Tax";
+});
+
 purchaseSchema.pre("validate", function () {
   this.purchaseNo = normalizePurchaseNo(this.purchaseNo);
   this.grnNo = cleanText(this.grnNo).toUpperCase();
@@ -472,6 +486,7 @@ purchaseSchema.pre("validate", function () {
 
   this.taxType = this.taxType === "with-tax" ? "with-tax" : "without-tax";
   this.taxRate = this.taxType === "with-tax" ? cleanNumber(this.taxRate || 18) : 0;
+  this.taxSource = TAX_SOURCE;
 
   this.items = Array.isArray(this.items) ? this.items : [];
 
