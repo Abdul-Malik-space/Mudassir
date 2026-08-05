@@ -1,88 +1,113 @@
 import React, { useEffect, useMemo, useState } from "react";
 import {
-  Plus,
-  Trash2,
-  Printer,
-  Loader2,
-  ReceiptText,
-  Edit2,
-  X,
-  Save,
   ArrowLeft,
-  FileCheck2,
+  Ban,
+  CheckCircle2,
+  CreditCard,
+  Edit2,
+  FileText,
+  Loader2,
   PackageCheck,
-  WalletCards,
-  Truck,
-  BadgePercent,
-  Warehouse,
+  Printer,
+  RefreshCcw,
+  Save,
   Search,
-  RotateCcw,
+  Send,
+  Trash2,
+  X,
 } from "lucide-react";
 import { API_BASE_URL } from "../config/api";
 
+const API_PURCHASES = `${API_BASE_URL}/purchases`;
+
 const todayDate = () => new Date().toISOString().slice(0, 10);
 
-const money = (value) => `Rs. ${Number(value || 0).toLocaleString()}`;
+const numberValue = (value) => {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : 0;
+};
 
-const RequiredLabel = ({ children }) => (
-  <label className="text-xs font-bold text-slate-600">
-    {children} <span className="text-red-600">*</span>
-  </label>
-);
+const normalizeInheritedTax = (taxType, taxRate) => {
+  const finalTaxType = taxType === "with-tax" ? "with-tax" : "without-tax";
 
-const NormalLabel = ({ children }) => (
-  <label className="text-xs font-bold text-slate-600">{children}</label>
-);
+  return {
+    taxType: finalTaxType,
+    taxRate:
+      finalTaxType === "with-tax"
+        ? numberValue(taxRate || 18)
+        : 0,
+  };
+};
+
+const inheritedTaxLabel = (taxType, taxRate) =>
+  taxType === "with-tax"
+    ? `With Sales Tax ${numberValue(taxRate || 18)}%`
+    : "Without Sales Tax";
+
+const quantity = (value) =>
+  numberValue(value).toLocaleString(undefined, {
+    maximumFractionDigits: 3,
+  });
+
+const money = (value) =>
+  `Rs. ${numberValue(value).toLocaleString("en-PK", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
+
+const idOf = (value) => {
+  if (!value) return "";
+  return typeof value === "object"
+    ? String(value._id || value.id || "")
+    : String(value);
+};
 
 const normalizeArray = (data, keys = []) => {
   if (Array.isArray(data)) return data;
-
   for (const key of keys) {
     if (Array.isArray(data?.[key])) return data[key];
   }
-
-  if (Array.isArray(data?.data)) return data.data;
-
-  return [];
+  return Array.isArray(data?.data) ? data.data : [];
 };
 
-const apiRequest = async (url, options = {}) => {
-  const { headers = {}, ...requestOptions } = options;
+const escapeHtml = (value) =>
+  String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
 
+const apiRequest = async (url, options = {}) => {
   const response = await fetch(url, {
-    ...requestOptions,
+    ...options,
     headers: {
-      Accept: "application/json",
-      ...(requestOptions.body
-        ? { "Content-Type": "application/json" }
-        : {}),
-      ...headers,
+      "Content-Type": "application/json",
+      ...(options.headers || {}),
     },
   });
 
   const data = await response.json().catch(() => ({}));
 
   if (!response.ok || data?.success === false) {
-    throw new Error(
-      data?.message ||
-        data?.error ||
-        `Request failed with status ${response.status}`
-    );
+    throw new Error(data.message || data.error || "Request failed");
   }
 
   return data;
 };
 
-const getId = (value) =>
-  String(value?._id || value?.id || value || "");
-
-const getDefaultForm = (purchaseNo = "") => ({
+const emptyForm = (purchaseNo = "") => ({
   purchaseNo,
   grn: "",
   grnNo: "",
+  purchaseOrder: "",
   purchaseOrderNo: "",
+  purchaseOrderReferenceNo: "",
+  vendor: "",
   vendorName: "",
   vendorPhone: "",
+  vendorEmail: "",
+  vendorAddress: "",
   purchaseDate: todayDate(),
   dueDate: "",
   vendorInvoiceNo: "",
@@ -90,130 +115,106 @@ const getDefaultForm = (purchaseNo = "") => ({
   challanNo: "",
   warehouse: "",
   taxType: "without-tax",
-  taxRate: 18,
+  taxRate: 0,
+  taxSource: "GRN / Purchase Order",
+  overallDiscount: "",
   freightCharges: "",
   otherCharges: "",
-  overallDiscount: "",
   paidAmount: "",
   paymentMethod: "Credit",
-  paymentStatus: "Unpaid",
   postingStatus: "Draft",
   status: "Draft",
   remarks: "",
   items: [],
 });
 
-const Purchases = () => {
-  const [grns, setGrns] = useState([]);
-  const [purchases, setPurchases] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [saving, setSaving] = useState(false);
+const inputClass =
+  "w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none transition focus:border-blue-600 focus:ring-2 focus:ring-blue-100 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500";
 
+const Label = ({ children, required = false }) => (
+  <label className="mb-1 block text-xs font-bold text-slate-600">
+    {children}
+    {required ? <span className="ml-1 text-red-600">*</span> : null}
+  </label>
+);
+
+const statusClass = (status) =>
+  ({
+    Draft: "bg-slate-100 text-slate-700",
+    Posted: "bg-purple-100 text-purple-700",
+    Completed: "bg-emerald-100 text-emerald-700",
+    Cancelled: "bg-red-100 text-red-700",
+    Unpaid: "bg-red-100 text-red-700",
+    "Partially Paid": "bg-amber-100 text-amber-700",
+    Paid: "bg-emerald-100 text-emerald-700",
+  })[status] || "bg-slate-100 text-slate-700";
+
+const Purchases = () => {
+  const [eligibleGrns, setEligibleGrns] = useState([]);
+  const [purchases, setPurchases] = useState([]);
+  const [form, setForm] = useState(emptyForm());
   const [showForm, setShowForm] = useState(false);
   const [editId, setEditId] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [actionId, setActionId] = useState("");
+  const [search, setSearch] = useState("");
+  const [postingFilter, setPostingFilter] = useState("All");
+  const [paymentFilter, setPaymentFilter] = useState("All");
 
-  const [searchTerm, setSearchTerm] = useState("");
-  const [statusFilter, setStatusFilter] = useState("All");
-
-  const [form, setForm] = useState(getDefaultForm());
-
-  const fetchGRNs = async () => {
-    const data = await apiRequest(`${API_BASE_URL}/grns/all`);
-
-    const availableGRNs = normalizeArray(data, ["grns", "records"])
-      .filter((grn) => {
-        const status = String(grn.status || "");
-
-        return (
-          status !== "Cancelled" &&
-          grn.purchaseStatus !== "Purchased" &&
-          (
-            Number(grn.totalAcceptedQty || 0) > 0 ||
-            (grn.items || []).some(
-              (item) => Number(item.acceptedQty || 0) > 0
-            )
-          )
-        );
-      })
-      .sort((a, b) =>
-        String(b.receivedDate || "").localeCompare(
-          String(a.receivedDate || "")
-        )
-      );
-
-    setGrns(availableGRNs);
-
-    return availableGRNs;
+  const fetchEligibleGrns = async () => {
+    const data = await apiRequest(`${API_PURCHASES}/eligible-grns`);
+    setEligibleGrns(normalizeArray(data, ["grns"]));
   };
 
   const fetchPurchases = async () => {
-    const data = await apiRequest(`${API_BASE_URL}/purchases/all`);
-    const list = normalizeArray(data, ["purchases", "records"]);
-
-    setPurchases(list);
-
-    return list;
+    const data = await apiRequest(`${API_PURCHASES}/all`);
+    setPurchases(normalizeArray(data, ["purchases"]));
   };
 
-  const loadData = async () => {
+  const refresh = async () => {
     try {
       setLoading(true);
-
-      await Promise.all([fetchGRNs(), fetchPurchases()]);
+      await Promise.all([fetchEligibleGrns(), fetchPurchases()]);
     } catch (error) {
-      console.error("Purchase data loading error:", error);
-      alert(error.message || "Purchase data load nahi hua");
-      setGrns([]);
-      setPurchases([]);
+      console.error("Purchase load error:", error);
+      alert(error.message || "Unable to load Purchases");
     } finally {
       setLoading(false);
     }
   };
 
-  const fetchNextPurchaseNo = async () => {
-    const data = await apiRequest(
-      `${API_BASE_URL}/purchases/next-no`
-    );
-
-    return data.purchaseNo || "PUR-0001";
-  };
-
   useEffect(() => {
-    loadData();
+    refresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const selectedGRN = useMemo(() => {
-    return grns.find((grn) => getId(grn) === form.grn);
-  }, [grns, form.grn]);
-
   const totals = useMemo(() => {
-    const subtotal = form.items.reduce((sum, item) => {
-      const qty = Number(item.purchaseQty || 0);
-      const rate = Number(item.unitPrice || 0);
-      return sum + qty * rate;
-    }, 0);
+    const subtotal = form.items.reduce(
+      (sum, item) =>
+        sum + numberValue(item.purchaseQty) * numberValue(item.unitPrice),
+      0
+    );
 
-    const itemDiscount = form.items.reduce((sum, item) => {
-      return sum + Number(item.discount || 0);
-    }, 0);
+    const itemDiscount = form.items.reduce(
+      (sum, item) => sum + numberValue(item.discount),
+      0
+    );
 
-    const overallDiscount = Number(form.overallDiscount || 0);
+    const overallDiscount = numberValue(form.overallDiscount);
     const totalDiscount = itemDiscount + overallDiscount;
-
     const taxableAmount = Math.max(subtotal - totalDiscount, 0);
     const salesTax =
       form.taxType === "with-tax"
-        ? taxableAmount * (Number(form.taxRate || 0) / 100)
+        ? taxableAmount * (numberValue(form.taxRate || 18) / 100)
         : 0;
-
-    const freightCharges = Number(form.freightCharges || 0);
-    const otherCharges = Number(form.otherCharges || 0);
-
     const grandTotal =
-      taxableAmount + salesTax + freightCharges + otherCharges;
-
-    const paidAmount = Number(form.paidAmount || 0);
-    const balance = grandTotal - paidAmount;
+      taxableAmount +
+      salesTax +
+      numberValue(form.freightCharges) +
+      numberValue(form.otherCharges);
+    const paidAmount = numberValue(form.paidAmount);
+    const balance = Math.max(grandTotal - paidAmount, 0);
 
     return {
       subtotal,
@@ -222,59 +223,73 @@ const Purchases = () => {
       totalDiscount,
       taxableAmount,
       salesTax,
-      freightCharges,
-      otherCharges,
       grandTotal,
       paidAmount,
       balance,
     };
-  }, [
-    form.items,
-    form.taxType,
-    form.taxRate,
-    form.freightCharges,
-    form.otherCharges,
-    form.overallDiscount,
-    form.paidAmount,
-  ]);
+  }, [form]);
 
-  const updatePaymentStatus = (paidAmount, grandTotal) => {
-    const paid = Number(paidAmount || 0);
-    const total = Number(grandTotal || 0);
+  const filteredPurchases = useMemo(() => {
+    const keyword = search.trim().toLowerCase();
 
-    if (paid <= 0) return "Unpaid";
-    if (paid >= total) return "Paid";
-    return "Partially Paid";
-  };
+    return purchases.filter((purchase) => {
+      const text = [
+        purchase.purchaseNo,
+        purchase.grnNo,
+        purchase.purchaseOrderNo,
+        purchase.vendorName,
+        purchase.vendorInvoiceNo,
+        purchase.supplierBillNo,
+        purchase.challanNo,
+        ...(purchase.items || []).flatMap((item) => [
+          item.itemCode,
+          item.itemName,
+          item.description,
+        ]),
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
 
-  useEffect(() => {
-    const paymentStatus = updatePaymentStatus(
-      form.paidAmount,
-      totals.grandTotal
-    );
+      return (
+        (!keyword || text.includes(keyword)) &&
+        (postingFilter === "All" ||
+          purchase.postingStatus === postingFilter) &&
+        (paymentFilter === "All" ||
+          purchase.paymentStatus === paymentFilter)
+      );
+    });
+  }, [purchases, search, postingFilter, paymentFilter]);
 
-    if (form.paymentStatus !== paymentStatus) {
-      setForm((prev) => ({
-        ...prev,
-        paymentStatus,
-      }));
-    }
-  }, [form.paidAmount, totals.grandTotal]);
+  const stats = useMemo(
+    () => ({
+      total: purchases.length,
+      posted: purchases.filter((row) => row.postingStatus === "Posted").length,
+      payable: purchases.reduce(
+        (sum, row) => sum + numberValue(row.balance),
+        0
+      ),
+      value: purchases.reduce(
+        (sum, row) => sum + numberValue(row.grandTotal),
+        0
+      ),
+    }),
+    [purchases]
+  );
 
-  const openNewForm = async () => {
+  const openNew = async () => {
     try {
       setSaving(true);
-
-      const [, nextNo] = await Promise.all([
-        fetchGRNs(),
-        fetchNextPurchaseNo(),
+      const [numberData] = await Promise.all([
+        apiRequest(`${API_PURCHASES}/next-no`),
+        fetchEligibleGrns(),
       ]);
 
       setEditId(null);
-      setForm(getDefaultForm(nextNo));
+      setForm(emptyForm(numberData.purchaseNo || ""));
       setShowForm(true);
     } catch (error) {
-      alert(error.message || "Purchase Number load nahi hua");
+      alert(error.message || "Unable to open a new Purchase");
     } finally {
       setSaving(false);
     }
@@ -283,420 +298,432 @@ const Purchases = () => {
   const closeForm = () => {
     setShowForm(false);
     setEditId(null);
-    setForm(getDefaultForm());
+    setForm(emptyForm());
   };
 
-  const handleGRNSelect = (grnId) => {
-    const grn = grns.find((item) => getId(item) === String(grnId));
+  const updateField = (field, value) => {
+    setForm((current) => ({ ...current, [field]: value }));
+  };
+
+  const selectGRN = (grnId) => {
+    const grn = eligibleGrns.find(
+      (row) => String(row._id) === String(grnId)
+    );
 
     if (!grn) {
-      setForm((previous) => ({
-        ...previous,
-        grn: "",
-        grnNo: "",
-        purchaseOrderNo: "",
-        vendorName: "",
-        vendorPhone: "",
-        challanNo: "",
-        warehouse: "",
-        items: [],
-      }));
-
+      setForm((current) => emptyForm(current.purchaseNo));
       return;
     }
 
-    const mappedItems = (grn.items || [])
-      .filter((item) => Number(item.acceptedQty || 0) > 0)
-      .map((item) => {
-        const acceptedQty = Number(item.acceptedQty || 0);
-        const unitPrice = Number(item.unitPrice || 0);
+    const inheritedTax = normalizeInheritedTax(
+      grn.taxType,
+      grn.taxRate
+    );
 
-        return {
-          item: getId(item.item),
-          description:
-            item.description ||
-            item.itemName ||
-            item.item?.name ||
-            "",
-          size: item.size || "",
-          grnAcceptedQty: acceptedQty,
-          purchaseQty: acceptedQty,
-          unit: item.unit || item.item?.unit || "Pcs",
-          unitPrice,
-          discount: "",
-          amount: acceptedQty * unitPrice,
-          remarks: item.remarks || "",
-        };
-      });
-
-    setForm((previous) => ({
-      ...previous,
-      grn: getId(grn),
+    setForm((current) => ({
+      ...current,
+      grn: grn._id,
       grnNo: grn.grnNo || "",
-      purchaseOrderNo:
-        grn.purchaseOrderNo ||
-        grn.purchaseOrder?.purchaseOrderNo ||
-        "",
-      vendorName:
-        grn.vendorName ||
-        grn.vendor?.vendorName ||
-        grn.vendor?.name ||
-        "",
-      vendorPhone:
-        grn.vendorPhone ||
-        grn.vendor?.phoneNumber ||
-        grn.vendor?.phone ||
-        "",
+      purchaseOrder: idOf(grn.purchaseOrder),
+      purchaseOrderNo: grn.purchaseOrderNo || "",
+      purchaseOrderReferenceNo: grn.purchaseOrderReferenceNo || "",
+      vendor: idOf(grn.vendor),
+      vendorName: grn.vendorName || "",
+      vendorPhone: grn.vendorPhone || "",
+      vendorEmail: grn.vendorEmail || "",
+      vendorAddress: grn.vendorAddress || "",
+      purchaseDate: grn.receivedDate || current.purchaseDate || todayDate(),
       challanNo: grn.challanNo || "",
       warehouse: grn.warehouse || "Main Warehouse",
-      items: mappedItems,
+      taxType: inheritedTax.taxType,
+      taxRate: inheritedTax.taxRate,
+      taxSource: grn.taxSource || "GRN / Purchase Order",
+      items: (grn.items || []).map((item) => ({
+        grnItemId: idOf(item.grnItemId),
+        purchaseOrderItemId: idOf(item.purchaseOrderItemId),
+        item: idOf(item.item),
+        itemCode: item.itemCode || "",
+        itemName: item.itemName || item.description || "",
+        description: item.description || item.itemName || "",
+        size: item.size || "",
+        cartons: numberValue(item.cartons),
+        grnAcceptedQty: numberValue(item.grnAcceptedQty),
+        purchaseQty: numberValue(item.grnAcceptedQty),
+        unit: item.unit || "Pcs",
+        unitPrice: numberValue(item.unitPrice),
+        discount: 0,
+        remarks: item.remarks || "",
+      })),
     }));
   };
 
   const updateItem = (index, field, value) => {
-    const updatedItems = [...form.items];
-
-    updatedItems[index] = {
-      ...updatedItems[index],
-      [field]: value,
-    };
-
-    const qty = Number(updatedItems[index].purchaseQty || 0);
-    const rate = Number(updatedItems[index].unitPrice || 0);
-    const discount = Number(updatedItems[index].discount || 0);
-
-    updatedItems[index].amount = Math.max(qty * rate - discount, 0);
-
-    setForm({
-      ...form,
-      items: updatedItems,
+    setForm((current) => {
+      const items = [...current.items];
+      items[index] = { ...items[index], [field]: value };
+      return { ...current, items };
     });
   };
 
-  const handleSubmit = async () => {
-    const purchaseNo = String(form.purchaseNo || "")
-      .trim()
-      .toUpperCase()
-      .replace(/\s+/g, "");
-
-    if (!purchaseNo) {
-      alert("Purchase No required hai");
-      return;
+  const validate = () => {
+    if (!form.purchaseNo.trim()) {
+      alert("Purchase number is required");
+      return false;
     }
-
     if (!form.grn) {
-      alert("GRN select karein");
-      return;
+      alert("Select an eligible GRN");
+      return false;
     }
-
+    if (!form.vendorInvoiceNo.trim()) {
+      alert("Vendor invoice number is required");
+      return false;
+    }
     if (!form.purchaseDate) {
-      alert("Purchase Date required hai");
-      return;
+      alert("Purchase date is required");
+      return false;
+    }
+    if (form.dueDate && form.dueDate < form.purchaseDate) {
+      alert("Due date cannot be earlier than purchase date");
+      return false;
+    }
+    if (!form.items.length) {
+      alert("Selected GRN has no accepted items");
+      return false;
     }
 
-    if (!String(form.vendorInvoiceNo || "").trim()) {
-      alert("Vendor Invoice No required hai");
-      return;
-    }
-
-    if (!String(form.warehouse || "").trim()) {
-      alert("Warehouse required hai");
-      return;
-    }
-
-    if (form.items.length === 0) {
-      alert("GRN items available nahi hain");
-      return;
-    }
-
-    const invalidQty = form.items.some(
-      (item) =>
-        Number(item.purchaseQty || 0) <= 0 ||
-        Number(item.purchaseQty || 0) >
-          Number(item.grnAcceptedQty || 0)
-    );
-
-    if (invalidQty) {
-      alert(
-        "Purchase Qty zero nahi ho sakti aur GRN accepted qty se zyada nahi honi chahiye"
-      );
-      return;
-    }
-
-    const invalidDiscount = form.items.some((item) => {
+    for (const item of form.items) {
       const gross =
-        Number(item.purchaseQty || 0) *
-        Number(item.unitPrice || 0);
-
-      return Number(item.discount || 0) > gross;
-    });
-
-    if (invalidDiscount) {
-      alert("Discount item amount se zyada nahi ho sakta");
-      return;
+        numberValue(item.purchaseQty) * numberValue(item.unitPrice);
+      if (numberValue(item.unitPrice) < 0) {
+        alert(`${item.itemName}: unit price cannot be negative`);
+        return false;
+      }
+      if (numberValue(item.discount) > gross) {
+        alert(`${item.itemName}: discount cannot exceed gross amount`);
+        return false;
+      }
     }
 
-    if (Number(form.paidAmount || 0) > totals.grandTotal) {
-      alert("Paid amount grand total se zyada nahi ho sakta");
-      return;
+    if (
+      numberValue(form.overallDiscount) >
+      totals.subtotal - totals.itemDiscount
+    ) {
+      alert("Overall discount is greater than the remaining item amount");
+      return false;
+    }
+    if (numberValue(form.paidAmount) > totals.grandTotal) {
+      alert("Paid amount cannot exceed grand total");
+      return false;
     }
 
-    const payload = {
-      purchaseNo,
-      grn: form.grn,
-      purchaseDate: form.purchaseDate,
-      dueDate: form.dueDate,
-      vendorInvoiceNo: String(form.vendorInvoiceNo || "").trim(),
-      supplierBillNo: String(form.supplierBillNo || "").trim(),
-      challanNo: String(form.challanNo || "").trim(),
-      warehouse: String(form.warehouse || "").trim(),
-      taxType: form.taxType,
-      taxRate: Number(form.taxRate || 0),
-      freightCharges: Number(form.freightCharges || 0),
-      otherCharges: Number(form.otherCharges || 0),
-      overallDiscount: Number(form.overallDiscount || 0),
-      paidAmount: Number(form.paidAmount || 0),
-      paymentMethod: form.paymentMethod,
-      postingStatus: form.postingStatus,
-      status: form.status,
-      remarks: String(form.remarks || "").trim(),
-      items: form.items.map((item) => ({
-        item: item.item || null,
-        description: String(item.description || "").trim(),
-        size: String(item.size || "").trim(),
-        grnAcceptedQty: Number(item.grnAcceptedQty || 0),
-        purchaseQty: Number(item.purchaseQty || 0),
-        unit: String(item.unit || "Pcs").trim(),
-        unitPrice: Number(item.unitPrice || 0),
-        discount: Number(item.discount || 0),
-        remarks: String(item.remarks || "").trim(),
-      })),
-    };
+    return true;
+  };
+
+  // Tax is never sent by the form. The backend inherits and verifies it
+  // from the selected GRN and its linked Purchase Order.
+  const buildPayload = (postingStatus = "Draft") => ({
+    purchaseNo: form.purchaseNo.trim(),
+    grn: form.grn,
+    purchaseDate: form.purchaseDate,
+    dueDate: form.dueDate,
+    vendorInvoiceNo: form.vendorInvoiceNo.trim(),
+    supplierBillNo: form.supplierBillNo.trim(),
+    challanNo: form.challanNo.trim(),
+    warehouse: form.warehouse.trim(),
+    overallDiscount: numberValue(form.overallDiscount),
+    freightCharges: numberValue(form.freightCharges),
+    otherCharges: numberValue(form.otherCharges),
+    paidAmount: numberValue(form.paidAmount),
+    paymentMethod: form.paymentMethod,
+    postingStatus,
+    remarks: form.remarks.trim(),
+    items: form.items.map((item) => ({
+      grnItemId: item.grnItemId,
+      purchaseOrderItemId: item.purchaseOrderItemId,
+      item: item.item,
+      description: item.description,
+      size: item.size,
+      unit: item.unit,
+      unitPrice: numberValue(item.unitPrice),
+      discount: numberValue(item.discount),
+      remarks: String(item.remarks || "").trim(),
+    })),
+  });
+
+  const save = async (postingStatus = "Draft") => {
+    if (!validate()) return;
+
+    const postingMessage =
+      postingStatus === "Posted"
+        ? "Post this Purchase? Posted records cannot be edited."
+        : "";
+
+    if (postingMessage && !window.confirm(postingMessage)) return;
 
     try {
       setSaving(true);
+      await apiRequest(
+        editId
+          ? `${API_PURCHASES}/update/${editId}`
+          : `${API_PURCHASES}/add`,
+        {
+          method: editId ? "PUT" : "POST",
+          body: JSON.stringify(buildPayload(postingStatus)),
+        }
+      );
 
-      const url = editId
-        ? `${API_BASE_URL}/purchases/update/${editId}`
-        : `${API_BASE_URL}/purchases/add`;
-
-      await apiRequest(url, {
-        method: editId ? "PUT" : "POST",
-        body: JSON.stringify(payload),
-      });
-
-      await loadData();
+      await refresh();
       closeForm();
     } catch (error) {
-      alert(error.message || "Purchase save nahi hui");
+      alert(error.message || "Purchase could not be saved");
     } finally {
       setSaving(false);
     }
   };
 
-  const handleEdit = async (purchase) => {
+  const handleEdit = async (purchaseId) => {
     try {
-      setSaving(true);
+      setActionId(purchaseId);
+      const response = await apiRequest(`${API_PURCHASES}/${purchaseId}`);
+      const purchase = response.data;
 
-      const purchaseId = getId(purchase);
-      const result = await apiRequest(
-        `${API_BASE_URL}/purchases/${purchaseId}`
-      );
+      if (purchase.postingStatus === "Posted") {
+        alert("Posted Purchase cannot be edited");
+        return;
+      }
+      if (purchase.status === "Cancelled") {
+        alert("Cancelled Purchase cannot be edited");
+        return;
+      }
 
-      const data = result.data || purchase;
-
-      await fetchGRNs();
-
-      setEditId(purchaseId);
-
+      setEditId(purchase._id);
       setForm({
-        purchaseNo: data.purchaseNo || "",
-        grn: getId(data.grn),
-        grnNo: data.grnNo || data.grn?.grnNo || "",
+        purchaseNo: purchase.purchaseNo || "",
+        grn: idOf(purchase.grn),
+        grnNo: purchase.grnNo || purchase.grn?.grnNo || "",
+        purchaseOrder: idOf(purchase.purchaseOrder),
         purchaseOrderNo:
-          data.purchaseOrderNo ||
-          data.purchaseOrder?.purchaseOrderNo ||
+          purchase.purchaseOrderNo ||
+          purchase.purchaseOrder?.purchaseOrderNo ||
           "",
-        vendorName:
-          data.vendorName ||
-          data.vendor?.vendorName ||
-          data.vendor?.name ||
-          "",
-        vendorPhone:
-          data.vendorPhone ||
-          data.vendor?.phoneNumber ||
-          data.vendor?.phone ||
-          "",
-        purchaseDate: data.purchaseDate || todayDate(),
-        dueDate: data.dueDate || "",
-        vendorInvoiceNo: data.vendorInvoiceNo || "",
-        supplierBillNo: data.supplierBillNo || "",
-        challanNo: data.challanNo || "",
-        warehouse: data.warehouse || "Main Warehouse",
-        taxType: data.taxType || "without-tax",
-        taxRate: data.taxRate ?? 18,
-        freightCharges: data.freightCharges || "",
-        otherCharges: data.otherCharges || "",
-        overallDiscount: data.overallDiscount || "",
-        paidAmount: data.paidAmount || "",
-        paymentMethod: data.paymentMethod || "Credit",
-        paymentStatus: data.paymentStatus || "Unpaid",
-        postingStatus: data.postingStatus || "Draft",
-        status: data.status || "Draft",
-        remarks: data.remarks || "",
-        items: (data.items || []).map((item) => ({
-          item: getId(item.item),
+        purchaseOrderReferenceNo:
+          purchase.purchaseOrder?.referenceNo || "",
+        vendor: idOf(purchase.vendor),
+        vendorName: purchase.vendorName || "",
+        vendorPhone: purchase.vendorPhone || "",
+        vendorEmail: purchase.vendorEmail || "",
+        vendorAddress: purchase.vendorAddress || "",
+        purchaseDate: purchase.purchaseDate || todayDate(),
+        dueDate: purchase.dueDate || "",
+        vendorInvoiceNo: purchase.vendorInvoiceNo || "",
+        supplierBillNo: purchase.supplierBillNo || "",
+        challanNo: purchase.challanNo || "",
+        warehouse: purchase.warehouse || "Main Warehouse",
+        taxType:
+          normalizeInheritedTax(purchase.taxType, purchase.taxRate).taxType,
+        taxRate:
+          normalizeInheritedTax(purchase.taxType, purchase.taxRate).taxRate,
+        taxSource: purchase.taxSource || "GRN / Purchase Order",
+        overallDiscount: purchase.overallDiscount || "",
+        freightCharges: purchase.freightCharges || "",
+        otherCharges: purchase.otherCharges || "",
+        paidAmount: purchase.paidAmount || "",
+        paymentMethod: purchase.paymentMethod || "Credit",
+        postingStatus: purchase.postingStatus || "Draft",
+        status: purchase.status || "Draft",
+        remarks: purchase.remarks || "",
+        items: (purchase.items || []).map((item) => ({
+          grnItemId: idOf(item.grnItemId),
+          purchaseOrderItemId: idOf(item.purchaseOrderItemId),
+          item: idOf(item.item),
+          itemCode: item.itemCode || item.item?.code || "",
+          itemName:
+            item.itemName || item.item?.name || item.description || "",
           description: item.description || "",
           size: item.size || "",
-          grnAcceptedQty: Number(item.grnAcceptedQty || 0),
-          purchaseQty: Number(item.purchaseQty || 0),
+          cartons: numberValue(item.cartons),
+          grnAcceptedQty: numberValue(item.grnAcceptedQty),
+          purchaseQty: numberValue(item.purchaseQty),
           unit: item.unit || "Pcs",
-          unitPrice: Number(item.unitPrice || 0),
-          discount: Number(item.discount || 0),
-          amount: Number(item.amount || 0),
+          unitPrice: numberValue(item.unitPrice),
+          discount: numberValue(item.discount),
           remarks: item.remarks || "",
         })),
       });
-
       setShowForm(true);
     } catch (error) {
-      alert(error.message || "Purchase load nahi hui");
+      alert(error.message || "Purchase could not be opened");
     } finally {
-      setSaving(false);
+      setActionId("");
     }
   };
 
-  const handleDelete = async (id) => {
-    if (
-      !window.confirm(
-        "Are you sure you want to delete this purchase entry?"
-      )
-    ) {
+  const postPurchase = async (purchase) => {
+    if (!window.confirm(`Post ${purchase.purchaseNo}? This action locks editing.`)) {
       return;
     }
 
     try {
-      setSaving(true);
-
-      await apiRequest(
-        `${API_BASE_URL}/purchases/delete/${id}`,
-        {
-          method: "DELETE",
-        }
-      );
-
-      await loadData();
+      setActionId(purchase._id);
+      await apiRequest(`${API_PURCHASES}/post/${purchase._id}`, {
+        method: "PUT",
+      });
+      await refresh();
     } catch (error) {
-      alert(error.message || "Purchase delete nahi hui");
+      alert(error.message || "Purchase could not be posted");
     } finally {
-      setSaving(false);
+      setActionId("");
     }
   };
 
-  const markAsPosted = async (id) => {
+  const updatePayment = async (purchase) => {
+    const entered = window.prompt(
+      `Enter total paid amount for ${purchase.purchaseNo}. Grand total: ${money(
+        purchase.grandTotal
+      )}`,
+      String(purchase.paidAmount || 0)
+    );
+
+    if (entered === null) return;
+    const paidAmount = Number(entered);
+
+    if (!Number.isFinite(paidAmount) || paidAmount < 0) {
+      alert("Enter a valid paid amount");
+      return;
+    }
+
     try {
-      setSaving(true);
-
-      await apiRequest(
-        `${API_BASE_URL}/purchases/post/${id}`,
-        {
-          method: "PUT",
-        }
-      );
-
-      await loadData();
+      setActionId(purchase._id);
+      await apiRequest(`${API_PURCHASES}/payment/${purchase._id}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          paidAmount,
+          paymentMethod: purchase.paymentMethod || "Credit",
+        }),
+      });
+      await refresh();
     } catch (error) {
-      alert(error.message || "Purchase post nahi hui");
+      alert(error.message || "Payment could not be updated");
     } finally {
-      setSaving(false);
+      setActionId("");
+    }
+  };
+
+  const cancelPurchase = async (purchase) => {
+    const reason = window.prompt(
+      `Reason for cancelling ${purchase.purchaseNo}:`,
+      ""
+    );
+    if (reason === null) return;
+
+    try {
+      setActionId(purchase._id);
+      await apiRequest(`${API_PURCHASES}/cancel/${purchase._id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ cancelReason: reason }),
+      });
+      await refresh();
+    } catch (error) {
+      alert(error.message || "Purchase could not be cancelled");
+    } finally {
+      setActionId("");
+    }
+  };
+
+  const deletePurchase = async (purchase) => {
+    if (!window.confirm(`Delete draft Purchase ${purchase.purchaseNo}?`)) return;
+
+    try {
+      setActionId(purchase._id);
+      await apiRequest(`${API_PURCHASES}/delete/${purchase._id}`, {
+        method: "DELETE",
+      });
+      await refresh();
+    } catch (error) {
+      alert(error.message || "Purchase could not be deleted");
+    } finally {
+      setActionId("");
     }
   };
 
   const printPurchase = (purchase) => {
-    const rows = purchase.items
+    const rows = (purchase.items || [])
       .map(
         (item, index) => `
           <tr>
             <td>${index + 1}</td>
-            <td>${item.description || ""}</td>
-            <td>${item.size || ""}</td>
-            <td>${item.grnAcceptedQty || 0}</td>
-            <td>${item.purchaseQty || 0}</td>
-            <td>${item.unit || ""}</td>
-            <td>${Number(item.unitPrice || 0).toLocaleString()}</td>
-            <td>${Number(item.discount || 0).toLocaleString()}</td>
-            <td>${Number(item.amount || 0).toLocaleString()}</td>
-            <td>${item.remarks || ""}</td>
-          </tr>
-        `
+            <td>${escapeHtml(item.itemCode || "")}</td>
+            <td>${escapeHtml(item.description || item.itemName || "")}</td>
+            <td>${escapeHtml(item.size || "-")}</td>
+            <td class="number">${quantity(item.purchaseQty)}</td>
+            <td>${escapeHtml(item.unit || "")}</td>
+            <td class="number">${money(item.unitPrice)}</td>
+            <td class="number">${money(item.discount)}</td>
+            <td class="number">${money(item.amount)}</td>
+          </tr>`
       )
       .join("");
 
+    const taxLabel = inheritedTaxLabel(
+      purchase.taxType,
+      purchase.taxRate
+    );
+
     const printWindow = window.open("", "_blank");
+    if (!printWindow) {
+      alert("Please allow pop-ups to print this Purchase");
+      return;
+    }
 
     printWindow.document.write(`
+      <!doctype html>
       <html>
         <head>
-          <title>${purchase.purchaseNo}</title>
+          <title>${escapeHtml(purchase.purchaseNo)}</title>
           <style>
-            body { font-family: Arial, sans-serif; padding: 30px; color: #111827; }
-            .top { display: flex; justify-content: space-between; border-bottom: 2px solid #111827; padding-bottom: 12px; }
-            h1 { margin: 0; font-size: 30px; }
-            h2 { text-align: center; margin: 24px 0 18px; text-decoration: underline; }
-            .small { font-size: 12px; color: #374151; line-height: 1.7; }
-            .box { border: 1px solid #111827; padding: 10px; margin: 12px 0; font-size: 13px; line-height: 1.7; }
-            table { width: 100%; border-collapse: collapse; margin-top: 12px; }
-            th, td { border: 1px solid #111827; padding: 7px; font-size: 12px; text-align: left; }
-            th { background: #f3f4f6; }
-            .totals { width: 360px; margin-left: auto; margin-top: 14px; }
-            .totals div { display: flex; justify-content: space-between; border-bottom: 1px solid #d1d5db; padding: 6px 0; }
-            .sign { margin-top: 70px; display: flex; justify-content: space-between; }
+            * { box-sizing: border-box; }
+            body { font-family: Arial, sans-serif; padding: 28px; color: #111827; }
+            h1 { text-align: center; margin: 0; font-size: 25px; letter-spacing: 1px; }
+            .sub { text-align: center; color: #475569; margin: 5px 0 22px; font-size: 12px; }
+            .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+            .box { border: 1px solid #cbd5e1; border-radius: 6px; padding: 10px; font-size: 12px; line-height: 1.7; }
+            table { width: 100%; border-collapse: collapse; margin-top: 16px; }
+            th, td { border: 1px solid #94a3b8; padding: 7px; font-size: 11px; text-align: left; }
+            th { background: #f1f5f9; }
+            .number { text-align: right; white-space: nowrap; }
+            .totals { width: 380px; margin: 14px 0 0 auto; }
+            .totals div { display: flex; justify-content: space-between; border-bottom: 1px solid #cbd5e1; padding: 6px 2px; font-size: 12px; }
+            .total { font-size: 14px !important; font-weight: bold; border-top: 2px solid #111827; }
+            .sign { margin-top: 65px; display: flex; justify-content: space-between; font-size: 12px; }
+            .remarks { margin-top: 18px; font-size: 12px; }
           </style>
         </head>
-
         <body>
-          <div class="top">
-            <div>
-              <h1>Urwa Packages</h1>
-              <div class="small">Purchase Entry</div>
-            </div>
-            <div class="small">
-              <b>Purchase No:</b> ${purchase.purchaseNo || ""}<br/>
-              <b>Purchase Date:</b> ${purchase.purchaseDate || ""}<br/>
-              <b>Due Date:</b> ${purchase.dueDate || ""}<br/>
-              <b>Vendor Invoice:</b> ${purchase.vendorInvoiceNo || ""}<br/>
-              <b>Status:</b> ${purchase.status || ""}
-            </div>
-          </div>
+          <h1>PURCHASE VOUCHER</h1>
+          <div class="sub">Generated from an approved GRN</div>
 
-          <h2>PURCHASE ENTRY</h2>
-
-          <div class="box">
-            <b>Vendor Name:</b> ${purchase.vendorName || ""}<br/>
-            <b>Vendor Phone:</b> ${purchase.vendorPhone || ""}<br/>
-            <b>GRN No:</b> ${purchase.grnNo || ""}<br/>
-            <b>Purchase Order No:</b> ${purchase.purchaseOrderNo || ""}<br/>
-            <b>Supplier Bill No:</b> ${purchase.supplierBillNo || ""}<br/>
-            <b>Challan No:</b> ${purchase.challanNo || ""}<br/>
-            <b>Warehouse:</b> ${purchase.warehouse || ""}<br/>
-            <b>Payment Method:</b> ${purchase.paymentMethod || ""}<br/>
-            <b>Payment Status:</b> ${purchase.paymentStatus || ""}<br/>
-            <b>Posting Status:</b> ${purchase.postingStatus || ""}
+          <div class="grid">
+            <div class="box">
+              <b>Purchase No:</b> ${escapeHtml(purchase.purchaseNo)}<br/>
+              <b>GRN No:</b> ${escapeHtml(purchase.grnNo)}<br/>
+              <b>Purchase Order:</b> ${escapeHtml(purchase.purchaseOrderNo)}<br/>
+              <b>Purchase Date:</b> ${escapeHtml(purchase.purchaseDate)}<br/>
+              <b>Due Date:</b> ${escapeHtml(purchase.dueDate || "-")}
+            </div>
+            <div class="box">
+              <b>Vendor:</b> ${escapeHtml(purchase.vendorName)}<br/>
+              <b>Vendor Invoice:</b> ${escapeHtml(purchase.vendorInvoiceNo)}<br/>
+              <b>Supplier Bill:</b> ${escapeHtml(purchase.supplierBillNo || "-")}<br/>
+              <b>Challan:</b> ${escapeHtml(purchase.challanNo || "-")}<br/>
+              <b>Tax:</b> ${escapeHtml(taxLabel)}
+            </div>
           </div>
 
           <table>
             <thead>
               <tr>
-                <th>Sr</th>
-                <th>Description</th>
-                <th>Size</th>
-                <th>GRN Accepted</th>
-                <th>Purchase Qty</th>
-                <th>Unit</th>
-                <th>Rate</th>
-                <th>Discount</th>
-                <th>Amount</th>
-                <th>Remarks</th>
+                <th>Sr</th><th>Code</th><th>Item</th><th>Size</th>
+                <th>Qty</th><th>Unit</th><th>Rate</th><th>Discount</th><th>Amount</th>
               </tr>
             </thead>
             <tbody>${rows}</tbody>
@@ -708,593 +735,482 @@ const Purchases = () => {
             <div><span>Overall Discount</span><b>${money(purchase.overallDiscount)}</b></div>
             <div><span>Taxable Amount</span><b>${money(purchase.taxableAmount)}</b></div>
             <div><span>Sales Tax</span><b>${money(purchase.salesTax)}</b></div>
-            <div><span>Freight Charges</span><b>${money(purchase.freightCharges)}</b></div>
-            <div><span>Other Charges</span><b>${money(purchase.otherCharges)}</b></div>
-            <div><span>Grand Total</span><b>${money(purchase.grandTotal)}</b></div>
-            <div><span>Paid Amount</span><b>${money(purchase.paidAmount)}</b></div>
+            <div><span>Freight + Other Charges</span><b>${money(
+              numberValue(purchase.freightCharges) +
+                numberValue(purchase.otherCharges)
+            )}</b></div>
+            <div class="total"><span>Grand Total</span><b>${money(
+              purchase.grandTotal
+            )}</b></div>
+            <div><span>Paid</span><b>${money(purchase.paidAmount)}</b></div>
             <div><span>Balance</span><b>${money(purchase.balance)}</b></div>
           </div>
 
-          <p><b>Remarks:</b> ${purchase.remarks || ""}</p>
-
+          <div class="remarks"><b>Remarks:</b> ${escapeHtml(
+            purchase.remarks || "-"
+          )}</div>
           <div class="sign">
-            <div>Prepared By: __________________</div>
-            <div>Checked By: __________________</div>
-            <div>Approved By: __________________</div>
+            <span>Prepared By: __________________</span>
+            <span>Checked By: __________________</span>
+            <span>Approved By: __________________</span>
           </div>
-
           <script>window.print();</script>
         </body>
       </html>
     `);
-
     printWindow.document.close();
   };
 
-  const filteredPurchases = purchases.filter((purchase) => {
-    const keyword = searchTerm.toLowerCase();
-
-    const matchesSearch =
-      purchase.purchaseNo?.toLowerCase().includes(keyword) ||
-      purchase.vendorName?.toLowerCase().includes(keyword) ||
-      purchase.vendorInvoiceNo?.toLowerCase().includes(keyword) ||
-      purchase.grnNo?.toLowerCase().includes(keyword);
-
-    const matchesStatus =
-      statusFilter === "All" ||
-      purchase.paymentStatus === statusFilter ||
-      purchase.postingStatus === statusFilter ||
-      purchase.status === statusFilter;
-
-    return matchesSearch && matchesStatus;
-  });
-
   if (showForm) {
     return (
-      <div className="w-full space-y-6">
-        <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-5">
-          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 border-b border-slate-200 pb-4">
+      <div className="w-full space-y-5">
+        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="flex flex-col gap-4 border-b border-slate-200 pb-4 md:flex-row md:items-center md:justify-between">
             <div>
               <button
+                type="button"
                 onClick={closeForm}
-                className="inline-flex items-center gap-2 text-sm text-slate-600 hover:text-slate-900 mb-3"
+                className="mb-3 inline-flex items-center gap-2 text-sm text-slate-600 hover:text-slate-900"
               >
-                <ArrowLeft size={17} />
-                Back to Purchases
+                <ArrowLeft size={17} /> Back to Purchases
               </button>
-
               <h1 className="text-2xl font-bold text-slate-900">
-                {editId ? "Edit Purchase Entry" : "New Purchase Entry"}
+                {editId ? "Edit Purchase" : "New Purchase from GRN"}
               </h1>
-
-              <p className="text-sm text-slate-500 mt-1">
-                GRN select karein, vendor bill enter karein, tax/payment calculate karein aur posting status manage karein.
+              <p className="mt-1 text-sm text-slate-500">
+                Select a posted GRN. Vendor, Purchase Order, tax and accepted quantities will fill automatically.
               </p>
             </div>
 
             <button
+              type="button"
               onClick={closeForm}
-              className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-xl border border-slate-200 hover:bg-slate-50"
+              className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 px-4 py-2 hover:bg-slate-50"
             >
-              <X size={18} />
-              Cancel
+              <X size={18} /> Cancel
             </button>
           </div>
 
-          <div className="pt-5 space-y-6">
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+          <div className="space-y-6 pt-5">
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
               <div>
-                <RequiredLabel>Purchase No</RequiredLabel>
+                <Label required>Purchase No</Label>
                 <input
                   value={form.purchaseNo}
-                  onChange={(e) =>
-                    setForm({
-                      ...form,
-                      purchaseNo: e.target.value
-                        .toUpperCase()
-                        .replace(/\s+/g, ""),
-                    })
-                  }
-                  className="w-full border rounded-lg px-3 py-2 mt-1"
-                  placeholder="PUR-0001"
+                  readOnly
+                  className={inputClass}
+                  placeholder="Generated automatically"
+                  title="Purchase number is generated automatically by the server"
                 />
               </div>
 
-              <div>
-                <RequiredLabel>GRN</RequiredLabel>
-                <select
-                  value={form.grn}
-                  onChange={(e) => handleGRNSelect(e.target.value)}
-                  className="w-full border rounded-lg px-3 py-2 mt-1"
-                  disabled={editId}
-                >
-                  <option value="">Select GRN</option>
-
-                  {editId &&
-                    form.grn &&
-                    !grns.some((grn) => getId(grn) === form.grn) && (
-                      <option value={form.grn}>
-                        {form.grnNo} - {form.vendorName}
+              <div className="md:col-span-2">
+                <Label required>GRN</Label>
+                {editId ? (
+                  <input
+                    value={`${form.grnNo} — ${form.purchaseOrderNo}`}
+                    disabled
+                    className={inputClass}
+                  />
+                ) : (
+                  <select
+                    value={form.grn}
+                    onChange={(event) => selectGRN(event.target.value)}
+                    className={inputClass}
+                  >
+                    <option value="">Select Posted GRN</option>
+                    {eligibleGrns.map((grn) => (
+                      <option key={grn._id} value={grn._id}>
+                        {grn.grnNo} — {grn.purchaseOrderNo} — {grn.vendorName} —{" "}
+                        {inheritedTaxLabel(grn.taxType, grn.taxRate)}
                       </option>
-                    )}
-
-                  {grns.map((grn) => (
-                    <option key={getId(grn)} value={getId(grn)}>
-                      {grn.grnNo} - {grn.vendorName || grn.vendor?.vendorName || grn.vendor?.name || "Vendor"}
-                    </option>
-                  ))}
-                </select>
+                    ))}
+                  </select>
+                )}
               </div>
 
               <div>
-                <RequiredLabel>Purchase Date</RequiredLabel>
+                <Label required>Purchase Date</Label>
                 <input
                   type="date"
                   value={form.purchaseDate}
-                  onChange={(e) =>
-                    setForm({ ...form, purchaseDate: e.target.value })
+                  onChange={(event) =>
+                    updateField("purchaseDate", event.target.value)
                   }
-                  className="w-full border rounded-lg px-3 py-2 mt-1"
+                  className={inputClass}
                 />
               </div>
 
               <div>
-                <NormalLabel>Due Date</NormalLabel>
+                <Label>Purchase Order</Label>
+                <input value={form.purchaseOrderNo} disabled className={inputClass} />
+              </div>
+
+              <div>
+                <Label>PO Reference</Label>
+                <input
+                  value={form.purchaseOrderReferenceNo}
+                  disabled
+                  className={inputClass}
+                />
+              </div>
+
+              <div>
+                <Label required>Vendor Invoice No</Label>
+                <input
+                  value={form.vendorInvoiceNo}
+                  onChange={(event) =>
+                    updateField("vendorInvoiceNo", event.target.value)
+                  }
+                  className={inputClass}
+                  placeholder="Supplier invoice number"
+                />
+              </div>
+
+              <div>
+                <Label>Due Date</Label>
                 <input
                   type="date"
                   value={form.dueDate}
-                  onChange={(e) => setForm({ ...form, dueDate: e.target.value })}
-                  className="w-full border rounded-lg px-3 py-2 mt-1"
+                  onChange={(event) => updateField("dueDate", event.target.value)}
+                  className={inputClass}
                 />
               </div>
 
               <div>
-                <RequiredLabel>Vendor Invoice No</RequiredLabel>
-                <input
-                  value={form.vendorInvoiceNo}
-                  onChange={(e) =>
-                    setForm({ ...form, vendorInvoiceNo: e.target.value })
-                  }
-                  className="w-full border rounded-lg px-3 py-2 mt-1"
-                  placeholder="Supplier invoice no"
-                />
-              </div>
-
-              <div>
-                <NormalLabel>Supplier Bill No</NormalLabel>
+                <Label>Supplier Bill No</Label>
                 <input
                   value={form.supplierBillNo}
-                  onChange={(e) =>
-                    setForm({ ...form, supplierBillNo: e.target.value })
+                  onChange={(event) =>
+                    updateField("supplierBillNo", event.target.value)
                   }
-                  className="w-full border rounded-lg px-3 py-2 mt-1"
-                  placeholder="Bill no"
+                  className={inputClass}
                 />
               </div>
 
               <div>
-                <NormalLabel>GRN No</NormalLabel>
-                <input
-                  value={form.grnNo}
-                  readOnly
-                  className="w-full border rounded-lg px-3 py-2 mt-1 bg-slate-50"
-                  placeholder="Auto from GRN"
-                />
-              </div>
-
-              <div>
-                <NormalLabel>Purchase Order No</NormalLabel>
-                <input
-                  value={form.purchaseOrderNo}
-                  readOnly
-                  className="w-full border rounded-lg px-3 py-2 mt-1 bg-slate-50"
-                  placeholder="Auto from GRN"
-                />
-              </div>
-
-              <div>
-                <NormalLabel>Vendor Name</NormalLabel>
-                <input
-                  value={form.vendorName}
-                  readOnly
-                  className="w-full border rounded-lg px-3 py-2 mt-1 bg-slate-50"
-                  placeholder="Auto from GRN"
-                />
-              </div>
-
-              <div>
-                <NormalLabel>Vendor Phone</NormalLabel>
-                <input
-                  value={form.vendorPhone}
-                  readOnly
-                  className="w-full border rounded-lg px-3 py-2 mt-1 bg-slate-50"
-                  placeholder="Auto from GRN"
-                />
-              </div>
-
-              <div>
-                <RequiredLabel>Warehouse</RequiredLabel>
-                <select
-                  value={form.warehouse}
-                  onChange={(e) =>
-                    setForm({ ...form, warehouse: e.target.value })
-                  }
-                  className="w-full border rounded-lg px-3 py-2 mt-1"
-                >
-                  <option value="">Auto from GRN</option>
-                  <option>Raw Material Godown</option>
-                  <option>Finished Goods Godown</option>
-                  <option>Multiple Warehouses</option>
-                </select>
-              </div>
-
-              <div>
-                <NormalLabel>Challan No</NormalLabel>
+                <Label>Challan No</Label>
                 <input
                   value={form.challanNo}
-                  onChange={(e) =>
-                    setForm({ ...form, challanNo: e.target.value })
+                  onChange={(event) =>
+                    updateField("challanNo", event.target.value)
                   }
-                  className="w-full border rounded-lg px-3 py-2 mt-1"
-                  placeholder="Supplier challan no"
+                  className={inputClass}
                 />
+              </div>
+
+              <div>
+                <Label>Warehouse</Label>
+                <input value={form.warehouse} disabled className={inputClass} />
+              </div>
+
+              <div className="md:col-span-2">
+                <Label>Tax Treatment</Label>
+                <div
+                  className={`flex min-h-[42px] items-center justify-between gap-3 rounded-lg border px-3 py-2 text-sm ${
+                    !form.grn
+                      ? "border-slate-300 bg-slate-100 text-slate-500"
+                      : form.taxType === "with-tax"
+                        ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                        : "border-slate-200 bg-slate-50 text-slate-700"
+                  }`}
+                  title={`Automatic source: ${form.taxSource || "GRN / Purchase Order"}`}
+                >
+                  <span className="font-semibold">
+                    {form.grn
+                      ? inheritedTaxLabel(form.taxType, form.taxRate)
+                      : "Select a GRN to load tax automatically"}
+                  </span>
+
+                  {form.grn ? (
+                    <span className="rounded-full bg-white px-2.5 py-1 text-[11px] font-bold shadow-sm">
+                      Auto from GRN
+                    </span>
+                  ) : null}
+                </div>
               </div>
             </div>
 
-            <div className="border rounded-xl overflow-hidden">
-              <div className="bg-slate-50 px-4 py-3 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+            {form.grn ? (
+              <div className="grid grid-cols-1 gap-4 rounded-xl border border-blue-200 bg-blue-50 p-4 text-sm md:grid-cols-2">
                 <div>
-                  <h3 className="font-bold flex items-center gap-2">
-                    <PackageCheck size={18} className="text-blue-600" />
-                    Purchase Items
-                  </h3>
+                  <div className="font-bold text-slate-800">Vendor</div>
+                  <div className="mt-1 text-slate-700">{form.vendorName}</div>
+                  <div className="text-slate-600">{form.vendorPhone || "No phone"}</div>
+                  <div className="text-slate-600">{form.vendorEmail || "No email"}</div>
+                </div>
+                <div>
+                  <div className="font-bold text-slate-800">Address</div>
+                  <div className="mt-1 text-slate-600">
+                    {form.vendorAddress || "No vendor address available"}
+                  </div>
+                  <div className="mt-2 text-xs font-semibold text-blue-700">
+                    Quantity is locked to the GRN accepted quantity. Tax treatment is loaded automatically from the selected GRN and cannot be changed here.
+                  </div>
+                </div>
+              </div>
+            ) : null}
+
+            <div className="overflow-hidden rounded-xl border border-slate-200">
+              <div className="flex flex-col gap-2 bg-slate-50 px-4 py-3 md:flex-row md:items-center md:justify-between">
+                <div>
+                  <h3 className="font-bold text-slate-900">Accepted GRN Items</h3>
                   <p className="text-xs text-slate-500">
-                    Items GRN se auto load honge. Purchase qty GRN accepted qty se zyada nahi ho sakti.
+                    Item and quantity are controlled by GRN. Enter invoice rate and discount only.
                   </p>
                 </div>
-
-                <div className="text-xs bg-white border rounded-lg px-3 py-2 text-slate-600">
-                  GRN: <b>{form.grnNo || "Not selected"}</b>
+                <div className="rounded-lg bg-white px-3 py-2 text-xs font-semibold text-slate-600 shadow-sm">
+                  {form.items.length} item(s) · {quantity(
+                    form.items.reduce(
+                      (sum, row) => sum + numberValue(row.purchaseQty),
+                      0
+                    )
+                  )} total qty
                 </div>
               </div>
 
               <div className="overflow-x-auto">
-                <table className="w-full text-sm">
+                <table className="w-full min-w-[1200px] text-sm">
                   <thead>
-                    <tr className="bg-white border-b text-slate-600">
-                      <th className="p-2 text-left">Item Description</th>
-                      <th className="p-2 text-left">Size</th>
-                      <th className="p-2 text-right">GRN Accepted</th>
-                      <th className="p-2 text-right">
-                        Purchase Qty <span className="text-red-600">*</span>
-                      </th>
-                      <th className="p-2 text-left">Unit</th>
-                      <th className="p-2 text-right">
-                        Rate <span className="text-red-600">*</span>
-                      </th>
-                      <th className="p-2 text-right">Discount</th>
-                      <th className="p-2 text-right">Amount</th>
-                      <th className="p-2 text-left">Remarks</th>
+                    <tr className="border-b bg-white text-slate-600">
+                      <th className="p-3 text-left">Item</th>
+                      <th className="p-3 text-left">Description</th>
+                      <th className="p-3 text-left">Size</th>
+                      <th className="p-3 text-right">GRN Accepted</th>
+                      <th className="p-3 text-left">Unit</th>
+                      <th className="p-3 text-right">Unit Price</th>
+                      <th className="p-3 text-right">Gross</th>
+                      <th className="p-3 text-right">Discount</th>
+                      <th className="p-3 text-right">Net Amount</th>
                     </tr>
                   </thead>
-
                   <tbody>
-                    {form.items.length === 0 ? (
+                    {!form.items.length ? (
                       <tr>
-                        <td colSpan="9" className="p-8 text-center text-slate-500">
-                          GRN select karein. Accepted items yahan auto load honge.
+                        <td colSpan={9} className="p-10 text-center text-slate-500">
+                          Select a GRN to load accepted items.
                         </td>
                       </tr>
                     ) : (
-                      form.items.map((item, index) => (
-                        <tr key={index} className="border-b hover:bg-slate-50">
-                          <td className="p-2 min-w-[220px]">
-                            <div className="font-semibold text-slate-800">
-                              {item.description || "N/A"}
-                            </div>
-                          </td>
+                      form.items.map((item, index) => {
+                        const gross =
+                          numberValue(item.purchaseQty) *
+                          numberValue(item.unitPrice);
+                        const net = Math.max(
+                          gross - numberValue(item.discount),
+                          0
+                        );
 
-                          <td className="p-2 min-w-[120px]">
-                            {item.size || "-"}
-                          </td>
-
-                          <td className="p-2 text-right font-bold">
-                            {item.grnAcceptedQty}
-                          </td>
-
-                          <td className="p-2 min-w-[120px]">
-                            <input
-                              type="number"
-                              value={item.purchaseQty}
-                              onChange={(e) =>
-                                updateItem(index, "purchaseQty", e.target.value)
-                              }
-                              className="w-full border rounded px-2 py-1.5 text-right"
-                              placeholder="0"
-                            />
-                          </td>
-
-                          <td className="p-2 min-w-[90px]">
-                            <input
-                              value={item.unit}
-                              onChange={(e) =>
-                                updateItem(index, "unit", e.target.value)
-                              }
-                              className="w-full border rounded px-2 py-1.5"
-                            />
-                          </td>
-
-                          <td className="p-2 min-w-[120px]">
-                            <input
-                              type="number"
-                              value={item.unitPrice}
-                              onChange={(e) =>
-                                updateItem(index, "unitPrice", e.target.value)
-                              }
-                              className="w-full border rounded px-2 py-1.5 text-right"
-                              placeholder="0"
-                            />
-                          </td>
-
-                          <td className="p-2 min-w-[120px]">
-                            <input
-                              type="number"
-                              value={item.discount}
-                              onChange={(e) =>
-                                updateItem(index, "discount", e.target.value)
-                              }
-                              className="w-full border rounded px-2 py-1.5 text-right"
-                              placeholder="0"
-                            />
-                          </td>
-
-                          <td className="p-2 text-right font-bold text-blue-700">
-                            {money(item.amount)}
-                          </td>
-
-                          <td className="p-2 min-w-[180px]">
-                            <input
-                              value={item.remarks}
-                              onChange={(e) =>
-                                updateItem(index, "remarks", e.target.value)
-                              }
-                              className="w-full border rounded px-2 py-1.5"
-                              placeholder="Item remarks"
-                            />
-                          </td>
-                        </tr>
-                      ))
+                        return (
+                          <tr key={item.grnItemId || index} className="border-b last:border-0">
+                            <td className="p-3">
+                              <div className="font-semibold text-slate-900">
+                                {item.itemCode || "—"}
+                              </div>
+                              <div className="text-xs text-slate-500">
+                                {item.itemName}
+                              </div>
+                            </td>
+                            <td className="p-3 text-slate-700">
+                              {item.description}
+                            </td>
+                            <td className="p-3 text-slate-600">
+                              {item.size || "—"}
+                            </td>
+                            <td className="p-3 text-right font-bold text-blue-700">
+                              {quantity(item.purchaseQty)}
+                            </td>
+                            <td className="p-3 text-slate-600">{item.unit}</td>
+                            <td className="p-3">
+                              <input
+                                type="number"
+                                min="0"
+                                step="0.01"
+                                value={item.unitPrice}
+                                onChange={(event) =>
+                                  updateItem(index, "unitPrice", event.target.value)
+                                }
+                                className={`${inputClass} min-w-[130px] text-right`}
+                              />
+                            </td>
+                            <td className="p-3 text-right font-medium text-slate-700">
+                              {money(gross)}
+                            </td>
+                            <td className="p-3">
+                              <input
+                                type="number"
+                                min="0"
+                                step="0.01"
+                                value={item.discount}
+                                onChange={(event) =>
+                                  updateItem(index, "discount", event.target.value)
+                                }
+                                className={`${inputClass} min-w-[120px] text-right`}
+                              />
+                            </td>
+                            <td className="p-3 text-right font-bold text-slate-900">
+                              {money(net)}
+                            </td>
+                          </tr>
+                        );
+                      })
                     )}
                   </tbody>
                 </table>
               </div>
             </div>
 
-            <div className="grid grid-cols-1 xl:grid-cols-3 gap-5">
-              <div className="xl:col-span-2 space-y-5">
-                <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <div className="grid grid-cols-1 gap-5 xl:grid-cols-3">
+              <div className="space-y-4 rounded-xl border border-slate-200 p-4 xl:col-span-2">
+                <h3 className="font-bold text-slate-900">Charges and Payment</h3>
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
                   <div>
-                    <RequiredLabel>Tax Type</RequiredLabel>
-                    <select
-                      value={form.taxType}
-                      onChange={(e) =>
-                        setForm({ ...form, taxType: e.target.value })
-                      }
-                      className="w-full border rounded-lg px-3 py-2 mt-1"
-                    >
-                      <option value="without-tax">Without Tax</option>
-                      <option value="with-tax">With Sales Tax</option>
-                    </select>
-                  </div>
-
-                  <div>
-                    <NormalLabel>Tax Rate %</NormalLabel>
+                    <Label>Overall Discount</Label>
                     <input
                       type="number"
-                      value={form.taxRate}
-                      onChange={(e) =>
-                        setForm({ ...form, taxRate: e.target.value })
-                      }
-                      className="w-full border rounded-lg px-3 py-2 mt-1"
-                      disabled={form.taxType === "without-tax"}
-                    />
-                  </div>
-
-                  <div>
-                    <NormalLabel>Freight Charges</NormalLabel>
-                    <input
-                      type="number"
-                      value={form.freightCharges}
-                      onChange={(e) =>
-                        setForm({ ...form, freightCharges: e.target.value })
-                      }
-                      className="w-full border rounded-lg px-3 py-2 mt-1"
-                      placeholder="0"
-                    />
-                  </div>
-
-                  <div>
-                    <NormalLabel>Other Charges</NormalLabel>
-                    <input
-                      type="number"
-                      value={form.otherCharges}
-                      onChange={(e) =>
-                        setForm({ ...form, otherCharges: e.target.value })
-                      }
-                      className="w-full border rounded-lg px-3 py-2 mt-1"
-                      placeholder="0"
-                    />
-                  </div>
-
-                  <div>
-                    <NormalLabel>Overall Discount</NormalLabel>
-                    <input
-                      type="number"
+                      min="0"
+                      step="0.01"
                       value={form.overallDiscount}
-                      onChange={(e) =>
-                        setForm({ ...form, overallDiscount: e.target.value })
+                      onChange={(event) =>
+                        updateField("overallDiscount", event.target.value)
                       }
-                      className="w-full border rounded-lg px-3 py-2 mt-1"
-                      placeholder="0"
+                      className={inputClass}
                     />
                   </div>
-
                   <div>
-                    <NormalLabel>Paid Amount</NormalLabel>
+                    <Label>Freight Charges</Label>
                     <input
                       type="number"
-                      value={form.paidAmount}
-                      onChange={(e) =>
-                        setForm({ ...form, paidAmount: e.target.value })
+                      min="0"
+                      step="0.01"
+                      value={form.freightCharges}
+                      onChange={(event) =>
+                        updateField("freightCharges", event.target.value)
                       }
-                      className="w-full border rounded-lg px-3 py-2 mt-1"
-                      placeholder="0"
+                      className={inputClass}
                     />
                   </div>
-
                   <div>
-                    <NormalLabel>Payment Method</NormalLabel>
+                    <Label>Other Charges</Label>
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={form.otherCharges}
+                      onChange={(event) =>
+                        updateField("otherCharges", event.target.value)
+                      }
+                      className={inputClass}
+                    />
+                  </div>
+                  <div>
+                    <Label>Paid Amount</Label>
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={form.paidAmount}
+                      onChange={(event) =>
+                        updateField("paidAmount", event.target.value)
+                      }
+                      className={inputClass}
+                    />
+                  </div>
+                  <div>
+                    <Label>Payment Method</Label>
                     <select
                       value={form.paymentMethod}
-                      onChange={(e) =>
-                        setForm({ ...form, paymentMethod: e.target.value })
+                      onChange={(event) =>
+                        updateField("paymentMethod", event.target.value)
                       }
-                      className="w-full border rounded-lg px-3 py-2 mt-1"
+                      className={inputClass}
                     >
-                      <option>Cash</option>
-                      <option>Bank</option>
-                      <option>Cheque</option>
-                      <option>Credit</option>
-                      <option>Other</option>
+                      {[
+                        "Cash",
+                        "Bank",
+                        "Cheque",
+                        "Credit",
+                        "Other",
+                      ].map((method) => (
+                        <option key={method}>{method}</option>
+                      ))}
                     </select>
                   </div>
-
-                  <div>
-                    <NormalLabel>Payment Status</NormalLabel>
-                    <input
-                      value={form.paymentStatus}
-                      readOnly
-                      className="w-full border rounded-lg px-3 py-2 mt-1 bg-slate-50"
+                  <div className="md:col-span-3">
+                    <Label>Remarks</Label>
+                    <textarea
+                      value={form.remarks}
+                      onChange={(event) =>
+                        updateField("remarks", event.target.value)
+                      }
+                      className={`${inputClass} min-h-[90px]`}
+                      placeholder="Optional purchase notes"
                     />
                   </div>
-
-                  <div>
-                    <RequiredLabel>Posting Status</RequiredLabel>
-                    <select
-                      value={form.postingStatus}
-                      onChange={(e) =>
-                        setForm({ ...form, postingStatus: e.target.value })
-                      }
-                      className="w-full border rounded-lg px-3 py-2 mt-1"
-                    >
-                      <option>Draft</option>
-                      <option>Posted</option>
-                    </select>
-                  </div>
-
-                  <div>
-                    <RequiredLabel>Status</RequiredLabel>
-                    <select
-                      value={form.status}
-                      onChange={(e) =>
-                        setForm({ ...form, status: e.target.value })
-                      }
-                      className="w-full border rounded-lg px-3 py-2 mt-1"
-                    >
-                      <option>Draft</option>
-                      <option>Completed</option>
-                      <option>Cancelled</option>
-                    </select>
-                  </div>
-                </div>
-
-                <div>
-                  <NormalLabel>Remarks</NormalLabel>
-                  <textarea
-                    value={form.remarks}
-                    onChange={(e) =>
-                      setForm({ ...form, remarks: e.target.value })
-                    }
-                    className="w-full border rounded-lg px-3 py-2 mt-1 min-h-[130px]"
-                    placeholder="Purchase notes, payment terms, tax notes, inventory posting notes..."
-                  />
                 </div>
               </div>
 
-              <div className="bg-slate-50 rounded-xl p-5 space-y-3">
-                <div className="flex justify-between">
-                  <span>Subtotal</span>
-                  <b>{money(totals.subtotal)}</b>
-                </div>
-
-                <div className="flex justify-between">
-                  <span>Item Discount</span>
-                  <b>{money(totals.itemDiscount)}</b>
-                </div>
-
-                <div className="flex justify-between">
-                  <span>Overall Discount</span>
-                  <b>{money(totals.overallDiscount)}</b>
-                </div>
-
-                <div className="flex justify-between">
-                  <span>Taxable Amount</span>
-                  <b>{money(totals.taxableAmount)}</b>
-                </div>
-
-                <div className="flex justify-between">
-                  <span>
-                    Sales Tax {form.taxType === "with-tax" ? `${form.taxRate}%` : "0%"}
-                  </span>
-                  <b>{money(totals.salesTax)}</b>
-                </div>
-
-                <div className="flex justify-between">
-                  <span>Freight Charges</span>
-                  <b>{money(totals.freightCharges)}</b>
-                </div>
-
-                <div className="flex justify-between">
-                  <span>Other Charges</span>
-                  <b>{money(totals.otherCharges)}</b>
-                </div>
-
-                <div className="flex justify-between text-lg border-t pt-3">
-                  <span>Grand Total</span>
-                  <b>{money(totals.grandTotal)}</b>
-                </div>
-
-                <div className="flex justify-between text-emerald-600">
-                  <span>Paid Amount</span>
-                  <b>{money(totals.paidAmount)}</b>
-                </div>
-
-                <div className="flex justify-between text-red-600 text-lg">
-                  <span>Balance</span>
-                  <b>{money(totals.balance)}</b>
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                <h3 className="mb-3 font-bold text-slate-900">Purchase Summary</h3>
+                <div className="space-y-2 text-sm">
+                  {[
+                    ["Subtotal", totals.subtotal],
+                    ["Item Discount", totals.itemDiscount],
+                    ["Overall Discount", totals.overallDiscount],
+                    ["Taxable Amount", totals.taxableAmount],
+                    [
+                      `Sales Tax ${form.taxType === "with-tax" ? `${numberValue(form.taxRate)}%` : ""}`,
+                      totals.salesTax,
+                    ],
+                    ["Freight Charges", form.freightCharges],
+                    ["Other Charges", form.otherCharges],
+                  ].map(([label, value]) => (
+                    <div key={label} className="flex justify-between border-b border-slate-200 py-1.5">
+                      <span className="text-slate-600">{label}</span>
+                      <b>{money(value)}</b>
+                    </div>
+                  ))}
+                  <div className="flex justify-between border-t-2 border-slate-900 pt-3 text-base">
+                    <span className="font-bold">Grand Total</span>
+                    <b>{money(totals.grandTotal)}</b>
+                  </div>
+                  <div className="flex justify-between pt-1">
+                    <span className="text-slate-600">Paid</span>
+                    <b className="text-emerald-700">{money(totals.paidAmount)}</b>
+                  </div>
+                  <div className="flex justify-between text-base">
+                    <span className="font-bold">Balance</span>
+                    <b className="text-red-700">{money(totals.balance)}</b>
+                  </div>
                 </div>
               </div>
             </div>
 
-            <div className="border-t pt-5 flex justify-end gap-3">
+            <div className="flex flex-col-reverse gap-3 border-t border-slate-200 pt-5 sm:flex-row sm:justify-end">
               <button
+                type="button"
                 onClick={closeForm}
-                className="px-5 py-2.5 rounded-xl border hover:bg-slate-50"
+                className="rounded-xl border border-slate-300 px-5 py-2.5 font-semibold hover:bg-slate-50"
               >
                 Cancel
               </button>
-
               <button
-                onClick={handleSubmit}
+                type="button"
                 disabled={saving}
-                className="px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-semibold flex items-center gap-2 disabled:opacity-60"
+                onClick={() => save("Draft")}
+                className="inline-flex items-center justify-center gap-2 rounded-xl bg-slate-800 px-5 py-2.5 font-semibold text-white hover:bg-slate-900 disabled:opacity-60"
               >
-                {saving ? (
-                  <Loader2 className="animate-spin" size={18} />
-                ) : (
-                  <Save size={18} />
-                )}
-                {saving ? "Saving..." : "Save Purchase"}
+                {saving ? <Loader2 className="animate-spin" size={18} /> : <Save size={18} />}
+                Save Draft
+              </button>
+              <button
+                type="button"
+                disabled={saving}
+                onClick={() => save("Posted")}
+                className="inline-flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-5 py-2.5 font-semibold text-white hover:bg-blue-700 disabled:opacity-60"
+              >
+                {saving ? <Loader2 className="animate-spin" size={18} /> : <Send size={18} />}
+                Save and Post
               </button>
             </div>
           </div>
@@ -1304,303 +1220,228 @@ const Purchases = () => {
   }
 
   return (
-    <div className="w-full space-y-6">
-      <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-5 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+    <div className="w-full space-y-5">
+      <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900 flex items-center gap-2">
-            <ReceiptText className="text-blue-600" size={26} />
-            Purchases
-          </h1>
-
-          <p className="text-sm text-slate-500 mt-1">
-            GRN ke against final vendor bill, tax, payment, balance aur inventory/account posting manage karein.
+          <h1 className="text-2xl font-bold text-slate-900">Purchases</h1>
+          <p className="mt-1 text-sm text-slate-500">
+            Convert posted GRNs into controlled supplier purchases and payable records.
           </p>
         </div>
-
-        <button
-          onClick={openNewForm}
-          disabled={saving}
-          className="inline-flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-xl font-semibold shadow-sm"
-        >
-          <Plus size={18} />
-          New Purchase
-        </button>
-      </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
-        <div className="bg-white rounded-xl border p-4 flex items-center gap-3">
-          <div className="w-11 h-11 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center">
-            <ReceiptText size={22} />
-          </div>
-          <div>
-            <p className="text-xs text-slate-500">Total Purchases</p>
-            <h3 className="text-2xl font-bold">{purchases.length}</h3>
-          </div>
-        </div>
-
-        <div className="bg-white rounded-xl border p-4 flex items-center gap-3">
-          <div className="w-11 h-11 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center">
-            <WalletCards size={22} />
-          </div>
-          <div>
-            <p className="text-xs text-slate-500">Grand Total</p>
-            <h3 className="text-xl font-bold">
-              {money(
-                purchases.reduce(
-                  (s, p) => s + Number(p.grandTotal || 0),
-                  0
-                )
-              )}
-            </h3>
-          </div>
-        </div>
-
-        <div className="bg-white rounded-xl border p-4 flex items-center gap-3">
-          <div className="w-11 h-11 rounded-xl bg-purple-50 text-purple-600 flex items-center justify-center">
-            <BadgePercent size={22} />
-          </div>
-          <div>
-            <p className="text-xs text-slate-500">Tax Value</p>
-            <h3 className="text-xl font-bold">
-              {money(
-                purchases.reduce(
-                  (s, p) => s + Number(p.salesTax || 0),
-                  0
-                )
-              )}
-            </h3>
-          </div>
-        </div>
-
-        <div className="bg-white rounded-xl border p-4 flex items-center gap-3">
-          <div className="w-11 h-11 rounded-xl bg-orange-50 text-orange-600 flex items-center justify-center">
-            <Truck size={22} />
-          </div>
-          <div>
-            <p className="text-xs text-slate-500">Freight</p>
-            <h3 className="text-xl font-bold">
-              {money(
-                purchases.reduce(
-                  (s, p) => s + Number(p.freightCharges || 0),
-                  0
-                )
-              )}
-            </h3>
-          </div>
-        </div>
-
-        <div className="bg-white rounded-xl border p-4 flex items-center gap-3">
-          <div className="w-11 h-11 rounded-xl bg-red-50 text-red-600 flex items-center justify-center">
-            <FileCheck2 size={22} />
-          </div>
-          <div>
-            <p className="text-xs text-slate-500">Balance</p>
-            <h3 className="text-xl font-bold">
-              {money(
-                purchases.reduce(
-                  (s, p) => s + Number(p.balance || 0),
-                  0
-                )
-              )}
-            </h3>
-          </div>
+        <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={refresh}
+            disabled={loading}
+            className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 font-semibold hover:bg-slate-50 disabled:opacity-60"
+          >
+            <RefreshCcw size={18} className={loading ? "animate-spin" : ""} /> Refresh
+          </button>
+          <button
+            type="button"
+            onClick={openNew}
+            disabled={saving}
+            className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 font-semibold text-white hover:bg-blue-700 disabled:opacity-60"
+          >
+            {saving ? <Loader2 className="animate-spin" size={18} /> : <PackageCheck size={18} />}
+            New Purchase
+          </button>
         </div>
       </div>
 
-      <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
-        <div className="p-4 border-b border-slate-100 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
-          <div>
-            <h3 className="font-bold text-slate-900">Purchase List</h3>
-            <p className="text-xs text-slate-500">
-              All vendor purchase entries
-            </p>
-          </div>
-
-          <div className="flex flex-col sm:flex-row gap-2">
-            <div className="relative">
-              <Search
-                size={16}
-                className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
-              />
-              <input
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="pl-9 pr-3 py-2 border rounded-lg text-sm w-full sm:w-72"
-                placeholder="Search purchase, vendor, invoice, GRN..."
-              />
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
+        {[
+          ["Total Purchases", stats.total, FileText],
+          ["Posted", stats.posted, CheckCircle2],
+          ["Purchase Value", money(stats.value), PackageCheck],
+          ["Outstanding Payable", money(stats.payable), CreditCard],
+        ].map(([label, value, Icon]) => (
+          <div key={label} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  {label}
+                </div>
+                <div className="mt-2 text-xl font-bold text-slate-900">{value}</div>
+              </div>
+              <div className="rounded-xl bg-slate-100 p-3 text-slate-700">
+                <Icon size={21} />
+              </div>
             </div>
-
-            <select
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value)}
-              className="px-3 py-2 border rounded-lg text-sm"
-            >
-              <option>All</option>
-              <option>Draft</option>
-              <option>Completed</option>
-              <option>Cancelled</option>
-              <option>Paid</option>
-              <option>Partially Paid</option>
-              <option>Unpaid</option>
-              <option>Posted</option>
-            </select>
-
-            <button
-              onClick={loadData}
-              className="inline-flex items-center justify-center gap-2 text-sm px-3 py-2 rounded-lg border hover:bg-slate-50"
-            >
-              <RotateCcw size={15} />
-              Refresh
-            </button>
           </div>
-        </div>
+        ))}
+      </div>
 
+      <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
+          <div className="relative md:col-span-2">
+            <Search className="absolute left-3 top-2.5 text-slate-400" size={18} />
+            <input
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              className={`${inputClass} pl-10`}
+              placeholder="Search purchase, GRN, PO, vendor or invoice..."
+            />
+          </div>
+          <select
+            value={postingFilter}
+            onChange={(event) => setPostingFilter(event.target.value)}
+            className={inputClass}
+          >
+            <option>All</option>
+            <option>Draft</option>
+            <option>Posted</option>
+          </select>
+          <select
+            value={paymentFilter}
+            onChange={(event) => setPaymentFilter(event.target.value)}
+            className={inputClass}
+          >
+            <option>All</option>
+            <option>Unpaid</option>
+            <option>Partially Paid</option>
+            <option>Paid</option>
+          </select>
+        </div>
+      </div>
+
+      <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
         <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead className="bg-slate-50 text-slate-600">
-              <tr>
-                <th className="p-3 text-left">Purchase No</th>
-                <th className="p-3 text-left">Vendor</th>
-                <th className="p-3 text-left">Invoice</th>
-                <th className="p-3 text-left">GRN</th>
-                <th className="p-3 text-left">Date</th>
-                <th className="p-3 text-right">Grand Total</th>
-                <th className="p-3 text-right">Paid</th>
+          <table className="w-full min-w-[1150px] text-sm">
+            <thead>
+              <tr className="border-b bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
+                <th className="p-3">Purchase</th>
+                <th className="p-3">GRN / PO</th>
+                <th className="p-3">Vendor</th>
+                <th className="p-3">Invoice</th>
+                <th className="p-3 text-right">Total</th>
                 <th className="p-3 text-right">Balance</th>
-                <th className="p-3 text-center">Payment</th>
-                <th className="p-3 text-center">Posting</th>
-                <th className="p-3 text-center">Actions</th>
+                <th className="p-3">Posting</th>
+                <th className="p-3">Payment</th>
+                <th className="p-3 text-right">Actions</th>
               </tr>
             </thead>
-
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan="11" className="p-10 text-center">
-                    <Loader2 className="animate-spin mx-auto text-blue-600" />
+                  <td colSpan={9} className="p-10 text-center text-slate-500">
+                    <Loader2 className="mx-auto mb-2 animate-spin" /> Loading Purchases...
                   </td>
                 </tr>
-              ) : filteredPurchases.length === 0 ? (
+              ) : !filteredPurchases.length ? (
                 <tr>
-                  <td colSpan="11" className="p-10 text-center text-slate-500">
-                    No purchase entry found.
+                  <td colSpan={9} className="p-10 text-center text-slate-500">
+                    No Purchase records found.
                   </td>
                 </tr>
               ) : (
-                filteredPurchases.map((purchase) => (
-                  <tr key={getId(purchase)} className="border-t hover:bg-slate-50">
-                    <td className="p-3 font-bold text-blue-700">
-                      {purchase.purchaseNo}
-                    </td>
-
-                    <td className="p-3">
-                      <div className="font-semibold">{purchase.vendorName}</div>
-                      <div className="text-xs text-slate-500">
-                        {purchase.vendorPhone}
-                      </div>
-                    </td>
-
-                    <td className="p-3">
-                      <div>{purchase.vendorInvoiceNo}</div>
-                      <div className="text-xs text-slate-500">
-                        Bill: {purchase.supplierBillNo || "-"}
-                      </div>
-                    </td>
-
-                    <td className="p-3">
-                      <div className="font-semibold">{purchase.grnNo}</div>
-                      <div className="text-xs text-slate-500">
-                        PO: {purchase.purchaseOrderNo}
-                      </div>
-                    </td>
-
-                    <td className="p-3">{purchase.purchaseDate}</td>
-
-                    <td className="p-3 text-right font-bold">
-                      {money(purchase.grandTotal)}
-                    </td>
-
-                    <td className="p-3 text-right font-bold text-emerald-600">
-                      {money(purchase.paidAmount)}
-                    </td>
-
-                    <td className="p-3 text-right font-bold text-red-600">
-                      {money(purchase.balance)}
-                    </td>
-
-                    <td className="p-3 text-center">
-                      <span
-                        className={`px-3 py-1 rounded-full text-xs font-semibold ${
-                          purchase.paymentStatus === "Paid"
-                            ? "bg-green-50 text-green-700"
-                            : purchase.paymentStatus === "Partially Paid"
-                            ? "bg-orange-50 text-orange-700"
-                            : "bg-red-50 text-red-700"
-                        }`}
-                      >
-                        {purchase.paymentStatus}
-                      </span>
-                    </td>
-
-                    <td className="p-3 text-center">
-                      <span
-                        className={`px-3 py-1 rounded-full text-xs font-semibold ${
-                          purchase.postingStatus === "Posted"
-                            ? "bg-blue-50 text-blue-700"
-                            : "bg-slate-100 text-slate-700"
-                        }`}
-                      >
-                        {purchase.postingStatus}
-                      </span>
-                    </td>
-
-                    <td className="p-3">
-                      <div className="flex justify-center gap-2">
-                        <button
-                          onClick={() => printPurchase(purchase)}
-                          className="p-2 rounded-lg bg-slate-100 hover:bg-slate-200"
-                          title="Print"
-                        >
-                          <Printer size={16} />
-                        </button>
-
-                        {purchase.postingStatus !== "Posted" && (
+                filteredPurchases.map((purchase) => {
+                  const busy = actionId === purchase._id;
+                  return (
+                    <tr key={purchase._id} className="border-b last:border-0 hover:bg-slate-50">
+                      <td className="p-3">
+                        <div className="font-bold text-slate-900">{purchase.purchaseNo}</div>
+                        <div className="text-xs text-slate-500">{purchase.purchaseDate}</div>
+                      </td>
+                      <td className="p-3">
+                        <div className="font-medium text-slate-800">{purchase.grnNo}</div>
+                        <div className="text-xs text-slate-500">{purchase.purchaseOrderNo}</div>
+                      </td>
+                      <td className="p-3">
+                        <div className="font-medium text-slate-800">{purchase.vendorName}</div>
+                        <div className="text-xs text-slate-500">{purchase.vendorPhone || "—"}</div>
+                      </td>
+                      <td className="p-3">
+                        <div className="font-medium text-slate-800">{purchase.vendorInvoiceNo}</div>
+                        <div className="text-xs text-slate-500">{purchase.supplierBillNo || "—"}</div>
+                      </td>
+                      <td className="p-3 text-right font-bold">{money(purchase.grandTotal)}</td>
+                      <td className="p-3 text-right font-bold text-red-700">{money(purchase.balance)}</td>
+                      <td className="p-3">
+                        <span className={`rounded-full px-2.5 py-1 text-xs font-bold ${statusClass(purchase.postingStatus)}`}>
+                          {purchase.postingStatus}
+                        </span>
+                      </td>
+                      <td className="p-3">
+                        <span className={`rounded-full px-2.5 py-1 text-xs font-bold ${statusClass(purchase.paymentStatus)}`}>
+                          {purchase.paymentStatus}
+                        </span>
+                      </td>
+                      <td className="p-3">
+                        <div className="flex justify-end gap-1.5">
                           <button
-                            onClick={() => markAsPosted(getId(purchase))}
-                            className="p-2 rounded-lg bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
-                            title="Post Entry"
+                            type="button"
+                            onClick={() => printPurchase(purchase)}
+                            className="rounded-lg bg-slate-100 p-2 text-slate-700 hover:bg-slate-200"
+                            title="Print"
                           >
-                            <FileCheck2 size={16} />
+                            <Printer size={16} />
                           </button>
-                        )}
 
-                        <button
-                          onClick={() => handleEdit(purchase)}
-                          className="p-2 rounded-lg bg-blue-50 text-blue-700 hover:bg-blue-100"
-                          title="Edit"
-                        >
-                          <Edit2 size={16} />
-                        </button>
+                          {purchase.postingStatus !== "Posted" && purchase.status !== "Cancelled" ? (
+                            <>
+                              <button
+                                type="button"
+                                disabled={busy}
+                                onClick={() => handleEdit(purchase._id)}
+                                className="rounded-lg bg-blue-50 p-2 text-blue-700 hover:bg-blue-100 disabled:opacity-50"
+                                title="Edit"
+                              >
+                                {busy ? <Loader2 size={16} className="animate-spin" /> : <Edit2 size={16} />}
+                              </button>
+                              <button
+                                type="button"
+                                disabled={busy}
+                                onClick={() => postPurchase(purchase)}
+                                className="rounded-lg bg-purple-50 p-2 text-purple-700 hover:bg-purple-100 disabled:opacity-50"
+                                title="Post"
+                              >
+                                <Send size={16} />
+                              </button>
+                              <button
+                                type="button"
+                                disabled={busy}
+                                onClick={() => deletePurchase(purchase)}
+                                className="rounded-lg bg-red-50 p-2 text-red-700 hover:bg-red-100 disabled:opacity-50"
+                                title="Delete Draft"
+                              >
+                                <Trash2 size={16} />
+                              </button>
+                            </>
+                          ) : null}
 
-                        <button
-                          onClick={() => handleDelete(getId(purchase))}
-                          className="p-2 rounded-lg bg-red-50 text-red-700 hover:bg-red-100"
-                          title="Delete"
-                        >
-                          <Trash2 size={16} />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))
+                          {purchase.status !== "Cancelled" ? (
+                            <button
+                              type="button"
+                              disabled={busy}
+                              onClick={() => updatePayment(purchase)}
+                              className="rounded-lg bg-emerald-50 p-2 text-emerald-700 hover:bg-emerald-100 disabled:opacity-50"
+                              title="Update Payment"
+                            >
+                              <CreditCard size={16} />
+                            </button>
+                          ) : null}
+
+                          {purchase.status !== "Cancelled" ? (
+                            <button
+                              type="button"
+                              disabled={busy}
+                              onClick={() => cancelPurchase(purchase)}
+                              className="rounded-lg bg-amber-50 p-2 text-amber-700 hover:bg-amber-100 disabled:opacity-50"
+                              title="Cancel Purchase"
+                            >
+                              <Ban size={16} />
+                            </button>
+                          ) : null}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
               )}
             </tbody>
           </table>
         </div>
-      </div>
-
-      <div className="bg-blue-50 border border-blue-100 rounded-2xl p-4 text-sm text-blue-800">
-        <b>Flow:</b> Purchase Order → GRN → Purchase Entry. Data MongoDB/API se load aur save hota hai.
       </div>
     </div>
   );
